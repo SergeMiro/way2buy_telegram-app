@@ -1,0 +1,17 @@
+{
+  "name": "way2buy-miniapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Way2Buy — Telegram Mini App loyalty & cashback system (demo)",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed": "node server/db.js --reseed"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#14122b" />
+  <title>Way2Buy · Клуб</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314122b'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='%23e8c477' font-family='sans-serif' font-weight='700'%3EW%3C/text%3E%3C/svg%3E" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+  <link rel="stylesheet" href="/css/views.css" />
+</head>
+<body>
+  <!-- Demo profile switcher (hidden inside real Telegram) -->
+  <div id="demobar" class="demobar" hidden>
+    <span class="demobar__dot"></span>
+    <span class="demobar__label">DEMO</span>
+    <select id="demoUser" class="demobar__select" aria-label="Демо-профіль"></select>
+  </div>
+
+  <main id="app" class="app"><div class="loader">Завантаження…</div></main>
+
+  <!-- Bottom navigation -->
+  <nav id="nav" class="nav" hidden>
+    <button class="nav__btn" data-tab="home">
+      <svg viewBox="0 0 24 24"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9h12v-9"/></svg>
+      <span>Клуб</span>
+    </button>
+    <button class="nav__btn" data-tab="feed">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 9h16M9 20V9"/></svg>
+      <span>Стрічка</span>
+    </button>
+    <button class="nav__btn" data-tab="history">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>Покупки</span>
+    </button>
+    <button class="nav__btn nav__btn--admin" data-tab="admin" hidden>
+      <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></svg>
+      <span>Кабінет</span>
+    </button>
+  </nav>
+
+  <!-- Sheet host -->
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet__backdrop" data-close></div>
+    <div class="sheet__panel" id="sheetPanel"></div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/js/telegram.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

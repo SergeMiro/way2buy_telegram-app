@@ -1,0 +1,206 @@
+/* =============================================================================
+   Way2Buy — Design Tokens  (aesthetic direction: "boutique jewel-box")
+   -----------------------------------------------------------------------------
+   Single source of truth for color, type, space, radius, shadow, motion.
+   All app.css and component CSS must reference these vars — never hard-code hex.
+
+   Naming: --w2b-<group>-<role>[-<variant>]
+     bg / surface / text / line       → structural
+     gold / violet / rose / emerald…  → brand hues
+     ok / warn / danger               → status
+     dur / ease                       → motion
+
+   Telegram bridge: see the ":root — Telegram theme bridge" block. The canvas is
+   DELIBERATELY kept dark on every client (this is an immersive branded surface;
+   index.html already ships theme-color #14122b). We do NOT map the canvas bg to
+   --tg-theme-bg-color, because a Telegram *light* theme would then wash out the
+   near-white body text and break contrast. Instead cards are self-contained dark
+   gradients, so they stay legible regardless of the host client theme. Telegram
+   theme vars are exposed as OPT-IN accent bridges (link/button/hint) only.
+
+   Display font: Unbounded (has Cyrillic). Load it in index.html <head>:
+     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+     <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&display=swap" rel="stylesheet">
+   It degrades gracefully to the system stack if the link is absent.
+============================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Canvas & surfaces (velvet indigo, elevation by lightness + glow) ---- */
+  --w2b-bg:            #14122b; /* app canvas */
+  --w2b-bg-deep:       #0e0c1e; /* behind sheets / scrims */
+  --w2b-surface-1:     #1c1a38; /* resting card / row */
+  --w2b-surface-2:     #24213f; /* raised: sheet panel, chat input */
+  --w2b-surface-3:     #2c2949; /* hover / active raise */
+  --w2b-line:          rgba(255, 255, 255, 0.09); /* hairline border */
+  --w2b-line-strong:   rgba(255, 255, 255, 0.16);
+  --w2b-scrim:         rgba(8, 6, 20, 0.66);       /* sheet backdrop */
+
+  /* ---- Text (near-white with a violet cast; all verified AA on --w2b-bg) --- */
+  --w2b-text:          #f4f2ff; /* primary body      — 16.4:1 on bg */
+  --w2b-text-muted:    #b8b3d9; /* secondary         —  9.0:1 on bg */
+  --w2b-text-subtle:   #9791ba; /* tertiary / hints  —  5.5:1 on bg */
+  --w2b-ink:           #14122b; /* dark text FOR USE ON metallic/gold bands */
+
+  /* ---- Brand hues ---------------------------------------------------------- */
+  --w2b-gold:          #e8c477; /* house accent */
+  --w2b-gold-strong:   #d4a94e;
+  --w2b-gold-soft:     #f0cd7f;
+  --w2b-violet:        #8b7bf6; /* secondary accent */
+  --w2b-violet-soft:   #a99bff;
+  --w2b-rose:          #f4a6c0; /* birthday */
+  --w2b-emerald:       #4fd6a3; /* holiday */
+  --w2b-platinum:      #d8dde8; /* VIP */
+
+  /* ---- Status (text tokens tuned to pass AA on dark surfaces) -------------- */
+  --w2b-ok:            #4fd6a3; /*  8.9:1 on bg */
+  --w2b-ok-text:       #7ee6c2;
+  --w2b-warn:          #f0cd7f;
+  --w2b-danger:        #ff5c72; /* urgent accent / ring  — 6.0:1 on bg */
+  --w2b-danger-text:   #ff8a9b; /* urgent COUNTDOWN TEXT — 8.1:1 on bg */
+  --w2b-danger-solid:  #d9243c; /* filled count badge — white text on this = 4.9:1 (AA) */
+
+  /* ---- Semantic aliases (prefer these in components) ----------------------- */
+  --w2b-primary:            var(--w2b-gold);
+  --w2b-primary-strong:     var(--w2b-gold-strong);
+  --w2b-on-primary:         var(--w2b-ink);   /* dark ink on gold — 10.8:1 */
+  --w2b-focus-ring:         var(--w2b-gold-soft);
+
+  /* ===========================================================================
+     Card variant gradients
+     -------------------------------------------------------------------------
+     *-base  → the dark BODY gradient (white text sits here → AA/AAA safe)
+     *-rim   → the bright metallic ACCENT gradient (rim/band/emoji halo; use
+               --w2b-ink text if any text sits on it)
+     *-glow  → the ambient outer glow color for that variant
+  ============================================================================ */
+  --w2b-birthday-base: linear-gradient(150deg, #3a1f30 0%, #2a1626 55%, #201028 100%);
+  --w2b-birthday-rim:  linear-gradient(120deg, #f4a6c0 0%, #f0cd7f 100%);
+  --w2b-birthday-glow: rgba(244, 166, 192, 0.42);
+
+  --w2b-holiday-base:  linear-gradient(150deg, #123027 0%, #0f2a34 55%, #10203a 100%);
+  --w2b-holiday-rim:   linear-gradient(120deg, #4fd6a3 0%, #f0cd7f 100%);
+  --w2b-holiday-glow:  rgba(79, 214, 163, 0.40);
+
+  --w2b-vip-base:      linear-gradient(150deg, #24242f 0%, #1b1b26 55%, #16161f 100%);
+  --w2b-vip-rim:       linear-gradient(120deg, #eef1f7 0%, #b9c1d4 45%, #8a93ab 100%);
+  --w2b-vip-glow:      rgba(216, 221, 232, 0.30);
+
+  --w2b-generic-base:  linear-gradient(150deg, #262347 0%, #1e1c3a 55%, #17152e 100%);
+  --w2b-generic-rim:   linear-gradient(120deg, #8b7bf6 0%, #e8c477 100%);
+  --w2b-generic-glow:  rgba(139, 123, 246, 0.34);
+
+  /* Shared shimmer sweep highlight (a diagonal glint that travels across a card) */
+  --w2b-shimmer: linear-gradient(
+      100deg,
+      transparent 20%,
+      rgba(255, 255, 255, 0.14) 42%,
+      rgba(255, 255, 255, 0.30) 50%,
+      rgba(255, 255, 255, 0.14) 58%,
+      transparent 80%);
+
+  /* ---- Tier badge fills (ink text sits on these — all AA) ------------------ */
+  --w2b-silver-fill:   linear-gradient(120deg, #e6e9f0 0%, #b7bfd0 100%);
+  --w2b-gold-fill:     linear-gradient(120deg, #f4d98a 0%, #d4a94e 100%);
+  --w2b-platinum-fill: linear-gradient(120deg, #ffffff 0%, #cfd6e4 55%, #a7b0c6 100%);
+
+  /* ---- Spacing scale (4px base) ------------------------------------------- */
+  --w2b-space-0:  0;
+  --w2b-space-1:  4px;
+  --w2b-space-2:  8px;
+  --w2b-space-3:  12px;
+  --w2b-space-4:  16px;
+  --w2b-space-5:  20px;
+  --w2b-space-6:  24px;
+  --w2b-space-8:  32px;
+  --w2b-space-10: 40px;
+  --w2b-space-12: 48px;
+  --w2b-space-16: 64px;
+
+  /* ---- Radius scale -------------------------------------------------------- */
+  --w2b-radius-xs:   6px;
+  --w2b-radius-sm:   10px;
+  --w2b-radius-md:   14px;
+  --w2b-radius-lg:   20px;
+  --w2b-radius-xl:   28px;
+  --w2b-radius-card: 22px;
+  --w2b-radius-pill: 999px;
+
+  /* ---- Elevation / shadow (soft-depth, violet-tinted) ---------------------- */
+  --w2b-shadow-1: 0 1px 2px rgba(8, 6, 20, 0.40);
+  --w2b-shadow-2: 0 6px 18px -6px rgba(8, 6, 20, 0.55);
+  --w2b-shadow-3: 0 18px 42px -12px rgba(8, 6, 20, 0.72);
+  --w2b-shadow-sheet: 0 -12px 40px -8px rgba(8, 6, 20, 0.7);
+  --w2b-glow-gold:     0 10px 34px -10px var(--w2b-birthday-glow);
+  --w2b-inset-hairline: inset 0 0 0 1px var(--w2b-line);
+
+  /* ---- Typography ---------------------------------------------------------- */
+  --w2b-font-display: 'Unbounded', 'Manrope', system-ui, sans-serif;
+  --w2b-font-body:    system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', sans-serif;
+  --w2b-font-mono:    ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', monospace;
+
+  --w2b-fs-2xs:  11px;
+  --w2b-fs-xs:   12px;
+  --w2b-fs-sm:   13px;
+  --w2b-fs-base: 15px;
+  --w2b-fs-md:   17px;
+  --w2b-fs-lg:   20px;
+  --w2b-fs-xl:   24px;
+  --w2b-fs-2xl:  30px;
+  --w2b-fs-3xl:  38px;
+  --w2b-fs-display: 48px;
+
+  --w2b-lh-tight: 1.1;
+  --w2b-lh-snug:  1.3;
+  --w2b-lh-body:  1.5;
+
+  --w2b-fw-regular: 400;
+  --w2b-fw-medium:  500;
+  --w2b-fw-semi:    600;
+  --w2b-fw-bold:    700;
+  --w2b-fw-black:   800;
+
+  --w2b-ls-tight: -0.02em;
+  --w2b-ls-wide:  0.04em;
+  --w2b-ls-caps:  0.12em; /* uppercase eyebrow labels */
+
+  /* ---- Motion (durations + easings). Keep entrances 150–320ms, ease-out. --- */
+  --w2b-dur-fast: 150ms;
+  --w2b-dur-base: 220ms;
+  --w2b-dur-slow: 320ms;
+  --w2b-dur-shimmer: 2600ms; /* ambient loop */
+  --w2b-dur-pulse:   2800ms; /* ambient loop */
+  --w2b-dur-confetti: 950ms; /* one-shot on reveal */
+
+  --w2b-ease-out:      cubic-bezier(0.16, 1, 0.30, 1); /* entrances */
+  --w2b-ease-standard: cubic-bezier(0.20, 0, 0, 1);
+  --w2b-ease-in-out:   cubic-bezier(0.65, 0, 0.35, 1); /* loops */
+
+  /* ---- Layout constants ---------------------------------------------------- */
+  --w2b-nav-h: 62px;
+  --w2b-maxw:  520px; /* content column cap (Mini App is phone-width) */
+  --w2b-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* =============================================================================
+   Telegram theme bridge — OPT-IN accent tokens.
+   Fall back to the boutique dark palette when the WebApp SDK is absent (plain
+   browser / demo). Canvas & text intentionally NOT bridged (see header note).
+============================================================================= */
+:root {
+  --w2b-tg-link:        var(--tg-theme-link-color, var(--w2b-gold-soft));
+  --w2b-tg-button:      var(--tg-theme-button-color, var(--w2b-gold-strong));
+  --w2b-tg-button-text: var(--tg-theme-button-text-color, var(--w2b-ink));
+  --w2b-tg-hint:        var(--tg-theme-hint-color, var(--w2b-text-subtle));
+  --w2b-tg-destructive: var(--tg-theme-destructive-text-color, var(--w2b-danger-text));
+  --w2b-tg-secondary-bg:var(--tg-theme-secondary-bg-color, var(--w2b-surface-2));
+}
+
+/* Smooth, GPU-cheap ring animation when @property is supported (progressive
+   enhancement; ignored elsewhere, ring still renders at its static value). */
+@property --w2b-ring-pct {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 0%;
+}

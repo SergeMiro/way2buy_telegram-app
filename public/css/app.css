@@ -1,0 +1,943 @@
+@import url("./tokens.css");
+
+/* =============================================================================
+   Way2Buy — app.css
+   Base reset + shell (from index.html) + discount cards + loyalty + notifications
+   + admin AI chat. All keyframe motion is transform/opacity only and gated behind
+   prefers-reduced-motion (see the very bottom block).
+============================================================================= */
+
+/* ---------------------------------- Reset --------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: var(--w2b-font-body);
+  font-size: var(--w2b-fs-base);
+  line-height: var(--w2b-lh-body);
+  color: var(--w2b-text);
+  background: var(--w2b-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+img, svg, canvas { display: block; max-width: 100%; }
+button { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; }
+:where(button, a, [tabindex], select, input, textarea):focus-visible {
+  outline: 2px solid var(--w2b-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--w2b-radius-sm);
+}
+::selection { background: rgba(232, 196, 119, 0.35); color: var(--w2b-text); }
+
+h1, h2, h3 {
+  font-family: var(--w2b-font-display);
+  font-weight: var(--w2b-fw-bold);
+  line-height: var(--w2b-lh-tight);
+  letter-spacing: var(--w2b-ls-tight);
+  margin: 0;
+}
+
+/* ------------------------------- App shell -------------------------------- */
+.app {
+  max-width: var(--w2b-maxw);
+  margin: 0 auto;
+  padding: var(--w2b-space-4) var(--w2b-space-4)
+           calc(var(--w2b-nav-h) + var(--w2b-space-6) + var(--w2b-safe-bottom));
+  min-height: 100dvh;
+}
+
+.loader {
+  display: grid;
+  place-items: center;
+  min-height: 60dvh;
+  color: var(--w2b-text-subtle);
+  font-size: var(--w2b-fs-sm);
+  letter-spacing: var(--w2b-ls-wide);
+}
+.loader::before {
+  content: "";
+  width: 26px; height: 26px;
+  margin-bottom: var(--w2b-space-3);
+  border-radius: 50%;
+  border: 2px solid var(--w2b-line-strong);
+  border-top-color: var(--w2b-gold);
+  animation: w2b-spin 800ms linear infinite;
+}
+@keyframes w2b-spin { to { transform: rotate(360deg); } }
+
+/* ---- Bottom navigation --------------------------------------------------- */
+.nav {
+  position: fixed;
+  left: 50%; bottom: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: var(--w2b-maxw);
+  height: calc(var(--w2b-nav-h) + var(--w2b-safe-bottom));
+  padding-bottom: var(--w2b-safe-bottom);
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: stretch;
+  background: color-mix(in srgb, var(--w2b-surface-1) 88%, transparent);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  border-top: 1px solid var(--w2b-line);
+  z-index: 40;
+}
+.nav__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--w2b-text-subtle);
+  font-size: var(--w2b-fs-2xs);
+  letter-spacing: 0.01em;
+  transition: color var(--w2b-dur-fast) var(--w2b-ease-out),
+              transform var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.nav__btn svg {
+  width: 24px; height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.nav__btn:hover { color: var(--w2b-text-muted); }
+.nav__btn:active { transform: scale(0.94); }
+.nav__btn.is-active { color: var(--w2b-gold); }
+.nav__btn.is-active svg { stroke-width: 2; }
+/* one visual anchor: the active tab gets a subtle gold underglow dot */
+.nav__btn.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 6px;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--w2b-gold);
+  box-shadow: 0 0 8px var(--w2b-gold);
+}
+.nav__btn { position: relative; }
+
+/* ---- Demo profile switcher ----------------------------------------------- */
+.demobar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-2);
+  margin: 0 0 var(--w2b-space-3);
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  background: var(--w2b-surface-2);
+  border: 1px solid var(--w2b-line);
+  border-radius: var(--w2b-radius-pill);
+  font-size: var(--w2b-fs-xs);
+}
+.demobar__dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--w2b-ok);
+  box-shadow: 0 0 8px var(--w2b-ok);
+}
+.demobar__label {
+  color: var(--w2b-text-subtle);
+  letter-spacing: var(--w2b-ls-caps);
+  text-transform: uppercase;
+  font-weight: var(--w2b-fw-semi);
+}
+.demobar__select {
+  margin-left: auto;
+  padding: 4px 10px;
+  color: var(--w2b-text);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: var(--w2b-radius-pill);
+}
+
+/* ---- Sheet / modal host -------------------------------------------------- */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheet[hidden] { display: none; }
+.sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--w2b-scrim);
+  backdrop-filter: blur(3px);
+  animation: w2b-fade-in var(--w2b-dur-base) var(--w2b-ease-out);
+}
+.sheet__panel {
+  position: relative;
+  width: 100%;
+  max-width: var(--w2b-maxw);
+  max-height: 88dvh;
+  overflow-y: auto;
+  padding: var(--w2b-space-5) var(--w2b-space-4)
+           calc(var(--w2b-space-6) + var(--w2b-safe-bottom));
+  background: var(--w2b-surface-2);
+  border-radius: var(--w2b-radius-xl) var(--w2b-radius-xl) 0 0;
+  box-shadow: var(--w2b-shadow-sheet);
+  animation: w2b-sheet-up var(--w2b-dur-slow) var(--w2b-ease-out);
+}
+.sheet__panel::before { /* grab handle */
+  content: "";
+  display: block;
+  width: 40px; height: 4px;
+  margin: 0 auto var(--w2b-space-4);
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-line-strong);
+}
+@keyframes w2b-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes w2b-sheet-up {
+  from { transform: translateY(16px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ---- Toast --------------------------------------------------------------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--w2b-nav-h) + var(--w2b-space-4) + var(--w2b-safe-bottom));
+  transform: translateX(-50%);
+  z-index: 70;
+  max-width: calc(var(--w2b-maxw) - var(--w2b-space-8));
+  padding: var(--w2b-space-3) var(--w2b-space-4);
+  background: var(--w2b-surface-3);
+  color: var(--w2b-text);
+  border: 1px solid var(--w2b-line-strong);
+  border-radius: var(--w2b-radius-pill);
+  box-shadow: var(--w2b-shadow-3);
+  font-size: var(--w2b-fs-sm);
+  text-align: center;
+  animation: w2b-toast-in var(--w2b-dur-base) var(--w2b-ease-out);
+}
+.toast[hidden] { display: none; }
+.toast--ok     { border-color: color-mix(in srgb, var(--w2b-ok) 55%, transparent); }
+.toast--error  { border-color: color-mix(in srgb, var(--w2b-danger) 60%, transparent); }
+@keyframes w2b-toast-in {
+  from { transform: translate(-50%, 8px); opacity: 0; }
+  to   { transform: translate(-50%, 0);   opacity: 1; }
+}
+
+/* ------------------------- Generic buttons -------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--w2b-space-2);
+  padding: var(--w2b-space-3) var(--w2b-space-5);
+  border-radius: var(--w2b-radius-pill);
+  font-weight: var(--w2b-fw-semi);
+  font-size: var(--w2b-fs-sm);
+  transition: transform var(--w2b-dur-fast) var(--w2b-ease-out),
+              background var(--w2b-dur-fast) var(--w2b-ease-out),
+              box-shadow var(--w2b-dur-fast) var(--w2b-ease-out),
+              opacity var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.btn:active { transform: scale(0.96); }
+.btn[disabled], .btn:disabled { opacity: 0.45; pointer-events: none; }
+
+.btn--primary {
+  background: var(--w2b-gold-fill);
+  color: var(--w2b-on-primary);
+  box-shadow: var(--w2b-shadow-2);
+}
+.btn--primary:hover { box-shadow: var(--w2b-glow-gold); }
+
+.btn--ghost {
+  background: transparent;
+  color: var(--w2b-text);
+  border: 1px solid var(--w2b-line-strong);
+}
+.btn--ghost:hover { background: var(--w2b-surface-3); }
+
+.btn--confirm {
+  background: linear-gradient(120deg, #4fd6a3 0%, #34b98a 100%);
+  color: var(--w2b-ink);
+  box-shadow: var(--w2b-shadow-2);
+}
+.btn--reject {
+  background: transparent;
+  color: var(--w2b-danger-text);
+  border: 1px solid color-mix(in srgb, var(--w2b-danger) 50%, transparent);
+}
+.btn--reject:hover { background: color-mix(in srgb, var(--w2b-danger) 12%, transparent); }
+
+/* ==========================================================================
+   DISCOUNT CARDS
+   Markup shape (frontend must render):
+     <article class="card card--{birthday|holiday|vip|generic}" data-variant="…">
+       <span class="card__glow"    aria-hidden="true"></span>   outer ambient glow
+       <span class="card__shimmer" aria-hidden="true"></span>   traveling glint
+       <span class="card__rim"     aria-hidden="true"></span>   metallic top band
+       <div  class="confetti"      aria-hidden="true"> … .confetti__bit ×12 … </div>
+       <header class="card__head">
+         <span class="card__emoji" aria-hidden="true">🎂</span>
+         <span class="card__label">День народження</span>
+       </header>
+       <div class="card__percent">
+         <span class="card__percent-num">20</span><span class="card__percent-sign">%</span>
+       </div>
+       <p class="card__title">…</p>
+       <p class="card__desc">…</p>
+       <div class="card__code">
+         <code class="card__code-value">BDAY-7Q2K</code>
+         <button class="card__copy" type="button">Копіювати</button>
+       </div>
+       <footer class="card__foot">
+         <span class="card__countdown" data-expires-at="ISO">…</span>
+       </footer>
+     </article>
+   Trigger confetti by adding .is-revealed to the <article> (JS, once).
+   Expired promos: add .card--expired (dims + disables copy).
+========================================================================== */
+.card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w2b-space-2);
+  padding: var(--w2b-space-5);
+  padding-top: var(--w2b-space-6);
+  border-radius: var(--w2b-radius-card);
+  border: 1px solid var(--w2b-line);
+  color: var(--w2b-text);            /* body text is ALWAYS light-on-dark → AA safe */
+  box-shadow: var(--w2b-shadow-2);
+  transition: transform var(--w2b-dur-base) var(--w2b-ease-out),
+              box-shadow var(--w2b-dur-base) var(--w2b-ease-out);
+  animation: w2b-card-in var(--w2b-dur-slow) var(--w2b-ease-out) both;
+}
+@keyframes w2b-card-in {
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* variant dark bodies */
+.card--birthday { background: var(--w2b-birthday-base); }
+.card--holiday  { background: var(--w2b-holiday-base); }
+.card--vip      { background: var(--w2b-vip-base); }
+.card--generic  { background: var(--w2b-generic-base); }
+
+/* metallic top rim (2px band; text never sits on it → no contrast concern) */
+.card__rim {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  z-index: 2;
+}
+.card--birthday .card__rim { background: var(--w2b-birthday-rim); }
+.card--holiday  .card__rim { background: var(--w2b-holiday-rim); }
+.card--vip      .card__rim { background: var(--w2b-vip-rim); }
+.card--generic  .card__rim { background: var(--w2b-generic-rim); }
+
+/* ambient outer glow (soft-depth anchor) */
+.card__glow {
+  position: absolute;
+  inset: -40% -10% auto -10%;
+  height: 70%;
+  z-index: -1;
+  filter: blur(38px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+.card--birthday .card__glow { background: radial-gradient(60% 100% at 50% 0, var(--w2b-birthday-glow), transparent 70%); }
+.card--holiday  .card__glow { background: radial-gradient(60% 100% at 50% 0, var(--w2b-holiday-glow),  transparent 70%); }
+.card--vip      .card__glow { background: radial-gradient(60% 100% at 50% 0, var(--w2b-vip-glow),      transparent 70%); }
+.card--generic  .card__glow { background: radial-gradient(60% 100% at 50% 0, var(--w2b-generic-glow),  transparent 70%); }
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-2);
+}
+.card__emoji { font-size: var(--w2b-fs-lg); line-height: 1; }
+.card__label {
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-weight: var(--w2b-fw-semi);
+  color: var(--w2b-text-muted);
+}
+.card__percent {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: var(--w2b-font-display);
+  line-height: 1;
+  margin-top: var(--w2b-space-1);
+}
+.card__percent-num  { font-size: var(--w2b-fs-display); font-weight: var(--w2b-fw-black); }
+.card__percent-sign { font-size: var(--w2b-fs-xl); font-weight: var(--w2b-fw-bold); color: var(--w2b-text-muted); }
+.card__title {
+  margin: 0;
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-md);
+  font-weight: var(--w2b-fw-bold);
+}
+.card__desc {
+  margin: 0;
+  font-size: var(--w2b-fs-sm);
+  color: var(--w2b-text-muted);
+}
+
+/* promo code chip + copy */
+.card__code {
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-2);
+  margin-top: var(--w2b-space-2);
+  padding: var(--w2b-space-2) var(--w2b-space-2) var(--w2b-space-2) var(--w2b-space-4);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px dashed var(--w2b-line-strong);
+  border-radius: var(--w2b-radius-md);
+}
+.card__code-value {
+  font-family: var(--w2b-font-mono);
+  font-size: var(--w2b-fs-base);
+  font-weight: var(--w2b-fw-semi);
+  letter-spacing: 0.06em;
+  color: var(--w2b-gold-soft);
+}
+.card__copy {
+  margin-left: auto;
+  padding: 6px var(--w2b-space-3);
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-gold-fill);
+  color: var(--w2b-on-primary);
+  font-size: var(--w2b-fs-xs);
+  font-weight: var(--w2b-fw-semi);
+  transition: transform var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.card__copy:active { transform: scale(0.94); }
+
+.card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--w2b-space-2);
+}
+
+/* countdown-to-expiry. .card__countdown--urgent applied by JS when <24h left.
+   The TEXT is written by JS every second → always up to date, no CSS motion. */
+.card__countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--w2b-fs-xs);
+  font-weight: var(--w2b-fw-medium);
+  color: var(--w2b-text-subtle);
+}
+.card__countdown::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.card__countdown--urgent {
+  color: var(--w2b-danger-text);      /* 8.1:1 on dark card base */
+  font-weight: var(--w2b-fw-semi);
+}
+.card__countdown--urgent::before {
+  background: var(--w2b-danger);
+  animation: w2b-urgent-blink var(--w2b-dur-pulse) var(--w2b-ease-in-out) infinite;
+}
+
+/* hover lift (generic gets the simplest; all lift subtly) */
+@media (hover: hover) {
+  .card:hover { transform: translateY(-3px); box-shadow: var(--w2b-shadow-3); }
+}
+
+/* ---- Expired state: dimmed, non-interactive ------------------------------ */
+.card--expired {
+  filter: grayscale(0.7);
+  opacity: 0.55;
+  box-shadow: var(--w2b-shadow-1);
+}
+.card--expired .card__shimmer,
+.card--expired .card__glow { display: none; }
+.card--expired .card__copy { pointer-events: none; opacity: 0.5; }
+.card--expired .card__countdown {
+  color: var(--w2b-text-subtle);
+  font-weight: var(--w2b-fw-regular);
+}
+.card--expired .card__countdown--urgent::before { animation: none; }
+
+/* ==========================================================================
+   CARD ANIMATIONS  (transform / opacity only → compositor-friendly, 60fps)
+========================================================================== */
+
+/* Traveling glint. Rests OFF-canvas (translateX(-120%)) so disabling motion
+   leaves nothing visible. Applied to holiday (sweep) + vip (slower). */
+.card__shimmer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--w2b-shimmer);
+  transform: translateX(-120%);
+  will-change: transform;
+}
+.card--holiday .card__shimmer {
+  animation: w2b-shimmer var(--w2b-dur-shimmer) var(--w2b-ease-in-out) infinite;
+}
+.card--vip .card__shimmer {
+  animation: w2b-shimmer calc(var(--w2b-dur-shimmer) * 1.4) var(--w2b-ease-in-out) infinite;
+  opacity: 0.7;
+}
+@keyframes w2b-shimmer {
+  0%   { transform: translateX(-120%); }
+  60%  { transform: translateX(120%); }
+  100% { transform: translateX(120%); }
+}
+
+/* VIP subtle breath — scales the ambient glow only (cheap, no layout). */
+.card--vip .card__glow {
+  animation: w2b-pulse var(--w2b-dur-pulse) var(--w2b-ease-in-out) infinite;
+  transform-origin: 50% 0;
+}
+@keyframes w2b-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 0.62; transform: scale(1.06); }
+}
+
+/* Birthday confetti — fired ONCE on reveal (.is-revealed). Pieces rest at
+   opacity:0 so with motion disabled they stay invisible. 12 .confetti__bit. */
+.confetti {
+  position: absolute;
+  inset: 0;
+  top: -8px;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+.confetti__bit {
+  position: absolute;
+  top: 0;
+  width: 7px; height: 10px;
+  border-radius: 2px;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+/* alternating festive tints */
+.confetti__bit:nth-child(3n+1) { background: var(--w2b-rose); }
+.confetti__bit:nth-child(3n+2) { background: var(--w2b-gold-soft); }
+.confetti__bit:nth-child(3n+3) { background: var(--w2b-violet-soft); }
+/* horizontal spread + per-piece delay */
+.confetti__bit:nth-child(1)  { left: 8%;  animation-delay: 0ms; }
+.confetti__bit:nth-child(2)  { left: 16%; animation-delay: 60ms; }
+.confetti__bit:nth-child(3)  { left: 25%; animation-delay: 30ms; }
+.confetti__bit:nth-child(4)  { left: 33%; animation-delay: 120ms; }
+.confetti__bit:nth-child(5)  { left: 42%; animation-delay: 20ms; }
+.confetti__bit:nth-child(6)  { left: 50%; animation-delay: 90ms; }
+.confetti__bit:nth-child(7)  { left: 58%; animation-delay: 40ms; }
+.confetti__bit:nth-child(8)  { left: 66%; animation-delay: 140ms; }
+.confetti__bit:nth-child(9)  { left: 75%; animation-delay: 10ms; }
+.confetti__bit:nth-child(10) { left: 83%; animation-delay: 100ms; }
+.confetti__bit:nth-child(11) { left: 91%; animation-delay: 55ms; }
+.confetti__bit:nth-child(12) { left: 97%; animation-delay: 75ms; }
+
+.card.is-revealed .confetti__bit {
+  animation-name: w2b-confetti;
+  animation-duration: var(--w2b-dur-confetti);
+  animation-timing-function: var(--w2b-ease-out);
+  animation-fill-mode: both;
+}
+@keyframes w2b-confetti {
+  0%   { transform: translateY(0) rotate(0deg); opacity: 0; }
+  15%  { opacity: 1; }
+  100% { transform: translateY(160px) rotate(220deg); opacity: 0; }
+}
+
+@keyframes w2b-urgent-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* ==========================================================================
+   LOYALTY — progress ring + tier badges + milestone chips
+   Markup:
+     <div class="loyalty-ring" style="--w2b-ring-pct: 64%">
+       <div class="loyalty-ring__hole">
+         <span class="loyalty-ring__value">64%</span>
+         <span class="loyalty-ring__caption">до Gold</span>
+       </div>
+     </div>
+========================================================================== */
+.loyalty-ring {
+  --w2b-ring-size: 132px;
+  --_pct: var(--w2b-ring-pct, 0%);
+  position: relative;
+  width: var(--w2b-ring-size);
+  height: var(--w2b-ring-size);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    conic-gradient(var(--w2b-gold) var(--_pct),
+                   rgba(255, 255, 255, 0.08) 0);
+  transition: --w2b-ring-pct var(--w2b-dur-slow) var(--w2b-ease-out);
+  box-shadow: var(--w2b-glow-gold);
+}
+.loyalty-ring::after { /* subtle facet highlight */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from -90deg,
+    rgba(255,255,255,0.25), transparent 30%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 0);
+          mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 0);
+  opacity: 0.4;
+  pointer-events: none;
+}
+.loyalty-ring__hole {
+  width: calc(var(--w2b-ring-size) - 22px);
+  height: calc(var(--w2b-ring-size) - 22px);
+  border-radius: 50%;
+  background: var(--w2b-surface-1);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  z-index: 1;
+}
+.loyalty-ring__value {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-xl);
+  font-weight: var(--w2b-fw-black);
+  line-height: 1;
+}
+.loyalty-ring__caption {
+  font-size: var(--w2b-fs-2xs);
+  color: var(--w2b-text-subtle);
+  letter-spacing: var(--w2b-ls-wide);
+}
+
+/* Tier badge chips — dark ink on metallic fill (all pairs AA). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
+  border-radius: var(--w2b-radius-pill);
+  font-size: var(--w2b-fs-xs);
+  font-weight: var(--w2b-fw-bold);
+  letter-spacing: 0.02em;
+  color: var(--w2b-ink);
+  box-shadow: var(--w2b-shadow-1);
+}
+.badge--silver   { background: var(--w2b-silver-fill); }
+.badge--gold     { background: var(--w2b-gold-fill); }
+.badge--platinum { background: var(--w2b-platinum-fill); }
+.badge::before { content: "◆"; font-size: 0.75em; opacity: 0.7; }
+
+/* Milestone chip row */
+.milestone-row {
+  display: flex;
+  gap: var(--w2b-space-2);
+  flex-wrap: wrap;
+}
+.milestone {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--w2b-space-3);
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-muted);
+}
+.milestone::before {
+  content: "○";
+  color: var(--w2b-text-subtle);
+}
+.milestone--reached {
+  color: var(--w2b-text);
+  border-color: color-mix(in srgb, var(--w2b-gold) 45%, transparent);
+  background: color-mix(in srgb, var(--w2b-gold) 12%, var(--w2b-surface-1));
+}
+.milestone--reached::before { content: "✓"; color: var(--w2b-gold); }
+
+/* ==========================================================================
+   NOTIFICATIONS — 🔔 badge + list item
+   Badge markup: <span class="notif-badge" data-count="3">3</span>
+   (attach to the nav/bell trigger; hide when count = 0 via [hidden])
+========================================================================== */
+.notif-badge {
+  position: absolute;
+  top: 4px; right: 22%;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-danger-solid);
+  color: #fff;                      /* white on #d9243c → 4.9:1 (AA) */
+  font-size: 10px;
+  font-weight: var(--w2b-fw-bold);
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--w2b-bg);
+}
+.notif-badge[hidden] { display: none; }
+
+.notif {
+  display: flex;
+  gap: var(--w2b-space-3);
+  padding: var(--w2b-space-3) var(--w2b-space-4);
+  border-radius: var(--w2b-radius-lg);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+}
+.notif--unread {
+  border-color: color-mix(in srgb, var(--w2b-gold) 40%, transparent);
+  background: color-mix(in srgb, var(--w2b-gold) 7%, var(--w2b-surface-1));
+}
+.notif__icon {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--w2b-surface-3);
+  font-size: var(--w2b-fs-md);
+}
+.notif__body { flex: 1 1 auto; min-width: 0; }
+.notif__title {
+  font-size: var(--w2b-fs-sm);
+  font-weight: var(--w2b-fw-semi);
+  margin: 0;
+}
+.notif__text {
+  margin: 2px 0 0;
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-muted);
+}
+.notif__time {
+  margin-top: 4px;
+  font-size: var(--w2b-fs-2xs);
+  color: var(--w2b-text-subtle);
+}
+.notif__dot { /* unread marker */
+  flex: 0 0 auto;
+  align-self: center;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--w2b-gold);
+}
+.notif:not(.notif--unread) .notif__dot { visibility: hidden; }
+
+/* ==========================================================================
+   ADMIN AI CHAT
+   Markup:
+     <div class="chat">
+       <div class="chat__log">
+         <div class="chat-msg chat-msg--user">…</div>
+         <div class="chat-msg chat-msg--assistant">…</div>
+         <div class="chat__thinking"><span></span><span></span><span></span></div>
+         <div class="proposal-card"> … </div>
+       </div>
+       <form class="chat__input">
+         <input class="chat__field" /> <button class="chat__send">↑</button>
+       </form>
+     </div>
+========================================================================== */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w2b-space-3);
+  min-height: 60dvh;
+}
+.chat__log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w2b-space-3);
+  flex: 1 1 auto;
+}
+.chat-msg {
+  max-width: 82%;
+  padding: var(--w2b-space-3) var(--w2b-space-4);
+  border-radius: var(--w2b-radius-lg);
+  font-size: var(--w2b-fs-sm);
+  line-height: var(--w2b-lh-snug);
+  animation: w2b-msg-in var(--w2b-dur-base) var(--w2b-ease-out) both;
+}
+.chat-msg--user {
+  align-self: flex-end;
+  background: var(--w2b-gold-fill);
+  color: var(--w2b-ink);
+  border-bottom-right-radius: var(--w2b-radius-xs);
+}
+.chat-msg--assistant {
+  align-self: flex-start;
+  background: var(--w2b-surface-2);
+  color: var(--w2b-text);
+  border: 1px solid var(--w2b-line);
+  border-bottom-left-radius: var(--w2b-radius-xs);
+}
+@keyframes w2b-msg-in {
+  from { transform: translateY(6px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* "thinking" indicator — three bouncing dots */
+.chat__thinking {
+  align-self: flex-start;
+  display: inline-flex;
+  gap: 5px;
+  padding: var(--w2b-space-3) var(--w2b-space-4);
+  background: var(--w2b-surface-2);
+  border: 1px solid var(--w2b-line);
+  border-radius: var(--w2b-radius-lg);
+}
+.chat__thinking span {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--w2b-text-subtle);
+  animation: w2b-think 1200ms var(--w2b-ease-in-out) infinite;
+}
+.chat__thinking span:nth-child(2) { animation-delay: 160ms; }
+.chat__thinking span:nth-child(3) { animation-delay: 320ms; }
+@keyframes w2b-think {
+  0%, 100% { transform: translateY(0);   opacity: 0.4; }
+  50%      { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Proposal card — the propose→apply gate (ADR-004) */
+.proposal-card {
+  align-self: stretch;
+  padding: var(--w2b-space-4);
+  border-radius: var(--w2b-radius-lg);
+  background: var(--w2b-surface-2);
+  border: 1px solid color-mix(in srgb, var(--w2b-gold) 40%, transparent);
+  box-shadow: var(--w2b-shadow-2);
+}
+.proposal-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-2);
+  margin-bottom: var(--w2b-space-2);
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-sm);
+  font-weight: var(--w2b-fw-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  color: var(--w2b-gold-soft);
+}
+.proposal-card__head::before { content: "✦"; }
+.proposal-card__body {
+  font-size: var(--w2b-fs-sm);
+  color: var(--w2b-text);
+  line-height: var(--w2b-lh-body);
+}
+.proposal-card__body dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px var(--w2b-space-3);
+  margin: var(--w2b-space-2) 0 0;
+}
+.proposal-card__body dt { color: var(--w2b-text-subtle); }
+.proposal-card__body dd { margin: 0; font-weight: var(--w2b-fw-semi); }
+.proposal-card__actions {
+  display: flex;
+  gap: var(--w2b-space-2);
+  margin-top: var(--w2b-space-4);
+}
+.proposal-card__actions .btn { flex: 1 1 0; }
+.proposal-card.is-applied  { border-color: color-mix(in srgb, var(--w2b-ok) 50%, transparent); opacity: 0.8; }
+.proposal-card.is-rejected { border-color: var(--w2b-line); opacity: 0.55; }
+.proposal-card.is-applied .proposal-card__actions,
+.proposal-card.is-rejected .proposal-card__actions { display: none; }
+
+/* chat input bar */
+.chat__input {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: var(--w2b-space-2);
+  padding: var(--w2b-space-2) 0 calc(var(--w2b-space-2) + var(--w2b-safe-bottom));
+  background: linear-gradient(0deg, var(--w2b-bg) 70%, transparent);
+}
+.chat__field {
+  flex: 1 1 auto;
+  padding: var(--w2b-space-3) var(--w2b-space-4);
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-surface-2);
+  border: 1px solid var(--w2b-line-strong);
+  color: var(--w2b-text);
+  font-size: var(--w2b-fs-base);
+}
+.chat__field::placeholder { color: var(--w2b-text-subtle); }
+.chat__field.is-error { border-color: var(--w2b-danger); }
+.chat__send {
+  flex: 0 0 auto;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--w2b-gold-fill);
+  color: var(--w2b-ink);
+  font-size: var(--w2b-fs-lg);
+  font-weight: var(--w2b-fw-bold);
+  transition: transform var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.chat__send:active { transform: scale(0.92); }
+.chat__send[disabled] { opacity: 0.45; pointer-events: none; }
+
+/* ==========================================================================
+   Shared utilities
+========================================================================== */
+.stack   { display: flex; flex-direction: column; gap: var(--w2b-space-4); }
+.section-title {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-lg);
+  font-weight: var(--w2b-fw-bold);
+  margin: var(--w2b-space-6) 0 var(--w2b-space-3);
+}
+.eyebrow {
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  color: var(--w2b-text-subtle);
+  font-weight: var(--w2b-fw-semi);
+}
+.empty {
+  text-align: center;
+  color: var(--w2b-text-subtle);
+  padding: var(--w2b-space-10) var(--w2b-space-4);
+  font-size: var(--w2b-fs-sm);
+}
+
+/* ==========================================================================
+   REDUCED MOTION  (GA-5 / AC-3 / nfr accessibility)
+   Disable every looping/one-shot decorative animation. Countdown text keeps
+   updating because it is driven by JS DOM writes, not CSS — nothing here
+   touches it. Decorative layers rest in an invisible/neutral state, so turning
+   animation off leaves no half-played artifact. Functional transitions are
+   collapsed to near-instant rather than removed, preserving state changes.
+========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* keep decorative overlays fully hidden (not mid-frame) */
+  .card__shimmer { transform: translateX(-120%) !important; }
+  .confetti__bit { opacity: 0 !important; }
+  .card__glow    { opacity: 0.45 !important; transform: none !important; }
+  .card__countdown--urgent::before,
+  .chat__thinking span { animation: none !important; }
+  /* thinking dots stay visible & static so the state is still legible */
+  .chat__thinking span { opacity: 0.7 !important; transform: none !important; }
+  .loader::before { animation: w2b-spin 800ms linear infinite !important; } /* loader may spin — it signals progress */
+}

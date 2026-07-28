@@ -1,0 +1,27 @@
+# Risk register — Way2Buy Discounts, Notifications, Scheduler & Admin AI
+
+Scoring: Probability (P) and Impact (I) each Low/Med/High. Exposure = P×I. Anti-pattern risks (from project-planning Phase 1b, tailored to this project) are tagged **[AP]**.
+
+| ID | Risk | P | I | Exposure | Mitigation | Owner step |
+|---|---|---|---|---|---|---|
+| R-01 **[AP N+1]** | Notification/report/admin-list loops call `loyaltyFor()` (a query pair) once per customer → N+1 against SQLite. Already latent in `ai.js` `nearReward`. | High | Med | High | Add `loyalty.snapshotBatch(ids)`/single aggregate GROUP BY query; scheduler & admin list must use batched form. AC in steps 3,6. Reviewer greps for `loyaltyFor` inside `.map/.forEach/for`. | 3, 6 |
+| R-02 **[AP non-idempotent job]** | Scheduler tick re-creates the same birthday/holiday promo + notification on every run (double-mint, DM spam). | High | High | **High** | `INSERT OR IGNORE` + `UNIQUE(campaign_id,customer_id,year)` on promos; `UNIQUE dedupe_key` on notifications; reconciliation (not fire-once). Test asserts "run tick twice → counts unchanged" (GA-2). | 4, 5, 6 |
+| R-03 **[AP prompt injection]** | Customer-controlled `name`/`notes` reach the AI context; a crafted value tries to make the agent create a 90% all-customers discount or exfiltrate. | Med | High | High | Model cannot write DB — only proposes; strict server-side arg validation (percent≤90, enum audience); customer text delimited as untrusted data with a hardened system prompt; PII minimized to LLM; admin confirms every write (ADR-004). Security step verifies. | 7, 13 |
+| R-04 **[AP missing authz]** | A new `/api/admin/*` (campaigns, notifications-admin, agent) ships without `requireAdmin`. | Med | High | High | Every new admin route reuses `requireAdmin`; integration test hits each new admin endpoint without admin identity expecting 403 (GA-6). Security step enumerates routes. | 4, 5, 7, 13 |
+| R-05 **[AP unbounded growth / no pagination]** | `promo_codes`/`notifications` grow forever; list endpoints return all rows. | Med | Med | Med | Expiry sweeper (active→expired, prune notifications > retention days); all list endpoints `LIMIT`+offset paginate (GA-8). | 4, 5, 12 |
+| R-06 **[AP secrets in code/logs]** | `GEMINI_API_KEY`/`TELEGRAM_BOT_TOKEN` leaked via logs, responses, or transcript. | Low | High | Med | Env-only (unchanged); logging policy forbids key/PII; transcript stores messages, never secrets; grep in security step. | 7, 13 |
+| R-07 | Telegram DM undeliverable (user never started bot) → thrown error / customer never learns of discount. | High | Med | Med | `sendToUser` wrapped, failures → `dm_status='failed'`, never thrown; in-app feed authoritative + 🔔 badge (ADR-005). Existing constraint honored. | 5 |
+| R-08 | Multi-instance deploy runs two schedulers → duplicate materialization / races. | Low | High | Med | `scheduler_lock` single-row advisory lock + heartbeat; **documented single-instance assumption** (A-5). If scaled later → move to Postgres + pg_cron (ADR-003 note). Accepted as known limitation, not a blocker. | 6 |
+| R-09 | Gemini schema/response drift or timeout hangs the admin request. | Med | Med | Med | 15 s hard timeout → deterministic fallback; response parsed defensively (mirrors `ai.js` try/catch); fallback path always available (no-key mode). | 7 |
+| R-10 | Fixed demo clock (`2026-07-21`) in `ai.js`/seed vs real clock in scheduler → birthday "today" logic mismatches, GA-2 flaky. | Med | Med | Med | All new time logic uses injectable `now` defaulting to `Date.now()` (A-6); seed sets Катерина birthday to execution day; tests pin `now`. Document the two clocks. | 1, 4, 6, 11 |
+| R-11 | Animations jank / battery drain / motion sickness; leaked countdown intervals. | Med | Low | Low | `prefers-reduced-motion` disables motion; CSS transforms/opacity only (GPU); single shared 1 Hz ticker for countdowns, cleared on view unmount. | 2, 9 |
+| R-12 | Audience filter mis-targets (e.g. VIP discount leaks to all) due to loose JSON/enum handling. | Med | Med | Med | `campaigns.resolveAudience()` centralizes matching with validated enums; unit tests per audience predicate; `list_customers_matching` lets admin preview before apply. | 4, 11 |
+| R-13 | Greenfield frontend under-scopes: shell references files that must all exist or the app 404s and looks broken (blocks GA-1). | Med | Med | Med | Step 8 delivers all four shell-referenced assets first as the foundation before feature UI; smoke test asserts no missing-asset 404. | 8, 11 |
+| R-14 | Marketing notification sent to `consent=0` customer → compliance issue. | Low | Med | Low | Notification writer gates marketing DMs on `consent=1`; in-app pull feed exempt. Documented in nfr.md. | 5, 13 |
+| R-15 | SQLite migration discipline: new columns/tables added ad-hoc break existing `way2buy.db`. | Med | Med | Med | Additive `CREATE TABLE IF NOT EXISTS` + guarded `ALTER TABLE ... ADD COLUMN` (check pragma) in `migrate()`; `--reseed` path recreates cleanly; no destructive change to existing tables. | 1 |
+
+## Top risks to watch (highest exposure)
+1. **R-02** non-idempotent scheduler (High/High) — the single most important correctness property; drives GA-2 test.
+2. **R-03** prompt injection into a money action — mitigated structurally by propose→apply + no direct DB writes.
+3. **R-01** N+1 in loops — cheap to prevent now, painful later; reviewer checklist item.
+4. **R-04** missing authz on new admin routes — enumerated in the final security step.
