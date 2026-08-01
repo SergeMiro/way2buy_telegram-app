@@ -431,7 +431,10 @@
   // emoji placeholder otherwise. The audience picks by picture, so this is the
   // most important element on the screen.
   function postMediaHtml(p) {
-    var url = (p.photoUrls && p.photoUrls[0]) || null;
+    // Three sources of an image: a Telegram file_id (served via the proxy), an
+    // imported file under /uploads, or the emoji stand-in.
+    var url = (p.photoUrls && p.photoUrls[0]) ||
+      (p.image_url && /^[/.]|^https?:/.test(p.image_url) ? p.image_url : null);
     return url
       ? '<img src="' + esc(url) + '" alt="' + esc(p.title || '') + '" loading="lazy" />'
       // The emoji stand-in lives in its own element so CSS can desaturate it

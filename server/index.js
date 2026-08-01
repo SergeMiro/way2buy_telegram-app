@@ -19,6 +19,7 @@ import * as birthday from './birthday.js';
 import * as profit from './profit.js';
 import * as cart from './cart.js';
 import * as scheduler from './scheduler.js';
+import * as polling from './polling.js';
 import { adminAlerts } from './notify.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -580,7 +581,7 @@ app.get('/api/admin/alerts', requireAdmin, (req, res) => {
 
 // Scheduler status + a manual/cron-callable tick (serverless hosts have no
 // long-lived process, so the same jobs are reachable over HTTP).
-app.get('/api/admin/scheduler', requireAdmin, (req, res) => res.json(scheduler.status()));
+app.get('/api/admin/scheduler', requireAdmin, (req, res) => res.json({ ...scheduler.status(), polling: polling.status() }));
 app.post('/api/admin/tick', requireAdmin, (req, res) => res.json(scheduler.tick()));
 
 app.get('/api/admin/report', requireAdmin, async (req, res) => {
@@ -655,6 +656,10 @@ function shapePromo(p) {
 // listen ourselves.
 if (!process.env.VERCEL) {
   scheduler.start();
+  // Long polling is the no-public-URL path: post in the channel, see the card.
+  if (process.env.W2B_TELEGRAM_POLLING === '1') {
+    void polling.start().catch((e) => console.error('[polling] start failed:', e.message));
+  }
   app.listen(PORT, () => {
     console.log(`\n  Way2Buy Mini App → http://localhost:${PORT}`);
     console.log(`  mode: ${liveMode() ? 'LIVE (bot token set)' : 'DEMO (simulated Telegram)'} · admin: ${DEMO ? 'open (demo)' : `${ADMIN_IDS.length} ids`}\n`);
