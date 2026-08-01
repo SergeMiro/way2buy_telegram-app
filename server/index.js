@@ -31,6 +31,11 @@ const PORT = process.env.PORT || 4010;
 const ADMIN_IDS = (process.env.ADMIN_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
 const DEMO = ADMIN_IDS.length === 0; // no admins configured ⇒ open demo mode
 
+// «Товари в наявності» — the one catalogue that means "ready to ship". It is
+// pinned and highlighted in the UI; the key is overridable because the channel
+// could be renamed.
+const IN_STOCK_KEY = process.env.IN_STOCK_CHANNEL_KEY || 'available';
+
 // ── FX: normalise everything to USD ────────────────────────────────────────
 const RATE = { USD: 1, EUR: 1.08, UAH: 1 / 41 };
 const toUsd = (amount, currency) => Math.round(amount * (RATE[currency] ?? 1) * 100) / 100;
@@ -81,6 +86,7 @@ app.get('/api/config', (req, res) => {
     // Dasha is the human every price question ends at. The Mini App never
     // replaces her — it only pre-writes the message.
     support: { username: (process.env.SUPPORT_USERNAME || 'daschamelnyk').replace(/^@/, '') },
+    inStockKey: IN_STOCK_KEY,
     features: { tiers: false, badges: false, streak: false, aiChat: false },
     tiers: TIERS,
     live: liveMode(),
@@ -176,21 +182,35 @@ const shapePost = (p) => ({
 app.get('/api/feed', (req, res) => {
   const ch = req.query.channel;
   const kind = req.query.kind;
-  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+  const limit = Math.min(Math.max(Number(req.query.limit) || 60, 1), 200);
+  // Search runs across ALL catalogues, not just the selected one: a client who
+  // types "kelly" wants the bag, not "the bag inside the chip I happened to tap".
+  const q = String(req.query.q || '').trim().slice(0, 60);
 
-  let rows;
+  const where = ["status='published'"];
+  const params = [];
+
   if (ch && ch !== 'all') {
-    rows = db.prepare("SELECT * FROM posts WHERE channel=? AND status='published' ORDER BY created_at DESC LIMIT ?").all(ch, limit);
+    where.push('channel = ?');
+    params.push(ch);
   } else if (kind === 'main' || kind === 'catalog') {
     const keys = listChannels().filter((c) => c.kind === kind).map((c) => c.key);
     if (!keys.length) return res.json({ posts: [] });
-    rows = db.prepare(
-      `SELECT * FROM posts WHERE status='published' AND channel IN (${keys.map(() => '?').join(',')})
-        ORDER BY created_at DESC LIMIT ?`
-    ).all(...keys, limit);
-  } else {
-    rows = db.prepare("SELECT * FROM posts WHERE status='published' ORDER BY created_at DESC LIMIT ?").all(limit);
+    where.push(`channel IN (${keys.map(() => '?').join(',')})`);
+    params.push(...keys);
   }
+
+  if (q) {
+    // Title, body and article — an article number is how the catalogues label
+    // a position, so it must be searchable verbatim.
+    where.push('(title LIKE ? OR body LIKE ? OR article LIKE ?)');
+    const like = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+    params.push(like, like, like);
+  }
+
+  const rows = db.prepare(
+    `SELECT * FROM posts WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
+  ).all(...params, limit);
 
   const customer = findCustomer(tgid(req));
   const inCart = new Set(
@@ -200,6 +220,25 @@ app.get('/api/feed', (req, res) => {
       : []
   );
   res.json({ posts: rows.map((p) => ({ ...shapePost(p), inCart: inCart.has(p.id) })) });
+});
+
+// The catalogue chips: every catalogue with how much is in it right now, so a
+// client never taps into an empty filter. «Товари в наявності» is flagged —
+// it is the only catalogue that means "ready to ship", and Maryna wants it to
+// stand out from the rest.
+app.get('/api/catalogs', (req, res) => {
+  const counts = new Map(
+    db.prepare("SELECT channel, COUNT(*) n FROM posts WHERE status='published' GROUP BY channel")
+      .all().map((r) => [r.channel, r.n])
+  );
+  const catalogs = listChannels()
+    .filter((c) => c.kind !== 'main')
+    .map((c) => ({ ...c, count: counts.get(c.key) || 0, inStock: c.key === IN_STOCK_KEY }))
+    // In stock first, then the fullest catalogues — an empty one is useless.
+    .sort((a, b) => (b.inStock - a.inStock) || (b.count - a.count));
+
+  const total = catalogs.reduce((s, c) => s + c.count, 0);
+  res.json({ catalogs, total, inStockKey: IN_STOCK_KEY });
 });
 
 // Photo proxy: the bot token must never reach the browser.

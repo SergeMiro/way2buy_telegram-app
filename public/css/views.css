@@ -351,79 +351,250 @@
   margin-bottom: var(--w2b-space-4);
 }
 
-/* ── примірочна: the badge on the nav button ─────────────────────────────── */
-.nav__btn--cart { position: relative; }
-.nav__badge {
-  position: absolute;
-  top: 6px;
-  left: 50%;
-  margin-left: 8px;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--w2b-radius-pill);
-  background: var(--w2b-accent, #e8c477);
-  color: #14122b;
-  font-size: 11px;
-  font-weight: var(--w2b-fw-bold);
-  line-height: 18px;
-  text-align: center;
+/* =============================================================================
+   MAISON LAYER — the storefront look (Chanel / Hermès / D&G reference).
+   Rules of the house:
+     • ink on paper, one accent (orange) reserved for «в наявності»
+     • straight edges, hairline rules, no glow, no gradient buttons
+     • uppercase Jost with wide tracking for anything interactive,
+       Cormorant Garamond for names and numbers
+     • the photograph is the loudest element on the screen
+============================================================================= */
+
+/* ── type: display headings become serif, controls become wide caps ───────── */
+.section-title {
+  font-family: var(--w2b-font-display);
+  font-weight: var(--w2b-fw-regular);
+  font-size: var(--w2b-fs-xl);
+  letter-spacing: 0.01em;
+  margin: var(--w2b-space-8) 0 var(--w2b-space-4);
+}
+.sheet__title {
+  font-weight: var(--w2b-fw-regular);
+  font-size: var(--w2b-fs-xl);
+  letter-spacing: 0.01em;
+}
+.topbar__name { font-family: var(--w2b-font-display); font-weight: var(--w2b-fw-medium); }
+.topbar__sub, .field__label, .stat__label {
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: var(--w2b-fs-2xs);
+}
+.stat__value, .wallet__amount, .row__amount { font-family: var(--w2b-font-display); }
+
+/* ── buttons: rectangles, caps, hairlines ─────────────────────────────────── */
+.btn {
+  border-radius: 0;
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-weight: var(--w2b-fw-regular);
+  font-size: var(--w2b-fs-xs);
+  padding: 14px var(--w2b-space-5);
+}
+.btn--primary {
+  background: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+  box-shadow: none;
+}
+.btn--primary:hover { background: var(--w2b-primary-strong); box-shadow: none; }
+.btn--ghost { border: 1px solid var(--w2b-line-strong); background: transparent; }
+.btn--ghost:hover { background: var(--w2b-surface-3); }
+.btn:active { transform: none; opacity: 0.72; }
+
+/* ── the search field: one rule under the text, nothing else ──────────────── */
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-3);
+  padding: var(--w2b-space-2) 0;
+  border-bottom: 1px solid var(--w2b-line-strong);
+}
+.search__icon { flex: none; width: 16px; height: 16px; stroke: var(--w2b-text-subtle); fill: none; stroke-width: 1.5; }
+.search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--w2b-text);
+  font-family: var(--w2b-font-body);
+  font-size: var(--w2b-fs-base);
+  letter-spacing: 0.02em;
+  padding: 6px 0;
+}
+.search__input::placeholder {
+  color: var(--w2b-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: var(--w2b-fs-2xs);
+}
+.search__input:focus { outline: none; }
+.search__clear {
+  flex: none;
+  color: var(--w2b-text-subtle);
+  font-size: var(--w2b-fs-sm);
+  padding: 4px;
 }
 
-/* ── catalogue grid: pictures to choose from, nothing to read ────────────── */
+/* ── filter row: text labels, an underline for the active one ─────────────── */
+.chips {
+  display: flex;
+  gap: var(--w2b-space-5);
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: var(--w2b-space-1) 0 var(--w2b-space-2);
+  border-bottom: 1px solid var(--w2b-line);
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--w2b-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: var(--w2b-fs-2xs);
+  font-weight: var(--w2b-fw-regular);
+  white-space: nowrap;
+}
+.chip__count { margin-left: 5px; opacity: 0.55; letter-spacing: 0; }
+.chip.is-active {
+  color: var(--w2b-text);
+  background: none;
+  border-bottom-color: var(--w2b-text);
+  font-weight: var(--w2b-fw-medium);
+}
+/* «Товари в наявності» — the only coloured control in the app. */
+.chip--stock {
+  color: var(--w2b-accent);
+  padding: 6px 12px;
+  border: 1px solid var(--w2b-accent);
+  margin-right: var(--w2b-space-2);
+}
+.chip--stock::before {
+  content: "";
+  display: inline-block;
+  width: 5px; height: 5px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--w2b-accent);
+  vertical-align: middle;
+}
+.chip--stock.is-active {
+  background: var(--w2b-accent);
+  color: #fff;
+  border-color: var(--w2b-accent);
+}
+.chip--stock.is-active::before { background: #fff; }
+
+/* ── the vitrine: photographs first ───────────────────────────────────────── */
+.vitrine-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w2b-space-3);
+  margin-top: var(--w2b-space-5);
+}
+.vitrine-head__title {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-xl);
+  font-weight: var(--w2b-fw-regular);
+}
+.vitrine-head__count {
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: var(--w2b-fs-2xs);
+  color: var(--w2b-text-subtle);
+}
+
 .tiles {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--w2b-space-3);
+  gap: var(--w2b-space-5) var(--w2b-space-3);
 }
-.tile {
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--w2b-radius-lg, 18px);
-  background: var(--w2b-surface-1);
-  box-shadow: var(--w2b-inset-hairline);
-  overflow: hidden;
-}
+.tile { display: flex; flex-direction: column; background: none; }
 .tile__media {
   position: relative;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 3 / 4;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 44px;
-  background: var(--w2b-surface-2);
+  font-size: 46px;
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  overflow: hidden;
 }
 .tile__media img { width: 100%; height: 100%; object-fit: cover; }
 .tile__chan {
   position: absolute;
-  top: 8px; left: 8px;
-  padding: 3px 8px;
-  border-radius: var(--w2b-radius-pill);
-  background: color-mix(in srgb, #14122b 70%, transparent);
-  color: #fff;
-  font-size: var(--w2b-fs-2xs);
+  top: 0; left: 0;
+  padding: 5px 9px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--w2b-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: 9px;
 }
-.tile__body { padding: var(--w2b-space-3); display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.tile--stock .tile__chan { background: var(--w2b-accent); color: #fff; }
+.tile__body { padding: var(--w2b-space-3) 0 0; display: flex; flex-direction: column; gap: 4px; flex: 1; }
 .tile__title {
-  font-size: var(--w2b-fs-sm);
-  font-weight: var(--w2b-fw-bold);
-  line-height: 1.25;
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-md);
+  font-weight: var(--w2b-fw-regular);
+  line-height: 1.2;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.tile__art { font-size: var(--w2b-fs-2xs); color: var(--w2b-text-subtle); }
-.tile__btn { margin-top: auto; width: 100%; justify-content: center; }
-.tile__btn.is-in { color: var(--w2b-ok-text); }
+.tile__art {
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: 10px;
+  color: var(--w2b-text-subtle);
+}
+.tile__price { font-family: var(--w2b-font-display); font-size: var(--w2b-fs-base); }
+.tile__btn {
+  margin-top: var(--w2b-space-3);
+  width: 100%;
+  padding: 11px 8px;
+  border: 1px solid var(--w2b-text);
+  background: none;
+  color: var(--w2b-text);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: 10px;
+}
+.tile__btn:hover { background: var(--w2b-text); color: var(--w2b-on-primary); }
+.tile__btn.is-in {
+  border-color: var(--w2b-line-strong);
+  color: var(--w2b-text-subtle);
+  background: none;
+}
 
-/* ── the fitting room rows + the one send button ─────────────────────────── */
-.fit-row { display: flex; align-items: center; gap: var(--w2b-space-3); }
+/* ── примірочна ───────────────────────────────────────────────────────────── */
+.nav__btn--cart { position: relative; }
+.nav__badge {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  margin-left: 7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
 .fit-row__thumb {
-  width: 56px; height: 56px;
+  width: 62px; height: 78px;
   flex: none;
-  border-radius: 14px;
-  background: var(--w2b-surface-2);
+  background: var(--w2b-surface-3);
   display: flex; align-items: center; justify-content: center;
   font-size: 26px;
   overflow: hidden;
@@ -432,16 +603,208 @@
 .coupon {
   display: flex;
   align-items: center;
-  gap: var(--w2b-space-3);
-  padding: var(--w2b-space-3) var(--w2b-space-4);
-  border-radius: var(--w2b-radius-lg, 18px);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--w2b-accent, #e8c477) 22%, transparent), transparent);
-  box-shadow: var(--w2b-inset-hairline);
+  gap: var(--w2b-space-4);
+  padding: var(--w2b-space-4);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-text);
 }
 .coupon__badge {
   font-family: var(--w2b-font-display);
-  font-size: var(--w2b-fs-lg, 22px);
-  font-weight: var(--w2b-fw-bold);
-  color: var(--w2b-accent, #e8c477);
+  font-size: var(--w2b-fs-2xl);
+  font-weight: var(--w2b-fw-regular);
+  line-height: 1;
 }
-.btn--send { width: 100%; justify-content: center; font-size: var(--w2b-fs-md); padding: 16px; }
+.btn--send { width: 100%; padding: 18px; font-size: var(--w2b-fs-xs); }
+
+/* ── empty state: a line of prose, centred, no box ────────────────────────── */
+.empty {
+  padding: var(--w2b-space-10) var(--w2b-space-5);
+  text-align: center;
+  color: var(--w2b-text-subtle);
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-md);
+  background: none;
+  border: 0;
+}
+
+/* ── wordmark + header ────────────────────────────────────────────────────── */
+.wordmark {
+  text-align: center;
+  padding: var(--w2b-space-3) 0 var(--w2b-space-4);
+  border-bottom: 1px solid var(--w2b-line);
+  margin-bottom: var(--w2b-space-4);
+}
+.wordmark__name {
+  font-family: var(--w2b-font-body);
+  font-weight: var(--w2b-fw-regular);
+  text-transform: uppercase;
+  letter-spacing: 0.42em;
+  font-size: var(--w2b-fs-sm);
+  text-indent: 0.42em; /* optical centring against the trailing letterspace */
+}
+.wordmark__sub {
+  margin-top: 4px;
+  font-family: var(--w2b-font-display);
+  font-style: italic;
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-subtle);
+}
+.topbar { padding-bottom: var(--w2b-space-5); }
+.topbar__avatar {
+  border-radius: 0;
+  width: 42px; height: 42px;
+  background: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+  font-weight: var(--w2b-fw-regular);
+  font-size: var(--w2b-fs-sm);
+  letter-spacing: 0.04em;
+  box-shadow: none;
+}
+.topbar__name { font-size: var(--w2b-fs-lg); letter-spacing: 0.01em; }
+.topbar__sub { color: var(--w2b-text-subtle); }
+
+/* The bell is a drawn glyph, not an emoji: a coloured emoji is the one thing
+   that breaks a monochrome storefront. */
+.bell {
+  width: 38px; height: 38px;
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.bell svg { width: 17px; height: 17px; fill: none; stroke: var(--w2b-text); stroke-width: 1.4; }
+.notif-badge {
+  position: absolute;
+  top: -6px; right: -6px;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ── bottom navigation: wide caps, a rule instead of a glow ───────────────── */
+.nav {
+  background: color-mix(in srgb, var(--w2b-bg) 92%, transparent);
+  border-top: 1px solid var(--w2b-line-strong);
+}
+.nav__btn {
+  gap: 5px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--w2b-text-subtle);
+}
+.nav__btn svg { width: 20px; height: 20px; stroke-width: 1.2; }
+.nav__btn.is-active { color: var(--w2b-text); }
+.nav__btn.is-active svg { stroke-width: 1.6; }
+.nav__btn.is-active::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  width: 14px; height: 1px;
+  border-radius: 0;
+  background: var(--w2b-text);
+  box-shadow: none;
+}
+
+/* Emoji placeholders stay until the real channel photos arrive — desaturated
+   so a demo screen still reads as one palette. Real photos are untouched. */
+.ph { filter: grayscale(1); opacity: 0.5; }
+
+.demobar { background: var(--w2b-surface-1); border-bottom: 1px solid var(--w2b-line); }
+.demobar__label { letter-spacing: var(--w2b-ls-caps); }
+.demobar__dot { background: var(--w2b-accent); }
+
+/* ── panels & rows: paper cards with a hairline, no radius ────────────────── */
+.panel {
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+.panel__title { font-family: var(--w2b-font-display); font-weight: var(--w2b-fw-regular); font-size: var(--w2b-fs-lg); }
+.row {
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+.row__title { font-weight: var(--w2b-fw-regular); }
+.row__icon { border-radius: 0; background: var(--w2b-surface-3); }
+.stat { background: var(--w2b-surface-1); border: 1px solid var(--w2b-line); border-radius: 0; box-shadow: none; }
+.field__input, .field__select, .field__textarea {
+  border-radius: 0;
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line-strong);
+}
+.seg { border-radius: 0; background: none; border: 1px solid var(--w2b-line); }
+.seg__btn {
+  border-radius: 0;
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: 10px;
+}
+.seg__btn.is-active { background: var(--w2b-primary); color: var(--w2b-on-primary); }
+.pill {
+  border-radius: 0;
+  background: none;
+  border: 1px solid var(--w2b-line);
+  box-shadow: none;
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: 9px;
+}
+.pill--ok { color: var(--w2b-ok-text); border-color: color-mix(in srgb, var(--w2b-ok) 45%, transparent); }
+.pill--warn { color: var(--w2b-accent); border-color: color-mix(in srgb, var(--w2b-accent) 45%, transparent); }
+.sheet__panel { border-radius: 0; }
+
+/* ── discount cards on paper ──────────────────────────────────────────────
+   A card is the one ink-dark island in a light app. Rather than restating a
+   colour per element, the card RE-BINDS the palette tokens inside its own
+   scope: every nested component (code chip, dashed rule, countdown) then reads
+   the inverted values automatically. The bone VIP card re-binds them back.  */
+.card {
+  --w2b-text:        #ffffff;
+  --w2b-text-muted:  rgba(255, 255, 255, 0.72);
+  --w2b-text-subtle: rgba(255, 255, 255, 0.55);
+  --w2b-line:        rgba(255, 255, 255, 0.18);
+  --w2b-line-strong: rgba(255, 255, 255, 0.34);
+  --w2b-gold-soft:   #ffffff;
+  --w2b-danger-text: #e8836a;
+  border-radius: 0;
+  border-color: transparent;
+  color: var(--w2b-text);
+  box-shadow: none;
+}
+.card__title { font-weight: var(--w2b-fw-regular); }
+.card__percent-num { font-weight: var(--w2b-fw-regular); }
+.card__code { background: rgba(255, 255, 255, 0.08); border-radius: 0; }
+.card__code-value { font-family: var(--w2b-font-body); }
+.card__copy {
+  border-radius: 0;
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: 9px;
+}
+
+/* The bone card: dark ink on light stock. */
+.card--vip {
+  --w2b-text:        #11100f;
+  --w2b-text-muted:  #56514c;
+  --w2b-text-subtle: #857e76;
+  --w2b-line:        rgba(17, 16, 15, 0.14);
+  --w2b-line-strong: rgba(17, 16, 15, 0.3);
+  --w2b-gold-soft:   #11100f;
+}
+.card--vip .card__code { background: rgba(17, 16, 15, 0.06); }
+
+/* Tiles: names vary in length, so the buttons must still line up. */
+.tile__title { min-height: 2.4em; }
+.tile__btn { margin-top: auto; }
+.tile { height: 100%; }

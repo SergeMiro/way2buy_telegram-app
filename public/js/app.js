@@ -32,6 +32,10 @@
     birthday: null,
     cart: { items: [], count: 0, promo: null, draft: '' },
     cartCount: 0,
+    catalogs: [],
+    catalogTotal: 0,
+    inStockKey: 'available',
+    search: '',
     admin: {
       customers: [], campaigns: [], report: null, reportPeriod: 'day',
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
@@ -245,7 +249,11 @@
       ? (tiersOn ? c.loyalty.tierName + ' · ' : '') + usd(c.loyalty.totalSpent) + ' покупок'
       : 'Гість';
     var unread = state.notifications.unread;
-    return '<header class="topbar">' +
+    return '<div class="wordmark">' +
+        '<div class="wordmark__name">Way2Buy</div>' +
+        '<div class="wordmark__sub">клуб байєра Марини</div>' +
+      '</div>' +
+      '<header class="topbar">' +
       '<div class="topbar__avatar">' + esc(initials) + '</div>' +
       '<div class="topbar__meta">' +
         '<div class="topbar__name">' + esc(c ? c.name : 'Вітаємо у Way2Buy') + '</div>' +
@@ -253,7 +261,9 @@
       '</div>' +
       '<div class="topbar__aside">' +
         (c && c.loyalty && tiersOn ? tierBadge(c.loyalty) : '') +
-        '<button class="bell" type="button" data-action="notifications" aria-label="Повідомлення">🔔' +
+        '<button class="bell" type="button" data-action="notifications" aria-label="Повідомлення">' +
+          '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+            '<path d="M18 16V11a6 6 0 1 0-12 0v5l-1.5 2.5h15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>' +
           '<span class="notif-badge" data-count="' + unread + '"' + (unread ? '' : ' hidden') + '>' + unread + '</span>' +
         '</button>' +
       '</div>' +
@@ -424,41 +434,86 @@
     var url = (p.photoUrls && p.photoUrls[0]) || null;
     return url
       ? '<img src="' + esc(url) + '" alt="' + esc(p.title || '') + '" loading="lazy" />'
-      : esc(p.image_url || '🛍️');
+      // The emoji stand-in lives in its own element so CSS can desaturate it
+      // without touching the labels drawn over the photo.
+      : '<span class="ph">' + esc(p.image_url || '🛍️') + '</span>';
   }
 
   function tileHtml(p) {
     var ch = p.channelMeta || {};
     var inCart = Boolean(p.inCart);
-    return '<article class="tile">' +
+    var isStock = ch.key === state.inStockKey;
+    return '<article class="tile' + (isStock ? ' tile--stock' : '') + '">' +
       '<div class="tile__media">' + postMediaHtml(p) +
-        '<span class="tile__chan">' + esc((ch.emoji || '🛍️') + ' ' + (ch.title || p.channel)) + '</span>' +
+        '<span class="tile__chan">' + esc(isStock ? 'В наявності' : (ch.title || p.channel)) + '</span>' +
       '</div>' +
       '<div class="tile__body">' +
         '<div class="tile__title">' + esc(p.title || 'Позиція') + '</div>' +
-        (p.article ? '<div class="tile__art">арт. ' + esc(p.article) + '</div>' : '') +
-        (p.price ? '<div class="tile__art">' + esc(money(p.price, p.currency)) + '</div>' : '') +
-        '<button class="btn ' + (inCart ? 'btn--ghost tile__btn is-in' : 'btn--primary tile__btn') +
+        (p.article ? '<div class="tile__art">' + esc(p.article) + '</div>' : '') +
+        (p.price ? '<div class="tile__price">' + esc(money(p.price, p.currency)) + '</div>' : '') +
+        '<button class="tile__btn' + (inCart ? ' is-in' : '') +
           '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
-          (inCart ? 'У примірочній ✓' : 'Хочу цю позицію') + '</button>' +
+          (inCart ? 'У примірочній' : 'Хочу') + '</button>' +
       '</div>' +
     '</article>';
   }
 
-  // ── Каталоги: one chip per catalogue channel, pictures below ──────────────
-  function renderCatalog() {
-    var catalogs = (state.config.channels || []).filter(function (c) { return c.kind !== 'main'; });
-    var chips = [{ key: 'all', title: 'Все', emoji: '✨' }].concat(catalogs);
+  // ── Каталоги: search, filters, vitrine ────────────────────────────────────
+  //  The filter row is deliberately plain text with an underline — except
+  //  «В наявності», which is the one thing that means "ready to ship" and is
+  //  the only coloured control in the app.
+  function searchHtml() {
+    var q = state.search || '';
+    return '<div class="search">' +
+      '<svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true">' +
+        '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>' +
+      '<input class="search__input" id="searchInput" type="search" ' +
+        'placeholder="Пошук за назвою або артикулом" value="' + esc(q) + '" ' +
+        'autocomplete="off" enterkeyhint="search" />' +
+      (q ? '<button class="search__clear" type="button" data-search-clear aria-label="Очистити">×</button>' : '') +
+    '</div>';
+  }
 
-    var html = topbarHtml() + '<div class="stack">' +
-      '<div class="chips">' + chips.map(function (c) {
-        return '<button class="chip' + (state.feedChannel === c.key ? ' is-active' : '') +
-          '" data-channel="' + esc(c.key) + '">' + esc((c.emoji || '') + ' ' + c.title) + '</button>';
-      }).join('') + '</div>';
+  function chipsHtml() {
+    var list = state.catalogs || [];
+    var stock = list.filter(function (c) { return c.inStock; });
+    var rest = list.filter(function (c) { return !c.inStock; });
+
+    var chip = function (c) {
+      var active = state.feedChannel === c.key;
+      return '<button class="chip' + (c.inStock ? ' chip--stock' : '') + (active ? ' is-active' : '') +
+        '" data-channel="' + esc(c.key) + '">' + esc(c.title) +
+        (c.count ? '<span class="chip__count">' + c.count + '</span>' : '') + '</button>';
+    };
+
+    return '<div class="chips">' +
+      stock.map(chip).join('') +
+      '<button class="chip' + (state.feedChannel === 'all' ? ' is-active' : '') +
+        '" data-channel="all">Усе' +
+        (state.catalogTotal ? '<span class="chip__count">' + state.catalogTotal + '</span>' : '') +
+      '</button>' +
+      rest.map(chip).join('') +
+    '</div>';
+  }
+
+  function renderCatalog() {
+    var current = (state.catalogs || []).filter(function (c) { return c.key === state.feedChannel; })[0];
+    var title = state.search
+      ? 'Пошук'
+      : (current ? current.title : 'Усі каталоги');
+
+    var html = topbarHtml() + '<div class="stack">' + searchHtml() + chipsHtml();
+
+    html += '<div class="vitrine-head">' +
+      '<span class="vitrine-head__title">' + esc(title) + '</span>' +
+      '<span class="vitrine-head__count">' + state.feed.length + ' позицій</span>' +
+    '</div>';
 
     html += state.feed.length
       ? '<div class="tiles">' + state.feed.map(tileHtml).join('') + '</div>'
-      : '<div class="empty">У цьому каталозі ще немає позицій.</div>';
+      : '<div class="empty">' + (state.search
+          ? 'За запитом «' + esc(state.search) + '» нічого не знайшли'
+          : 'У цьому каталозі ще немає позицій') + '</div>';
 
     return html + '</div>';
   }
@@ -510,7 +565,7 @@
     html += c.items.map(function (i) {
       return '<div class="row">' +
         '<div class="fit-row__thumb">' +
-          (i.photo ? '<img src="' + esc(i.photo) + '" alt="" loading="lazy" />' : esc(i.emoji || '🛍️')) +
+          (i.photo ? '<img src="' + esc(i.photo) + '" alt="" loading="lazy" />' : '<span class="ph">' + esc(i.emoji || '🛍️') + '</span>') +
         '</div>' +
         '<div class="row__body">' +
           '<div class="row__title">' + esc(i.title || 'Позиція') + '</div>' +
@@ -1234,11 +1289,12 @@
       state.purchases = r[3];
       state.birthday = r[1].birthday || (r[0].birthday || null);
     } else if (tab === 'catalog') {
-      // Catalogue tab: one specific catalogue, or all of them at once.
-      var cf = state.feedChannel && state.feedChannel !== 'all'
-        ? await api.feed(state.feedChannel)
-        : await api.feedKind('catalog');
-      state.feed = cf.posts || [];
+      var both = await Promise.all([loadVitrine(), state.catalogs.length ? null : api.catalogs()]);
+      if (both[1]) {
+        state.catalogs = both[1].catalogs || [];
+        state.catalogTotal = both[1].total || 0;
+        state.inStockKey = both[1].inStockKey || 'available';
+      }
     } else if (tab === 'feed') {
       var f = await api.feedKind('main');
       state.feed = f.posts || [];
@@ -1264,6 +1320,37 @@
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
       }
     }
+  }
+
+  // Search wins over the chip: a query looks across every catalogue.
+  async function loadVitrine() {
+    var r = state.search
+      ? await api.feedSearch(state.search)
+      : (state.feedChannel && state.feedChannel !== 'all'
+          ? await api.feed(state.feedChannel)
+          : await api.feedKind('catalog'));
+    state.feed = r.posts || [];
+    return r;
+  }
+
+  // Typing re-queries the server without repainting the whole screen, so the
+  // input never loses focus mid-word.
+  var searchTimer = null;
+  async function refreshVitrine() {
+    try {
+      await loadVitrine();
+      var grid = $app.querySelector('.tiles');
+      var head = $app.querySelector('.vitrine-head__count');
+      var empty = $app.querySelector('.empty');
+      if (head) head.textContent = state.feed.length + ' позицій';
+      var tiles = state.feed.map(tileHtml).join('');
+      if (grid) {
+        if (state.feed.length) grid.innerHTML = tiles;
+        else grid.outerHTML = '<div class="empty">За запитом «' + esc(state.search) + '» нічого не знайшли</div>';
+      } else if (empty && state.feed.length) {
+        empty.outerHTML = '<div class="tiles">' + tiles + '</div>';
+      }
+    } catch (e) { toast(e.message, 'error'); }
   }
 
   async function loadPopular() {
@@ -1336,6 +1423,14 @@
     var chip = t.closest('[data-channel]');
     if (chip) {
       state.feedChannel = chip.getAttribute('data-channel');
+      // Tapping a catalogue is an explicit choice — it clears an active search.
+      state.search = '';
+      go('catalog');
+      return;
+    }
+
+    if (t.closest('[data-search-clear]')) {
+      state.search = '';
       go('catalog');
       return;
     }
@@ -1485,6 +1580,14 @@
         go('home');
       } catch (err) { toast(err.message, 'error'); }
     }
+  });
+
+  // Dynamic search: 220 ms after the last keystroke, only the grid repaints.
+  document.addEventListener('input', function (e) {
+    if (e.target.id !== 'searchInput') return;
+    state.search = e.target.value.trim();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(refreshVitrine, 220);
   });
 
   document.addEventListener('submit', async function (e) {

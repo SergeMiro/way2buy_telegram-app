@@ -62,8 +62,11 @@
     config: function () { return request('GET', '/api/config'); },
     me: function () { return request('GET', '/api/me'); },
     feed: function (channel) { return request('GET', '/api/feed', undefined, channel && channel !== 'all' ? { channel: channel } : {}); },
-    // kind='catalog' → all ~15 catalogues at once; kind='main' → the channel feed.
+    // kind='catalog' → all catalogues at once; kind='main' → the channel feed.
     feedKind: function (kind) { return request('GET', '/api/feed', undefined, { kind: kind }); },
+    // Search spans every catalogue, whatever chip is selected.
+    feedSearch: function (q) { return request('GET', '/api/feed', undefined, { kind: 'catalog', q: q }); },
+    catalogs: function () { return request('GET', '/api/catalogs'); },
     purchases: function () { return request('GET', '/api/purchases'); },
     discounts: function () { return request('GET', '/api/discounts'); },
     notifications: function () { return request('GET', '/api/notifications'); },

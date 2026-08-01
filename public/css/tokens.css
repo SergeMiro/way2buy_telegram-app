@@ -25,47 +25,55 @@
 ============================================================================= */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* ---- Canvas & surfaces (velvet indigo, elevation by lightness + glow) ---- */
-  --w2b-bg:            #14122b; /* app canvas */
-  --w2b-bg-deep:       #0e0c1e; /* behind sheets / scrims */
-  --w2b-surface-1:     #1c1a38; /* resting card / row */
-  --w2b-surface-2:     #24213f; /* raised: sheet panel, chat input */
-  --w2b-surface-3:     #2c2949; /* hover / active raise */
-  --w2b-line:          rgba(255, 255, 255, 0.09); /* hairline border */
-  --w2b-line-strong:   rgba(255, 255, 255, 0.16);
-  --w2b-scrim:         rgba(8, 6, 20, 0.66);       /* sheet backdrop */
+  /* ---- Canvas & surfaces --------------------------------------------------
+     Maison palette: écru paper, white cards, hairline rules. Elevation comes
+     from a 1px line and whitespace, never from a glow — that is what makes a
+     Chanel / Hermès / D&G surface read as expensive rather than as an app.  */
+  --w2b-bg:            #f6f4f1; /* app canvas — warm paper */
+  --w2b-bg-deep:       #ece8e3; /* behind sheets / scrims */
+  --w2b-surface-1:     #ffffff; /* resting card / row */
+  --w2b-surface-2:     #fbfaf8; /* raised: sheet panel, inputs */
+  --w2b-surface-3:     #f1eeea; /* hover / active raise */
+  --w2b-line:          rgba(17, 16, 15, 0.12); /* hairline border */
+  --w2b-line-strong:   rgba(17, 16, 15, 0.28);
+  --w2b-scrim:         rgba(28, 26, 24, 0.38);  /* sheet backdrop */
 
-  /* ---- Text (near-white with a violet cast; all verified AA on --w2b-bg) --- */
-  --w2b-text:          #f4f2ff; /* primary body      — 16.4:1 on bg */
-  --w2b-text-muted:    #b8b3d9; /* secondary         —  9.0:1 on bg */
-  --w2b-text-subtle:   #9791ba; /* tertiary / hints  —  5.5:1 on bg */
-  --w2b-ink:           #14122b; /* dark text FOR USE ON metallic/gold bands */
+  /* ---- Text (near-black on paper; all AA+ on --w2b-bg) -------------------- */
+  --w2b-text:          #11100f; /* primary body      — 16.9:1 on bg */
+  --w2b-text-muted:    #56514c; /* secondary         —  7.6:1 on bg */
+  --w2b-text-subtle:   #857e76; /* tertiary / hints  —  4.6:1 on bg */
+  --w2b-ink:           #ffffff; /* text FOR USE ON the black primary fill */
 
-  /* ---- Brand hues ---------------------------------------------------------- */
-  --w2b-gold:          #e8c477; /* house accent */
-  --w2b-gold-strong:   #d4a94e;
-  --w2b-gold-soft:     #f0cd7f;
-  --w2b-violet:        #8b7bf6; /* secondary accent */
-  --w2b-violet-soft:   #a99bff;
-  --w2b-rose:          #f4a6c0; /* birthday */
-  --w2b-emerald:       #4fd6a3; /* holiday */
-  --w2b-platinum:      #d8dde8; /* VIP */
+  /* ---- Brand hues ----------------------------------------------------------
+     One accent only. Orange is reserved for «Товари в наявності» — the single
+     thing on the screen that means "ready to ship"; everything else is ink on
+     paper, so the accent cannot be missed.                                   */
+  --w2b-gold:          #11100f; /* house accent is now ink, not metal */
+  --w2b-gold-strong:   #000000;
+  --w2b-gold-soft:     #3a3733;
+  --w2b-accent:        #d4602a; /* in-stock / attention — 4.6:1 on paper */
+  --w2b-accent-soft:   #f4e4dc;
+  --w2b-violet:        #4a4741;
+  --w2b-violet-soft:   #6d675f;
+  --w2b-rose:          #b08d7a; /* birthday */
+  --w2b-emerald:       #4a6b52; /* holiday */
+  --w2b-platinum:      #8c867d; /* VIP */
 
-  /* ---- Status (text tokens tuned to pass AA on dark surfaces) -------------- */
-  --w2b-ok:            #4fd6a3; /*  8.9:1 on bg */
-  --w2b-ok-text:       #7ee6c2;
-  --w2b-warn:          #f0cd7f;
-  --w2b-danger:        #ff5c72; /* urgent accent / ring  — 6.0:1 on bg */
-  --w2b-danger-text:   #ff8a9b; /* urgent COUNTDOWN TEXT — 8.1:1 on bg */
-  --w2b-danger-solid:  #d9243c; /* filled count badge — white text on this = 4.9:1 (AA) */
+  /* ---- Status -------------------------------------------------------------- */
+  --w2b-ok:            #2f6b46;
+  --w2b-ok-text:       #2f6b46;
+  --w2b-warn:          #a06a12;
+  --w2b-danger:        #b3261e;
+  --w2b-danger-text:   #b3261e;
+  --w2b-danger-solid:  #b3261e;
 
   /* ---- Semantic aliases (prefer these in components) ----------------------- */
-  --w2b-primary:            var(--w2b-gold);
-  --w2b-primary-strong:     var(--w2b-gold-strong);
-  --w2b-on-primary:         var(--w2b-ink);   /* dark ink on gold — 10.8:1 */
-  --w2b-focus-ring:         var(--w2b-gold-soft);
+  --w2b-primary:            #11100f;
+  --w2b-primary-strong:     #000000;
+  --w2b-on-primary:         #ffffff;  /* white on black — 18.4:1 */
+  --w2b-focus-ring:         #11100f;
 
   /* ===========================================================================
      Card variant gradients
@@ -75,35 +83,39 @@
                --w2b-ink text if any text sits on it)
      *-glow  → the ambient outer glow color for that variant
   ============================================================================ */
-  --w2b-birthday-base: linear-gradient(150deg, #3a1f30 0%, #2a1626 55%, #201028 100%);
-  --w2b-birthday-rim:  linear-gradient(120deg, #f4a6c0 0%, #f0cd7f 100%);
-  --w2b-birthday-glow: rgba(244, 166, 192, 0.42);
+     A discount card is now a black or bone panel, not a jewel. Text on the
+     *-base fills is --w2b-text-invert (white) except the bone VIP card.      */
+  --w2b-text-invert:   #ffffff;
 
-  --w2b-holiday-base:  linear-gradient(150deg, #123027 0%, #0f2a34 55%, #10203a 100%);
-  --w2b-holiday-rim:   linear-gradient(120deg, #4fd6a3 0%, #f0cd7f 100%);
-  --w2b-holiday-glow:  rgba(79, 214, 163, 0.40);
+  --w2b-birthday-base: linear-gradient(160deg, #1b1917 0%, #11100f 100%);
+  --w2b-birthday-rim:  linear-gradient(120deg, #c9a227 0%, #8a6d16 100%);
+  --w2b-birthday-glow: rgba(17, 16, 15, 0.16);
 
-  --w2b-vip-base:      linear-gradient(150deg, #24242f 0%, #1b1b26 55%, #16161f 100%);
-  --w2b-vip-rim:       linear-gradient(120deg, #eef1f7 0%, #b9c1d4 45%, #8a93ab 100%);
-  --w2b-vip-glow:      rgba(216, 221, 232, 0.30);
+  --w2b-holiday-base:  linear-gradient(160deg, #23261f 0%, #14150f 100%);
+  --w2b-holiday-rim:   linear-gradient(120deg, #4a6b52 0%, #2f4436 100%);
+  --w2b-holiday-glow:  rgba(17, 16, 15, 0.16);
 
-  --w2b-generic-base:  linear-gradient(150deg, #262347 0%, #1e1c3a 55%, #17152e 100%);
-  --w2b-generic-rim:   linear-gradient(120deg, #8b7bf6 0%, #e8c477 100%);
-  --w2b-generic-glow:  rgba(139, 123, 246, 0.34);
+  --w2b-vip-base:      linear-gradient(160deg, #efeae2 0%, #ddd6cb 100%);
+  --w2b-vip-rim:       linear-gradient(120deg, #b9b0a3 0%, #8c867d 100%);
+  --w2b-vip-glow:      rgba(17, 16, 15, 0.10);
 
-  /* Shared shimmer sweep highlight (a diagonal glint that travels across a card) */
+  --w2b-generic-base:  linear-gradient(160deg, #1b1917 0%, #11100f 100%);
+  --w2b-generic-rim:   linear-gradient(120deg, #6d675f 0%, #3a3733 100%);
+  --w2b-generic-glow:  rgba(17, 16, 15, 0.14);
+
+  /* A single restrained glint. Luxury surfaces do not sparkle. */
   --w2b-shimmer: linear-gradient(
       100deg,
-      transparent 20%,
-      rgba(255, 255, 255, 0.14) 42%,
-      rgba(255, 255, 255, 0.30) 50%,
-      rgba(255, 255, 255, 0.14) 58%,
-      transparent 80%);
+      transparent 30%,
+      rgba(255, 255, 255, 0.07) 48%,
+      rgba(255, 255, 255, 0.12) 50%,
+      rgba(255, 255, 255, 0.07) 52%,
+      transparent 70%);
 
-  /* ---- Tier badge fills (ink text sits on these — all AA) ------------------ */
-  --w2b-silver-fill:   linear-gradient(120deg, #e6e9f0 0%, #b7bfd0 100%);
-  --w2b-gold-fill:     linear-gradient(120deg, #f4d98a 0%, #d4a94e 100%);
-  --w2b-platinum-fill: linear-gradient(120deg, #ffffff 0%, #cfd6e4 55%, #a7b0c6 100%);
+  /* ---- Tier badge fills ---------------------------------------------------- */
+  --w2b-silver-fill:   linear-gradient(120deg, #eceae6 0%, #d6d1c8 100%);
+  --w2b-gold-fill:     linear-gradient(120deg, #1b1917 0%, #11100f 100%);
+  --w2b-platinum-fill: linear-gradient(120deg, #ffffff 0%, #e2ddd4 100%);
 
   /* ---- Spacing scale (4px base) ------------------------------------------- */
   --w2b-space-0:  0;
@@ -118,26 +130,30 @@
   --w2b-space-12: 48px;
   --w2b-space-16: 64px;
 
-  /* ---- Radius scale -------------------------------------------------------- */
-  --w2b-radius-xs:   6px;
-  --w2b-radius-sm:   10px;
-  --w2b-radius-md:   14px;
-  --w2b-radius-lg:   20px;
-  --w2b-radius-xl:   28px;
-  --w2b-radius-card: 22px;
-  --w2b-radius-pill: 999px;
+  /* ---- Radius scale --------------------------------------------------------
+     Near-square. A maison storefront uses straight edges; rounded corners are
+     what makes an interface read as a consumer app.                          */
+  --w2b-radius-xs:   0px;
+  --w2b-radius-sm:   0px;
+  --w2b-radius-md:   2px;
+  --w2b-radius-lg:   2px;
+  --w2b-radius-xl:   3px;
+  --w2b-radius-card: 2px;
+  --w2b-radius-pill: 999px; /* kept for the one counter badge */
 
-  /* ---- Elevation / shadow (soft-depth, violet-tinted) ---------------------- */
-  --w2b-shadow-1: 0 1px 2px rgba(8, 6, 20, 0.40);
-  --w2b-shadow-2: 0 6px 18px -6px rgba(8, 6, 20, 0.55);
-  --w2b-shadow-3: 0 18px 42px -12px rgba(8, 6, 20, 0.72);
-  --w2b-shadow-sheet: 0 -12px 40px -8px rgba(8, 6, 20, 0.7);
-  --w2b-glow-gold:     0 10px 34px -10px var(--w2b-birthday-glow);
+  /* ---- Elevation: hairlines and paper shadows, nothing floating ----------- */
+  --w2b-shadow-1: 0 1px 1px rgba(17, 16, 15, 0.04);
+  --w2b-shadow-2: 0 2px 10px -6px rgba(17, 16, 15, 0.18);
+  --w2b-shadow-3: 0 10px 30px -18px rgba(17, 16, 15, 0.30);
+  --w2b-shadow-sheet: 0 -10px 40px -18px rgba(17, 16, 15, 0.28);
+  --w2b-glow-gold:     none;
   --w2b-inset-hairline: inset 0 0 0 1px var(--w2b-line);
 
-  /* ---- Typography ---------------------------------------------------------- */
-  --w2b-font-display: 'Unbounded', 'Manrope', system-ui, sans-serif;
-  --w2b-font-body:    system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', sans-serif;
+  /* ---- Typography ----------------------------------------------------------
+     Cormorant Garamond (Cyrillic-capable didone-ish serif) for display,
+     Jost (geometric grotesque) for UI — the pairing every maison site uses.  */
+  --w2b-font-display: 'Cormorant Garamond', 'Times New Roman', Georgia, serif;
+  --w2b-font-body:    'Jost', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --w2b-font-mono:    ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', monospace;
 
   --w2b-fs-2xs:  11px;
@@ -161,9 +177,9 @@
   --w2b-fw-bold:    700;
   --w2b-fw-black:   800;
 
-  --w2b-ls-tight: -0.02em;
-  --w2b-ls-wide:  0.04em;
-  --w2b-ls-caps:  0.12em; /* uppercase eyebrow labels */
+  --w2b-ls-tight: 0.005em;   /* a serif display does not want negative tracking */
+  --w2b-ls-wide:  0.08em;
+  --w2b-ls-caps:  0.18em;    /* uppercase labels — wide, as on a boutique sign */
 
   /* ---- Motion (durations + easings). Keep entrances 150–320ms, ease-out. --- */
   --w2b-dur-fast: 150ms;
