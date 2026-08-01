@@ -10,6 +10,7 @@ import { db, init } from './db.js';
 import { loyaltyFor, snapshotBatch, cashbackRule, TIERS } from './loyalty.js';
 import {
   listChannels, getChannel, liveMode, publishPost, ingestChannelPost, fetchPhoto,
+  handleMessage, botInfo, webhookInfo, checkChannelAccess,
 } from './telegram.js';
 import { buildReport, sendReport } from './ai.js';
 import * as campaigns from './campaigns.js';
@@ -593,8 +594,38 @@ app.post('/api/admin/report/send', requireAdmin, async (req, res) => {
 app.post('/telegram/webhook', (req, res) => {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (secret && req.get('x-telegram-bot-api-secret-token') !== secret) return res.sendStatus(401);
-  try { ingestChannelPost(req.body); } catch { /* swallow — never break TG */ }
+  // Telegram retries anything that is not a fast 200, so the ack goes first and
+  // the work is best-effort: a bad update must never stall the channel bridge.
   res.sendStatus(200);
+  try { ingestChannelPost(req.body); } catch { /* swallow — never break TG */ }
+  void Promise.resolve(handleMessage(req.body)).catch(() => {});
+});
+
+// Bot / webhook diagnostics for the owner: "is the bot really an admin of this
+// channel?" answered without waiting for someone to post.
+app.get('/api/admin/telegram', requireAdmin, async (req, res) => {
+  try {
+    const [me, hook] = await Promise.all([botInfo(), webhookInfo()]);
+    const channels = listChannels({ includeDisabled: true });
+    const checks = await Promise.all(channels.map(async (c) => {
+      const target = c.chatId || c.username;
+      if (!target) return { key: c.key, title: c.title, bound: false, error: 'no username/chat_id' };
+      try {
+        const info = await checkChannelAccess(target);
+        // Seeing the chat means the bot is in it; store the numeric id so
+        // private channels and username changes keep working.
+        if (!c.chatId && info.id) {
+          db.prepare('UPDATE channels SET chat_id=? WHERE key=?').run(String(info.id), c.key);
+        }
+        return { key: c.key, title: c.title, bound: true, chatId: info.id, username: info.username };
+      } catch (e) {
+        return { key: c.key, title: c.title, bound: false, error: String(e.message || e) };
+      }
+    }));
+    res.json({ bot: me, webhook: hook, channels: checks, live: liveMode() });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
 });
 
 // ── helpers ────────────────────────────────────────────────────────────────

@@ -274,9 +274,106 @@ export async function publishPost({ channel, title, body, price, currency, artic
   return { id: Number(info.lastInsertRowid), tg_message_id, live: liveMode() };
 }
 
-export async function sendToUser(tgUserId, text) {
+export async function sendToUser(tgUserId, text, extra = {}) {
   if (!liveMode()) return { simulated: true, text };
-  return tg('sendMessage', { chat_id: tgUserId, text, parse_mode: 'HTML' });
+  return tg('sendMessage', { chat_id: tgUserId, text, parse_mode: 'HTML', ...extra });
+}
+
+// ── private chat: /start → the button that opens the Mini App ─────────────
+//
+// A client who writes to the bot must land in the catalogue in one tap. This
+// is also the moment Telegram lets the bot DM them later: a bot may only
+// message a user who has started it, so every birthday/inquiry notification
+// depends on this handshake having happened.
+export async function handleMessage(update) {
+  const msg = update?.message;
+  if (!msg || msg.chat?.type !== 'private') return null;
+  const text = String(msg.text || '').trim();
+  if (!text.startsWith('/start')) return null;
+
+  const appUrl = process.env.PUBLIC_URL || '';
+  const name = msg.from?.first_name ? `, ${msg.from.first_name}` : '';
+  const body =
+    `<b>Way2Buy</b>\n\nВітаємо${escapeHtml(name)}! Тут усі наші каталоги в одному місці: ` +
+    'обираєте позицію, додаєте в примірочну — і Даша відповість щодо ціни та наявності.\n\n' +
+    'Бонуси клубу теж тут: знижка на день народження та бонус за покупку.';
+
+  if (!liveMode()) return { simulated: true, body };
+  return tg('sendMessage', {
+    chat_id: msg.chat.id,
+    text: body,
+    parse_mode: 'HTML',
+    reply_markup: appUrl
+      ? { inline_keyboard: [[{ text: '🛍️ Відкрити каталог', web_app: { url: appUrl } }]] }
+      : undefined,
+  });
+}
+
+// The persistent "Open app" button next to the message field, and the command
+// list — both are one-time account settings, applied by scripts/telegram.mjs.
+export async function configureBot(publicUrl) {
+  if (!liveMode()) return { skipped: 'no token' };
+  const url = String(publicUrl || '').replace(/\/$/, '');
+  const out = {};
+  out.commands = await tg('setMyCommands', {
+    commands: [{ command: 'start', description: 'Відкрити каталог Way2Buy' }],
+  });
+  if (url) {
+    out.menuButton = await tg('setChatMenuButton', {
+      menu_button: { type: 'web_app', text: 'Каталог', web_app: { url } },
+    });
+  }
+  out.description = await tg('setMyShortDescription', {
+    short_description: 'Каталоги Way2Buy, примірочна та бонуси клубу',
+  });
+  return out;
+}
+
+export async function webhookInfo() {
+  if (!liveMode()) return { skipped: 'no token' };
+  return tg('getWebhookInfo', {});
+}
+
+export async function botInfo() {
+  if (!liveMode()) return { skipped: 'no token' };
+  return tg('getMe', {});
+}
+
+// Is the bot able to RECEIVE this channel's posts?
+//
+// getChat succeeds for any public channel, member or not — so it proves the
+// channel exists, nothing more. Only an 'administrator' membership makes
+// Telegram deliver `channel_post` updates, which is the whole bridge. Both
+// facts are reported separately so the setup screen can say which one is
+// missing.
+export async function checkChannelAccess(usernameOrId) {
+  if (!liveMode()) return { skipped: 'no token' };
+  const chat = String(usernameOrId).startsWith('@') || /^-?\d+$/.test(String(usernameOrId))
+    ? usernameOrId
+    : `@${usernameOrId}`;
+  const info = await tg('getChat', { chat_id: chat });
+
+  let status = 'unknown';
+  let canPost = false;
+  try {
+    const me = await tg('getMe', {});
+    const member = await tg('getChatMember', { chat_id: info.id, user_id: me.id });
+    status = member.status;
+    canPost = Boolean(member.can_post_messages);
+  } catch {
+    // 'member not found' → the bot is not in the channel at all.
+    status = 'left';
+  }
+
+  return {
+    id: info.id,
+    title: info.title,
+    username: info.username,
+    type: info.type,
+    status,
+    isAdmin: status === 'administrator' || status === 'creator',
+    canPost,
+  };
 }
 
 export async function setWebhook(publicUrl) {
