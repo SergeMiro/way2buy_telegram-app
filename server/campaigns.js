@@ -372,7 +372,8 @@ export function materialize(campaignId, now) {
 export function discountsFor(customerId) {
   const promos = customerId
     ? db.prepare(
-        `SELECT p.id, p.code, p.percent, p.expires_at, p.created_at, p.campaign_id,
+        `SELECT p.id, p.code, p.percent, p.mode, p.amount_usd, p.min_order_usd, p.rule_key,
+                p.reason, p.expires_at, p.created_at, p.campaign_id,
                 c.type AS campaign_type, c.name AS campaign_name
            FROM promo_codes p
            LEFT JOIN campaigns c ON c.id = p.campaign_id
@@ -392,22 +393,33 @@ export function discountsFor(customerId) {
 
   return {
     promos: promos.map((p) => {
-      const variant = p.campaign_type || 'generic';
+      // A promo issued by a rule (birthday) carries that rule's variant even
+      // when it has no campaign behind it.
+      const variant = p.campaign_type || p.rule_key || 'generic';
+      const mode = p.mode || 'percent';
       return {
         id: p.id,
-        variant,
+        variant: VARIANT_EMOJI[variant] ? variant : 'generic',
+        // `mode` + `value` are what the UI renders; `percent` stays for older
+        // clients that only understood percentages.
+        mode,
+        value: mode === 'fixed' ? Number(p.amount_usd || 0) : Number(p.percent || 0),
         percent: p.percent,
+        minOrderUsd: Number(p.min_order_usd || 0),
         code: p.code,
         expiresAt: p.expires_at,
         campaignName: p.campaign_name || null,
-        title: p.campaign_name || 'Промокод',
+        title: p.campaign_name || p.reason || 'Промокод',
         emoji: VARIANT_EMOJI[variant] || VARIANT_EMOJI.generic,
       };
     }),
     publicCampaigns: publicRows.map((c) => ({
       id: c.id,
       variant: c.type,
+      mode: 'percent',
+      value: Number(c.percent || 0),
       percent: c.percent,
+      minOrderUsd: 0,
       code: null,
       expiresAt: c.ends_at,
       campaignName: c.name,

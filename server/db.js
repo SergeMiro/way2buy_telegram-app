@@ -218,6 +218,241 @@ export function migrate() {
     ON promo_codes(campaign_id, customer_id, substr(created_at, 1, 4));
   CREATE INDEX IF NOT EXISTS idx_promo_campaign ON promo_codes(campaign_id);
   `);
+
+  migrateV2();
+}
+
+// ── V2: Maryna's final rules (31.07.2026) ─────────────────────────────────
+//  See docs/BUSINESS-LOGIC.md. Everything additive so an existing database
+//  migrates in place with no data loss.
+//
+//  What it adds:
+//   • discount_rules  — the two bonuses as ADMIN-EDITABLE rows, switchable
+//     between $ and % (the "гибко в $ или %" requirement). Holidays get the
+//     same mode/value/min_order columns so a holiday is configured identically.
+//   • birthday_claims — the audit log for every birthday-discount request, so
+//     each new request can be checked against the date we already have on file.
+//   • channels        — channels become data, not two hardcoded constants: one
+//     main channel + N catalog channels, auto-registered on first post.
+//   • purchases.cost_usd / revenue — the profit side (what Maryna paid in China
+//     vs what the client paid), plus the "remind me next day" tracking columns.
+function migrateV2() {
+  const addColumn = (table, column, ddl) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!cols.some((c) => c.name === column)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
+  };
+
+  db.exec(`
+  -- The bonus rules Maryna edits from the admin panel. One row per rule; the
+  -- key is stable so code can look a rule up without an id.
+  CREATE TABLE IF NOT EXISTS discount_rules (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    key           TEXT NOT NULL UNIQUE,   -- 'cashback' | 'birthday'
+    kind          TEXT NOT NULL,          -- same as key today; separate so a rule can be cloned
+    name          TEXT NOT NULL,
+    emoji         TEXT,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    mode          TEXT NOT NULL DEFAULT 'fixed',  -- 'fixed' ($) | 'percent' (%)
+    value         REAL NOT NULL,          -- $ when mode='fixed', % when mode='percent'
+    min_order_usd REAL DEFAULT 0,         -- minimum single-order amount to qualify
+    cap_usd       REAL,                   -- cashback: max accumulated unspent balance
+    valid_days    INTEGER,                -- birthday: how long the discount lives
+    updated_at    TEXT NOT NULL,
+    updated_by    TEXT
+  );
+
+  -- Every birthday-discount request, granted or not. This is the "система
+  -- записи ДР клиентов" — we log the date the client claimed, the date we
+  -- already had, and the verdict, so a second request can be cross-checked.
+  CREATE TABLE IF NOT EXISTS birthday_claims (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id       INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    claimed_birthday  TEXT,               -- what the client entered, YYYY-MM-DD or MM-DD
+    on_file_birthday  TEXT,               -- what we already had (null on first claim)
+    year              INTEGER NOT NULL,   -- calendar year of the claim
+    verdict           TEXT NOT NULL,      -- granted|mismatch|already_claimed|out_of_window|disabled|invalid_date
+    promo_code_id     INTEGER NULL REFERENCES promo_codes(id) ON DELETE SET NULL,
+    note              TEXT,
+    created_at        TEXT NOT NULL
+  );
+
+  -- Telegram channels as data. kind='main' is the 4500-subscriber channel;
+  -- kind='catalog' are the ~15 catalogues. Auto-registered on first post.
+  CREATE TABLE IF NOT EXISTS channels (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    key         TEXT NOT NULL UNIQUE,     -- slug used in posts.channel
+    chat_id     TEXT UNIQUE,              -- numeric Telegram chat id (-100…)
+    username    TEXT,                     -- public @username, may be null for private
+    title       TEXT NOT NULL,
+    emoji       TEXT,
+    kind        TEXT NOT NULL DEFAULT 'catalog',  -- 'main' | 'catalog'
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_bday_claims_customer ON birthday_claims(customer_id, year);
+  -- One GRANTED birthday discount per customer per year; further requests are
+  -- logged with a non-granted verdict and do not collide with this index.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_bday_granted_year
+    ON birthday_claims(customer_id, year) WHERE verdict = 'granted';
+  `);
+
+  // customers: the fields Maryna actually asked for (ім'я / адреса / телефон /
+  // дата народження) + provenance of the birthday, so we know whether the date
+  // came from the client's own claim or was entered by an admin.
+  addColumn('customers', 'address', 'TEXT');
+  addColumn('customers', 'birthday_source', "TEXT");        // 'claim' | 'admin' | 'seed'
+  addColumn('customers', 'birthday_recorded_at', 'TEXT');
+
+  // promo_codes: fixed-amount discounts ($50 on a birthday) alongside percent
+  // ones, plus the minimum order the discount needs ($500 for the birthday).
+  addColumn('promo_codes', 'mode', "TEXT NOT NULL DEFAULT 'percent'");
+  addColumn('promo_codes', 'amount_usd', 'REAL');
+  addColumn('promo_codes', 'min_order_usd', 'REAL DEFAULT 0');
+  addColumn('promo_codes', 'rule_key', 'TEXT');
+
+  // holidays: configured exactly like the other rules — $ or %, own minimum
+  // order, own validity — so the admin panel treats them uniformly.
+  addColumn('holidays', 'mode', "TEXT NOT NULL DEFAULT 'percent'");
+  addColumn('holidays', 'value', 'REAL');
+  addColumn('holidays', 'min_order_usd', 'REAL DEFAULT 0');
+  addColumn('holidays', 'valid_days', 'INTEGER DEFAULT 14');
+  // Back-fill `value` from the legacy default_percent column.
+  db.exec('UPDATE holidays SET value = default_percent WHERE value IS NULL');
+
+  // purchases: the profit side. amount_usd stays "what the client paid";
+  // cost_usd is everything Maryna spent (factory + shipping + fees).
+  addColumn('purchases', 'cost_usd', 'REAL');
+  addColumn('purchases', 'cost_note', 'TEXT');
+  addColumn('purchases', 'cost_entered_at', 'TEXT');
+  addColumn('purchases', 'cost_reminded_at', 'TEXT');
+  addColumn('purchases', 'discount_usd', 'REAL DEFAULT 0');
+
+  // posts: what a forwarded catalogue post actually carries — photos and an
+  // article number — plus album grouping and edit tracking.
+  addColumn('posts', 'article', 'TEXT');
+  addColumn('posts', 'photos_json', 'TEXT');
+  addColumn('posts', 'media_group_id', 'TEXT');
+  addColumn('posts', 'edited_at', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_posts_media_group ON posts(media_group_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_purchases_cost ON purchases(cost_usd, created_at)');
+
+  seedRulesAndChannels();
+  migrateV3();
+}
+
+// ── V3: the fitting room, the inquiry to Dasha, and item popularity ───────
+//  Maryna, 31.07.2026: клиенты "ползая по каталогам добавляют в примерочную",
+//  затем одним экраном формируют сообщение Даше; каждое попадание в
+//  примерочную должно попадать в статистику (месяц + год).
+//
+//   • cart_items  — the fitting room itself: what one client is currently
+//     considering. Short-lived: cleared when the inquiry is sent.
+//   • cart_events — the append-only journal every statistic is computed from.
+//     It keeps a SNAPSHOT of the item (title/article/channel), so popularity
+//     survives a post being edited or deleted in the channel, and it is never
+//     deleted — removing an item from the fitting room writes a new 'removed'
+//     row instead.
+//   • inquiries   — the message the client sent (their own free text + the
+//     items), the record Dasha and Maryna both work from.
+function migrateV3() {
+  db.exec(`
+  CREATE TABLE IF NOT EXISTS cart_items (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id  INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    post_id      INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+    title        TEXT,
+    article      TEXT,
+    channel      TEXT,
+    photo        TEXT,                  -- file_id or emoji, snapshot at add time
+    price        REAL,
+    currency     TEXT,
+    note         TEXT,
+    status       TEXT NOT NULL DEFAULT 'active',  -- 'active' | 'sent'
+    inquiry_id   INTEGER,
+    created_at   TEXT NOT NULL,
+    sent_at      TEXT
+  );
+
+  -- One row per action, forever. All popularity reporting reads only this.
+  CREATE TABLE IF NOT EXISTS cart_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id  INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+    post_id      INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+    action       TEXT NOT NULL,         -- 'added' | 'removed' | 'sent'
+    title        TEXT,
+    article      TEXT,
+    channel      TEXT,
+    price_usd    REAL,
+    inquiry_id   INTEGER,
+    created_at   TEXT NOT NULL,
+    -- Denormalised time buckets: the month/year statistics are a GROUP BY on
+    -- these instead of a substr() over every row.
+    ym           TEXT NOT NULL,         -- 'YYYY-MM'
+    y            TEXT NOT NULL          -- 'YYYY'
+  );
+
+  CREATE TABLE IF NOT EXISTS inquiries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id   INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    message       TEXT,                 -- what the client typed themselves
+    items_json    TEXT NOT NULL,        -- snapshot of the items at send time
+    items_count   INTEGER NOT NULL DEFAULT 0,
+    promo_code_id INTEGER REFERENCES promo_codes(id) ON DELETE SET NULL,
+    promo_label   TEXT,                 -- '$50' / '20%' as shown to the client
+    status        TEXT NOT NULL DEFAULT 'new',   -- 'new' | 'answered' | 'closed'
+    answered_by   TEXT,
+    answered_at   TEXT,
+    created_at    TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_cart_customer ON cart_items(customer_id, status);
+  CREATE INDEX IF NOT EXISTS idx_cart_events_ym ON cart_events(ym, action);
+  CREATE INDEX IF NOT EXISTS idx_cart_events_y ON cart_events(y, action);
+  CREATE INDEX IF NOT EXISTS idx_cart_events_post ON cart_events(post_id, action);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_status ON inquiries(status, created_at);
+  -- The same post cannot sit twice in one fitting room.
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_cart_active
+    ON cart_items(customer_id, post_id) WHERE status = 'active';
+  `);
+}
+
+// Rule rows + channel rows are configuration, not demo data: they are created
+// if missing on every boot (including on a production database) and never
+// overwritten, so an admin edit is not reverted by a restart.
+function seedRulesAndChannels() {
+  const ts = new Date().toISOString();
+  const insRule = db.prepare(`INSERT OR IGNORE INTO discount_rules
+    (key,kind,name,emoji,enabled,mode,value,min_order_usd,cap_usd,valid_days,updated_at,updated_by)
+    VALUES (@key,@kind,@name,@emoji,1,@mode,@value,@min_order_usd,@cap_usd,@valid_days,@updated_at,'system')`);
+
+  // Maryna, 31.07.2026: "$2000 — это одна покупка" → $100 per single order of
+  // $2000+, accumulating to a hard $300 ceiling.
+  insRule.run({
+    key: 'cashback', kind: 'cashback', name: 'Кешбек за покупку', emoji: '💰',
+    mode: 'fixed', value: 100, min_order_usd: 2000, cap_usd: 300, valid_days: null,
+    updated_at: ts,
+  });
+  // "скидка 50$ на ДР от заказа 500$ … ДЕЙСТВУЕТ 1 месяц"
+  insRule.run({
+    key: 'birthday', kind: 'birthday', name: 'Знижка на день народження', emoji: '🎂',
+    mode: 'fixed', value: 50, min_order_usd: 500, cap_usd: null, valid_days: 30,
+    updated_at: ts,
+  });
+
+  const insChannel = db.prepare(`INSERT OR IGNORE INTO channels
+    (key,chat_id,username,title,emoji,kind,enabled,created_at)
+    VALUES (@key,@chat_id,@username,@title,@emoji,@kind,1,@created_at)`);
+  insChannel.run({
+    key: 'main', chat_id: process.env.CHANNEL_MAIN_CHAT_ID || null,
+    username: process.env.CHANNEL_MAIN || 'Way2Buy_Ukraine',
+    title: 'Way2Buy', emoji: '🛍️', kind: 'main', created_at: ts,
+  });
+  // Legacy demo channels — kept so existing seeded posts still resolve.
+  insChannel.run({ key: 'ukraine', chat_id: null, username: process.env.CHANNEL_UKRAINE || 'Way2Buy_Ukraine', title: 'Way2Buy Ukraine', emoji: '🇺🇦', kind: 'catalog', created_at: ts });
+  insChannel.run({ key: 'luxury',  chat_id: null, username: process.env.CHANNEL_LUXURY  || 'Way2Buy_Luxury',  title: 'Way2Buy Luxury',  emoji: '💎', kind: 'catalog', created_at: ts });
 }
 
 // ── Seed: a small, realistic dataset (5–10 customers) ──────────────────────
@@ -228,7 +463,7 @@ export function seed({ force = false } = {}) {
     // Children before parents (foreign_keys = ON). New pillar tables cleared too
     // so `--reseed` recreates a clean, deterministic dataset.
     db.exec(
-      'DELETE FROM notifications; DELETE FROM ai_messages; DELETE FROM ai_proposals; DELETE FROM ai_conversations; DELETE FROM scheduler_lock; DELETE FROM redemptions; DELETE FROM promo_codes; DELETE FROM events; DELETE FROM purchases; DELETE FROM posts; DELETE FROM campaigns; DELETE FROM holidays; DELETE FROM customers;'
+      'DELETE FROM notifications; DELETE FROM ai_messages; DELETE FROM ai_proposals; DELETE FROM ai_conversations; DELETE FROM scheduler_lock; DELETE FROM redemptions; DELETE FROM birthday_claims; DELETE FROM cart_events; DELETE FROM cart_items; DELETE FROM inquiries; DELETE FROM promo_codes; DELETE FROM events; DELETE FROM purchases; DELETE FROM posts; DELETE FROM campaigns; DELETE FROM holidays; DELETE FROM customers;'
     );
   }
 
@@ -237,11 +472,11 @@ export function seed({ force = false } = {}) {
   const daysAgo = (n) => iso(now.getTime() - n * 86400000);
 
   const insCustomer = db.prepare(`INSERT INTO customers
-    (tg_user_id, login, name, phone, email, birthday, city, consent, notes, created_at)
-    VALUES (@tg_user_id,@login,@name,@phone,@email,@birthday,@city,@consent,@notes,@created_at)`);
+    (tg_user_id, login, name, phone, email, birthday, city, address, birthday_source, birthday_recorded_at, consent, notes, created_at)
+    VALUES (@tg_user_id,@login,@name,@phone,@email,@birthday,@city,@address,'seed',@created_at,@consent,@notes,@created_at)`);
   const insPurchase = db.prepare(`INSERT INTO purchases
-    (customer_id,title,amount_usd,orig_amount,orig_currency,source_channel,invoice_ref,status,created_at)
-    VALUES (@customer_id,@title,@amount_usd,@orig_amount,@orig_currency,@source_channel,@invoice_ref,'confirmed',@created_at)`);
+    (customer_id,title,amount_usd,orig_amount,orig_currency,source_channel,invoice_ref,status,cost_usd,cost_entered_at,created_at)
+    VALUES (@customer_id,@title,@amount_usd,@orig_amount,@orig_currency,@source_channel,@invoice_ref,'confirmed',@cost_usd,@cost_entered_at,@created_at)`);
   const insPost = db.prepare(`INSERT INTO posts
     (channel,tg_message_id,title,body,price,currency,image_url,source,status,created_at)
     VALUES (@channel,@tg_message_id,@title,@body,@price,@currency,@image_url,@source,'published',@created_at)`);
@@ -254,20 +489,26 @@ export function seed({ force = false } = {}) {
     (customer_id,kind,title,body,promo_code_id,campaign_id,dedupe_key,in_app_status,dm_status,created_at)
     VALUES (@customer_id,@kind,@title,@body,@promo_code_id,@campaign_id,@dedupe_key,@in_app_status,'simulated',@created_at)`);
   const insHoliday = db.prepare(`INSERT INTO holidays
-    (name,month,day,emoji,default_percent,enabled,created_at)
-    VALUES (@name,@month,@day,@emoji,@default_percent,@enabled,@created_at)`);
+    (name,month,day,emoji,default_percent,enabled,mode,value,min_order_usd,valid_days,created_at)
+    VALUES (@name,@month,@day,@emoji,@default_percent,@enabled,'percent',@default_percent,0,14,@created_at)`);
   const insCampaign = db.prepare(`INSERT INTO campaigns
     (name,type,percent,audience_json,holiday_id,starts_at,ends_at,recurring,window_days,promo_valid_days,status,source,created_by,created_at,updated_at)
     VALUES (@name,@type,@percent,@audience_json,@holiday_id,@starts_at,@ends_at,@recurring,@window_days,@promo_valid_days,@status,@source,@created_by,@created_at,@updated_at)`);
 
+  // Катерина's birthday is set to *today's* MM-DD (real clock, not the fixed
+  // demo clock) so the birthday-claim flow can be exercised the moment the
+  // database is seeded — see docs/BUSINESS-LOGIC.md §7.1.
+  const realToday = new Date();
+  const todayMmDd = `${String(realToday.getUTCMonth() + 1).padStart(2, '0')}-${String(realToday.getUTCDate()).padStart(2, '0')}`;
+
   const customers = [
-    { tg_user_id: '100000001', login: 'olena_k',  name: 'Олена Ковальчук',  phone: '+380671112233', email: 'olena.k@gmail.com',  birthday: '1990-07-28', city: 'Київ',    consent: 1, notes: 'VIP, купує систематично' },
-    { tg_user_id: '100000002', login: 'iryna_d',  name: 'Ірина Демченко',   phone: '+380931234567', email: 'iryna.d@gmail.com',  birthday: '1988-03-14', city: 'Львів',   consent: 1, notes: '' },
-    { tg_user_id: '100000003', login: 'marina_v', name: 'Марина Волошина',  phone: '+13475550101',  email: 'marina.v@gmail.com', birthday: '1995-11-02', city: 'New York',consent: 1, notes: 'США, luxury' },
-    { tg_user_id: '100000004', login: 'kate_s',   name: 'Катерина Сидоренко',phone: '+380509998877', email: 'kate.s@gmail.com',   birthday: '1992-07-24', city: 'Одеса',   consent: 1, notes: 'ДР через 3 дні' },
-    { tg_user_id: '100000005', login: 'natali_p', name: 'Наталія Панченко', phone: '+380661239988', email: 'natali.p@gmail.com', birthday: '1985-01-19', city: 'Дніпро',   consent: 1, notes: 'купила один раз, не повертається' },
-    { tg_user_id: '100000006', login: 'yulia_h',  name: 'Юлія Гончар',      phone: '+380671114455', email: 'yulia.h@gmail.com',  birthday: '1998-09-30', city: 'Харків',  consent: 1, notes: '' },
-    { tg_user_id: '100000007', login: 'sofia_m',  name: 'Софія Мельник',    phone: '+13105550199',  email: 'sofia.m@gmail.com',  birthday: '1993-12-05', city: 'Los Angeles', consent: 1, notes: 'luxury, великі суми' },
+    { tg_user_id: '100000001', login: 'olena_k',  name: 'Олена Ковальчук',  phone: '+380671112233', email: 'olena.k@gmail.com',  birthday: '1990-07-28', city: 'Київ',    address: 'м. Київ, вул. Хрещатик 22, кв. 14',            consent: 1, notes: 'VIP, купує систематично' },
+    { tg_user_id: '100000002', login: 'iryna_d',  name: 'Ірина Демченко',   phone: '+380931234567', email: 'iryna.d@gmail.com',  birthday: '1988-03-14', city: 'Львів',   address: 'м. Львів, вул. Городоцька 108, кв. 3',          consent: 1, notes: '' },
+    { tg_user_id: '100000003', login: 'marina_v', name: 'Марина Волошина',  phone: '+13475550101',  email: 'marina.v@gmail.com', birthday: '1995-11-02', city: 'New York',address: '350 5th Ave, Apt 21B, New York, NY 10118',      consent: 1, notes: 'США, luxury' },
+    { tg_user_id: '100000004', login: 'kate_s',   name: 'Катерина Сидоренко',phone: '+380509998877', email: 'kate.s@gmail.com',  birthday: `1992-${todayMmDd}`, city: 'Одеса', address: 'м. Одеса, вул. Дерибасівська 5, кв. 9',       consent: 1, notes: 'ДР сьогодні — тестовий кейс для знижки' },
+    { tg_user_id: '100000005', login: 'natali_p', name: 'Наталія Панченко', phone: '+380661239988', email: 'natali.p@gmail.com', birthday: '1985-01-19', city: 'Дніпро',  address: 'м. Дніпро, пр. Яворницького 60, кв. 41',        consent: 1, notes: 'купила один раз, не повертається' },
+    { tg_user_id: '100000006', login: 'yulia_h',  name: 'Юлія Гончар',      phone: '+380671114455', email: 'yulia.h@gmail.com',  birthday: null,         city: 'Харків',  address: 'м. Харків, вул. Сумська 78, кв. 12',            consent: 1, notes: 'дата народження не вказана — перевірка першої заявки' },
+    { tg_user_id: '100000007', login: 'sofia_m',  name: 'Софія Мельник',    phone: '+13105550199',  email: 'sofia.m@gmail.com',  birthday: '1993-12-05', city: 'Los Angeles', address: '1234 Sunset Blvd, Apt 7, Los Angeles, CA 90026', consent: 1, notes: 'luxury, великі суми' },
   ];
 
   const ids = customers.map((c) => Number(insCustomer.run({ ...c, created_at: daysAgo(120 - customers.indexOf(c) * 5) }).lastInsertRowid));
@@ -315,15 +556,27 @@ export function seed({ force = false } = {}) {
     [6, 'Gucci ремінь', 520, 520, 'USD', 'luxury', 25],
     [6, 'Balenciaga кросівки', 950, 950, 'USD', 'luxury', 7],
   ];
-  for (const [ci, title, usd, orig, cur, ch, ago] of P) {
+  // cost_usd = what Maryna actually paid in China (factory + shipping + fees).
+  // Deterministic 52–68% of the sale price so the profit report has real
+  // numbers; the three most recent orders are left NULL on purpose so the
+  // "next day after the sale, remind me to enter the cost" flow is demonstrable.
+  P.forEach(([ci, title, usd, orig, cur, ch, ago], i) => {
+    const withCost = i < P.length - 3;
+    const cost = withCost ? Math.round(usd * (0.52 + ((i * 7) % 17) / 100) * 100) / 100 : null;
     insPurchase.run({
       customer_id: ids[ci], title, amount_usd: usd, orig_amount: orig,
-      orig_currency: cur, source_channel: ch, invoice_ref: null, created_at: daysAgo(ago),
+      orig_currency: cur, source_channel: ch, invoice_ref: null,
+      cost_usd: cost, cost_entered_at: cost === null ? null : daysAgo(ago),
+      created_at: daysAgo(ago),
     });
-  }
+  });
 
   // Feed posts — a few from each channel (source 'channel' = pulled from TG).
   const posts = [
+    // The main channel — the 4500-subscriber one. Its posts are the «Канал» tab.
+    { channel: 'main', title: 'Нове надходження сумок 👜', body: 'Дівчата, виклала нові позиції Chanel та Dior у каталогах. Дивіться у застосунку — тиснете «Хочу цю позицію», і я скажу ціну.', price: null, currency: 'USD', source: 'channel', ago: 0, img: '👜' },
+    { channel: 'main', title: 'Доставка США 10–14 днів ✈️', body: 'Замовлення цього тижня приходять до 20 числа. Оплата після підтвердження ціни.', price: null, currency: 'USD', source: 'channel', ago: 2, img: '✈️' },
+    { channel: 'main', title: 'Бонуси клубу 💛', body: '$100 бонусу за покупку від $2000 та $50 на день народження від замовлення $500. Все видно у застосунку.', price: null, currency: 'USD', source: 'channel', ago: 5, img: '💛' },
     { channel: 'ukraine', title: 'Levi\'s жіночий шкіряний ремінь', body: 'Оригінал з Macy\'s. Наявність — уточнюйте у боті 🤖', price: 1161, currency: 'UAH', source: 'channel', ago: 1, img: '👜' },
     { channel: 'ukraine', title: 'Lauren Ralph Lauren ремінь двосторонній', body: 'Топ-сервіс, мінімальна комісія 🇺🇦', price: 1935, currency: 'UAH', source: 'channel', ago: 1, img: '🧣' },
     { channel: 'ukraine', title: 'Calvin Klein сукня', body: 'Нова колекція. Доставка 10–14 днів.', price: 3480, currency: 'UAH', source: 'app', ago: 0, img: '👗' },
@@ -339,6 +592,73 @@ export function seed({ force = false } = {}) {
       image_url: p.img, source: p.source, created_at: daysAgo(p.ago),
     }).lastInsertRowid)
   );
+
+  // ── The 15 brand catalogues, as Maryna actually runs them ────────────────
+  //  One Telegram channel per brand, each a filter chip in the Mini App. Seeded
+  //  with two positions apiece so the catalogue tab, the filters and the
+  //  popularity report all have something real to show before the test channel
+  //  is connected.
+  const CATALOGS = [
+    { key: 'chanel',     title: 'Chanel',       emoji: '🖤', items: [['Chanel Classic Flap Medium', 'CH-1112'], ['Chanel 22 Small', 'CH-2205']] },
+    { key: 'dior',       title: 'Dior',         emoji: '🤍', items: [['Dior Lady D-Joy', 'DI-3301'], ['Dior Book Tote', 'DI-3390']] },
+    { key: 'lv',         title: 'Louis Vuitton', emoji: '🟤', items: [['LV Neverfull MM', 'LV-4410'], ['LV Pochette Métis', 'LV-4487']] },
+    { key: 'gucci',      title: 'Gucci',        emoji: '🟢', items: [['Gucci GG Marmont Small', 'GU-5510'], ['Gucci Jackie 1961', 'GU-5561']] },
+    { key: 'prada',      title: 'Prada',        emoji: '⚫', items: [['Prada Re-Edition 2005', 'PR-6612'], ['Prada Galleria Small', 'PR-6640']] },
+    { key: 'hermes',     title: 'Hermès',       emoji: '🟠', items: [['Hermès Evelyne III', 'HE-7701'], ['Hermès Garden Party', 'HE-7733']] },
+    { key: 'ysl',        title: 'Saint Laurent', emoji: '⬛', items: [['YSL Loulou Puffer', 'YS-8810'], ['YSL Kate Tassel', 'YS-8841']] },
+    { key: 'bottega',    title: 'Bottega Veneta', emoji: '🟩', items: [['Bottega Jodie Mini', 'BV-9910'], ['Bottega Cassette', 'BV-9955']] },
+    { key: 'balenciaga', title: 'Balenciaga',   emoji: '⬜', items: [['Balenciaga Hourglass', 'BA-1010'], ['Balenciaga City Bag', 'BA-1044']] },
+    { key: 'celine',     title: 'Celine',       emoji: '🟫', items: [['Celine Triomphe Teen', 'CE-1120'], ['Celine Belt Bag Nano', 'CE-1166']] },
+    { key: 'fendi',      title: 'Fendi',        emoji: '🟨', items: [['Fendi Baguette', 'FE-1230'], ['Fendi Peekaboo ISeeU', 'FE-1277']] },
+    { key: 'miumiu',     title: 'Miu Miu',      emoji: '💗', items: [['Miu Miu Wander Matelassé', 'MM-1340'], ['Miu Miu Arcadie', 'MM-1388']] },
+    { key: 'loewe',      title: 'Loewe',        emoji: '🟥', items: [['Loewe Puzzle Small', 'LO-1450'], ['Loewe Hammock Nano', 'LO-1499']] },
+    { key: 'chloe',      title: 'Chloé',        emoji: '🤎', items: [['Chloé Marcie Small', 'CL-1560'], ['Chloé Woody Tote', 'CL-1577']] },
+    { key: 'mk',         title: 'Michael Kors', emoji: '🩶', items: [['MK Hamilton Legacy', 'MK-1670'], ['MK Parker Medium', 'MK-1688']] },
+  ];
+
+  const insCatalogChannel = db.prepare(`INSERT OR IGNORE INTO channels
+    (key,chat_id,username,title,emoji,kind,enabled,created_at)
+    VALUES (?,NULL,NULL,?,?, 'catalog',1,?)`);
+  const catalogPostIds = [];
+  let catSeq = 0;
+  for (const cat of CATALOGS) {
+    insCatalogChannel.run(cat.key, cat.title, cat.emoji, daysAgo(60));
+    for (const [title, article] of cat.items) {
+      catSeq += 1;
+      const id = Number(db.prepare(`INSERT INTO posts
+        (channel,tg_message_id,title,body,price,currency,image_url,article,source,status,created_at)
+        VALUES (?,?,?,?,NULL,'USD',?,?, 'channel','published',?)`)
+        .run(cat.key, 2000 + catSeq, title,
+          'Ціну та наявність підтверджує Марина — натисніть «Хочу цю позицію».',
+          '👜', article, daysAgo(catSeq % 14))
+        .lastInsertRowid);
+      catalogPostIds.push({ id, channel: cat.key, title, article });
+    }
+  }
+
+  // ── Demo popularity: what has been tried on over this month and last ──────
+  //  Written straight into the journal (that is the only source the reports
+  //  read), so «Популярне» has a month AND a year to show.
+  const insCartEvent = db.prepare(`INSERT INTO cart_events
+    (customer_id,post_id,action,title,article,channel,price_usd,inquiry_id,created_at,ym,y)
+    VALUES (?,?,?,?,?,?,NULL,NULL,?,?,?)`);
+  const demoAdd = (customerId, item, ago, action = 'added') => {
+    const at = daysAgo(ago);
+    insCartEvent.run(customerId, item.id, action, item.title, item.article, item.channel,
+      at, at.slice(0, 7), at.slice(0, 4));
+  };
+  // Chanel Classic Flap is the runaway favourite, then Lady Dior, then LV.
+  [0, 1, 2, 3, 4, 5].forEach((n) => demoAdd(ids[n % ids.length], catalogPostIds[0], n % 12));
+  [0, 2, 4].forEach((n) => demoAdd(ids[n % ids.length], catalogPostIds[2], n + 1));
+  [1, 3].forEach((n) => demoAdd(ids[n % ids.length], catalogPostIds[4], n + 2));
+  demoAdd(ids[5], catalogPostIds[6], 3);
+  demoAdd(ids[6], catalogPostIds[8], 4);
+  // Two of them got as far as an actual question, one changed their mind.
+  demoAdd(ids[0], catalogPostIds[0], 1, 'sent');
+  demoAdd(ids[2], catalogPostIds[2], 2, 'sent');
+  demoAdd(ids[4], catalogPostIds[4], 3, 'removed');
+  // Last month, so the yearly view differs from the monthly one.
+  [40, 45, 52].forEach((ago, n) => demoAdd(ids[n % ids.length], catalogPostIds[1], ago));
 
   // Events — interest / return signals
   insEvent.run({ customer_id: ids[3], post_id: postIds[2], type: 'want', meta: null, created_at: daysAgo(0) });
@@ -395,14 +715,18 @@ export function seed({ force = false } = {}) {
 
   // Promo codes — materialized *from* the campaigns above, so `discountsFor()`
   // can join back and pick the right card variant (🎂 / 🎉 / 💎).
-  const bdayKate = Number(insPromo.run({ customer_id: ids[3], code: 'BDAY-KATE-30', percent: 30, reason: 'День народження 🎂', status: 'active', created_at: daysAgo(0), expires_at: daysAgo(-14), campaign_id: birthdayRuleId }).lastInsertRowid);
+  // Maryna's real birthday bonus: $50 fixed, from a $500 order, valid a month.
+  const bdayKate = Number(db.prepare(`INSERT INTO promo_codes
+    (customer_id,code,percent,mode,amount_usd,min_order_usd,rule_key,reason,status,created_at,expires_at,campaign_id)
+    VALUES (?,?,0,'fixed',50,500,'birthday',?, 'active',?,?,?)`)
+    .run(ids[3], 'BDAY-KATE-50', 'День народження 🎂', daysAgo(0), daysAgo(-30), birthdayRuleId).lastInsertRowid);
   const vipOlena = Number(insPromo.run({ customer_id: ids[0], code: 'VIP-OLENA-15', percent: 15, reason: 'Gold-клієнт', status: 'active', created_at: daysAgo(2), expires_at: daysAgo(-10), campaign_id: vipRuleId }).lastInsertRowid);
   const saleSofia = Number(insPromo.run({ customer_id: ids[6], code: 'SUMMER-SOFIA-20', percent: 20, reason: 'Літній SALE ☀️', status: 'active', created_at: daysAgo(1), expires_at: daysAgo(-9), campaign_id: summerSaleId }).lastInsertRowid);
 
   // Notifications — the in-app feed is the authoritative delivery channel
   // (ADR-005); dedupe_key is what makes a re-run a no-op.
-  insNotif.run({ customer_id: ids[3], kind: 'birthday', title: 'Вітаємо з днем народження! 🎂', body: 'Ваша персональна знижка 30% вже у «Покупках».', promo_code_id: bdayKate, campaign_id: birthdayRuleId, dedupe_key: `bday:${ids[3]}:2026`, in_app_status: 'unread', created_at: daysAgo(0) });
-  insNotif.run({ customer_id: ids[0], kind: 'near_reward', title: 'Ще трохи до наступних $100 💰', body: 'Кешбек нараховується за кожні $3000 покупок.', promo_code_id: null, campaign_id: null, dedupe_key: `near:${ids[0]}:2026-07`, in_app_status: 'unread', created_at: daysAgo(1) });
+  insNotif.run({ customer_id: ids[3], kind: 'birthday', title: 'Вітаємо з днем народження! 🎂', body: 'Ваша знижка $50 від замовлення $500 — промокод BDAY-KATE-50, діє 30 днів.', promo_code_id: bdayKate, campaign_id: birthdayRuleId, dedupe_key: `bday:${ids[3]}:2026`, in_app_status: 'unread', created_at: daysAgo(0) });
+  insNotif.run({ customer_id: ids[0], kind: 'near_reward', title: 'Бонус $100 за покупку від $2000 💰', body: 'Нараховуємо $100 за кожну покупку від $2000, накопичення до $300.', promo_code_id: null, campaign_id: null, dedupe_key: `near:${ids[0]}:2026-07`, in_app_status: 'unread', created_at: daysAgo(1) });
   insNotif.run({ customer_id: ids[0], kind: 'new_discount', title: 'VIP-знижка 15% активна 💎', body: `Промокод VIP-OLENA-15 діє до ${daysAgo(-10).slice(0, 10)}.`, promo_code_id: vipOlena, campaign_id: vipRuleId, dedupe_key: `promo:VIP-OLENA-15`, in_app_status: 'read', created_at: daysAgo(2) });
   insNotif.run({ customer_id: ids[6], kind: 'holiday', title: 'Літній SALE ☀️ −20%', body: 'Промокод SUMMER-SOFIA-20 у «Покупках».', promo_code_id: saleSofia, campaign_id: summerSaleId, dedupe_key: `promo:SUMMER-SOFIA-20`, in_app_status: 'unread', created_at: daysAgo(1) });
 }

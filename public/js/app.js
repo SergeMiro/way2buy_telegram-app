@@ -23,14 +23,34 @@
   var state = {
     config: null,
     me: null,
-    tab: 'home',
+    tab: 'catalog',
     feedChannel: 'all',
     discounts: { promos: [], publicCampaigns: [] },
     purchases: { purchases: [], promos: [], loyalty: null },
     feed: [],
     notifications: { notifications: [], unread: 0 },
-    admin: { customers: [], campaigns: [], report: null, reportPeriod: 'day' },
+    birthday: null,
+    cart: { items: [], count: 0, promo: null, draft: '' },
+    cartCount: 0,
+    admin: {
+      customers: [], campaigns: [], report: null, reportPeriod: 'day',
+      rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
+      inquiries: [], popular: null, popularPeriod: 'month',
+      adminTab: 'bonuses',
+    },
   };
+
+  // Every discount in the system is either a dollar amount or a percentage —
+  // that is the one toggle Maryna asked for, so the UI never assumes '%'.
+  function discountLabel(mode, value) {
+    var v = Number(value || 0);
+    if (mode === 'percent') return (Number.isInteger(v) ? v : v.toFixed(1)) + '%';
+    return usd(v);
+  }
+
+  function minOrderNote(minOrderUsd) {
+    return Number(minOrderUsd) > 0 ? ' від замовлення ' + usd(minOrderUsd) : '';
+  }
 
   /* ── tiny helpers ───────────────────────────────────────────────────────── */
 
@@ -163,12 +183,16 @@
         '<span class="card__emoji" aria-hidden="true">' + esc(d.emoji || '🏷️') + '</span>' +
         '<span class="card__label">' + esc(VARIANT_LABEL[variant]) + '</span>' +
       '</header>' +
+      // A card shows either "50" + "$" or "20" + "%" — the server tells us which.
       '<div class="card__percent">' +
-        '<span class="card__percent-num">' + esc(d.percent) + '</span>' +
-        '<span class="card__percent-sign">%</span>' +
+        '<span class="card__percent-num">' + esc(d.mode === 'percent' ? d.value : usd(d.value).replace('$', '')) + '</span>' +
+        '<span class="card__percent-sign">' + (d.mode === 'percent' ? '%' : '$') + '</span>' +
       '</div>' +
       '<p class="card__title">' + esc(d.title || d.campaignName || 'Знижка') + '</p>' +
-      '<p class="card__desc">' + esc(d.code ? 'Персональний промокод — діє на всі товари клубу' : 'Діє для всіх учасників клубу') + '</p>' +
+      '<p class="card__desc">' + esc(
+        (d.minOrderUsd ? 'Діє від замовлення ' + usd(d.minOrderUsd) + '. ' : '') +
+        (d.code ? 'Персональний промокод' : 'Діє для всіх учасників клубу')
+      ) + '</p>' +
       code + foot +
     '</article>';
   }
@@ -187,11 +211,14 @@
 
   /* ── loyalty widgets ────────────────────────────────────────────────────── */
 
+  // The ring fills with the bonus balance against its ceiling ($300), which is
+  // the only progress the client has now that tiers are hidden.
   function ringHtml(l) {
-    var caption = l.nextTier ? ('до ' + l.nextTier.name) : 'максимальний рівень';
-    return '<div class="loyalty-ring" style="--w2b-ring-pct: ' + (l.progressPct || 0) + '%">' +
+    var pct = l.progressPct || 0;
+    var caption = l.capUsd ? 'з ' + usd(l.capUsd) : 'бонуси';
+    return '<div class="loyalty-ring" style="--w2b-ring-pct: ' + pct + '%">' +
       '<div class="loyalty-ring__hole">' +
-        '<span class="loyalty-ring__value">' + (l.progressPct || 0) + '%</span>' +
+        '<span class="loyalty-ring__value">' + pct + '%</span>' +
         '<span class="loyalty-ring__caption">' + esc(caption) + '</span>' +
       '</div>' +
     '</div>';
@@ -199,17 +226,6 @@
 
   function tierBadge(l) {
     return '<span class="badge badge--' + esc(l.tier) + '">' + esc(l.tierName) + '</span>';
-  }
-
-  function milestonesHtml(l) {
-    var reached = (l.milestones || []).map(function (m) {
-      // The ✓ glyph comes from .milestone--reached::before — don't double it.
-      return '<span class="milestone milestone--reached">' + usd(m.thresholdUsd) + '</span>';
-    });
-    if (l.nextMilestone) {
-      reached.push('<span class="milestone">' + usd(l.nextMilestone.thresholdUsd) + '</span>');
-    }
-    return '<div class="milestone-row">' + reached.join('') + '</div>';
   }
 
   function badgesHtml(l) {
@@ -224,8 +240,9 @@
   function topbarHtml() {
     var c = state.me && state.me.customer;
     var initials = c ? c.name.split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('') : '👤';
+    var tiersOn = state.config && state.config.features && state.config.features.tiers;
     var sub = c && c.loyalty
-      ? c.loyalty.tierName + ' · ' + usd(c.loyalty.totalSpent) + ' покупок'
+      ? (tiersOn ? c.loyalty.tierName + ' · ' : '') + usd(c.loyalty.totalSpent) + ' покупок'
       : 'Гість';
     var unread = state.notifications.unread;
     return '<header class="topbar">' +
@@ -235,7 +252,7 @@
         '<div class="topbar__sub">' + esc(sub) + '</div>' +
       '</div>' +
       '<div class="topbar__aside">' +
-        (c && c.loyalty ? tierBadge(c.loyalty) : '') +
+        (c && c.loyalty && tiersOn ? tierBadge(c.loyalty) : '') +
         '<button class="bell" type="button" data-action="notifications" aria-label="Повідомлення">🔔' +
           '<span class="notif-badge" data-count="' + unread + '"' + (unread ? '' : ' hidden') + '>' + unread + '</span>' +
         '</button>' +
@@ -243,21 +260,88 @@
     '</header>';
   }
 
+  // The birthday block: one button. Either we already know the date (then the
+  // claim is a single tap and the server cross-checks it), or we ask for it once
+  // and record it. This is the whole "система записи ДР" from the client side.
+  function birthdayBlockHtml() {
+    var b = state.birthday || (state.me && state.me.birthday);
+    if (!b || !b.enabled) return '';
+    var label = discountLabel(b.mode, b.value) + minOrderNote(b.minOrderUsd);
+
+    if (b.state === 'claimed') {
+      return '<section class="panel">' +
+        '<div class="panel__title">🎂 Знижка на день народження</div>' +
+        '<p class="panel__note">Вже отримана цього року. Промокод — у вкладці «Покупки».</p>' +
+      '</section>';
+    }
+
+    if (b.state === 'unknown_date') {
+      return '<section class="panel">' +
+        '<div class="panel__title">🎂 Знижка ' + esc(label) + ' на день народження</div>' +
+        '<p class="panel__note">Вкажіть дату народження — ми запишемо її один раз, ' +
+          'і надалі знижка буде приходити сама. Діє ' + (b.validDays || 30) + ' днів.</p>' +
+        '<form class="stack" id="birthdayForm" style="margin-top:var(--w2b-space-3)">' +
+          '<label class="field"><span class="field__label">Дата народження</span>' +
+            '<input class="field__input" name="birthday" type="date" required /></label>' +
+          '<button class="btn btn--primary" type="submit">Отримати знижку</button>' +
+        '</form>' +
+      '</section>';
+    }
+
+    var win = b.window || {};
+    if (b.state === 'available') {
+      return '<section class="panel">' +
+        '<div class="panel__title">🎂 Знижка ' + esc(label) + ' чекає на вас</div>' +
+        '<p class="panel__note">Діє до ' + esc(dateShort(win.endsAt)) + '.</p>' +
+        '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+          '<button class="btn btn--primary" data-action="claim-birthday">Отримати знижку</button>' +
+        '</div>' +
+      '</section>';
+    }
+
+    // upcoming
+    return '<section class="panel">' +
+      '<div class="panel__title">🎂 Знижка ' + esc(label) + ' на день народження</div>' +
+      '<p class="panel__note">Стане доступною ' + esc(dateShort(win.startsAt)) +
+        ' і діятиме ' + (b.validDays || 30) + ' днів.</p>' +
+    '</section>';
+  }
+
+  function holidayCardsHtml() {
+    var list = (state.discounts && state.discounts.holidays) || [];
+    return list.map(function (h) {
+      return cardHtml({
+        variant: 'holiday',
+        mode: h.mode,
+        value: h.value,
+        minOrderUsd: h.minOrderUsd,
+        emoji: h.emoji,
+        title: h.name,
+        expiresAt: h.endsAt,
+      });
+    }).join('');
+  }
+
   function renderHome() {
     if (!state.me.registered) return renderJoin();
 
     var l = state.me.customer.loyalty;
+    var f = state.config.features || {};
     var cards = state.discounts.promos.concat(state.discounts.publicCampaigns);
 
     var html = topbarHtml() + '<div class="stack">';
 
-    // wallet
+    // wallet — cashback is now per single order, so the hint talks about the
+    // order size, not a lifetime total.
+    var ruleText = 'Правило: покупка від ' + usd(l.minOrderUsd) + ' → ' +
+      discountLabel(l.mode, l.value) + ' бонусу' +
+      (l.capUsd ? ', накопичення максимум ' + usd(l.capUsd) : '');
     html += '<section class="wallet">' + ringHtml(l) +
       '<div class="wallet__body">' +
         '<div class="wallet__amount">' + usd(l.cashbackAvailable) + '</div>' +
-        '<div class="wallet__caption">кешбек доступний до списання</div>' +
-        '<div class="wallet__hint">Ще ' + usd(l.toNextReward) + ' покупок — і ми нарахуємо ' +
-          usd(l.reward) + '. Правило: ' + usd(l.step) + ' → ' + usd(l.reward) + '.</div>' +
+        '<div class="wallet__caption">бонусів доступно до списання</div>' +
+        '<div class="wallet__hint">' + esc(ruleText) +
+          (l.capReached ? ' · ліміт досягнуто — використайте бонуси, щоб нараховувати далі' : '') + '</div>' +
         (l.cashbackAvailable > 0
           ? '<div class="wallet__actions"><button class="btn btn--primary" data-action="redeem">Списати ' + usd(l.cashbackAvailable) + '</button></div>'
           : '') +
@@ -268,48 +352,64 @@
     html += '<section class="stats">' +
       '<div class="stat"><div class="stat__value">' + usd(l.totalSpent) + '</div><div class="stat__label">разом</div></div>' +
       '<div class="stat"><div class="stat__value">' + l.purchases + '</div><div class="stat__label">покупок</div></div>' +
-      '<div class="stat"><div class="stat__value">' + (l.streak && l.streak.months ? l.streak.months + ' міс' : '—') + '</div><div class="stat__label">серія</div></div>' +
+      '<div class="stat"><div class="stat__value">' + usd(l.cashbackEarned) + '</div><div class="stat__label">нараховано</div></div>' +
     '</section>';
 
-    // discount cards
-    html += '<div class="section-title">Ваші знижки</div>';
-    html += cards.length
-      ? cards.map(cardHtml).join('')
-      : '<div class="empty">Поки що немає активних знижок. Вони зʼявляються на день народження, у свята та за статусом клубу.</div>';
+    // the two bonuses Maryna actually gives
+    html += birthdayBlockHtml();
 
-    // gamification
-    html += '<div class="section-title">Прогрес</div>' + milestonesHtml(l) + badgesHtml(l);
-    html += '<div class="panel"><div class="panel__note">' + esc(l.tierPerk) +
-      (l.nextTier ? ' · до ' + esc(l.nextTier.name) + ' — ' + usd(l.nextTier.toGo) : '') + '</div></div>';
+    // discount cards
+    var holidayCards = holidayCardsHtml();
+    html += '<div class="section-title">Ваші знижки</div>';
+    html += (cards.length || holidayCards)
+      ? cards.map(cardHtml).join('') + holidayCards
+      : '<div class="empty">Поки що немає активних знижок. Вони зʼявляються на день народження та у свята.</div>';
+
+    html += historySectionsHtml();
+
+    // Tiers/badges/streaks exist in the data but stay off screen unless the
+    // server turns them on: Maryna's audience needs two bonuses, nothing else.
+    if (f.badges || f.tiers) {
+      html += '<div class="section-title">Прогрес</div>' + badgesHtml(l);
+      html += '<div class="panel"><div class="panel__note">' + esc(l.tierPerk || '') +
+        (l.nextTier ? ' · до ' + esc(l.nextTier.name) + ' — ' + usd(l.nextTier.toGo) : '') + '</div></div>';
+    }
 
     html += '</div>';
     return html;
   }
 
   function renderJoin() {
+    var cb = state.config.cashback || {};
+    var bdayRule = (state.config.rules || []).filter(function (r) { return r.key === 'birthday'; })[0];
+    var bdayText = bdayRule
+      ? 'знижка ' + discountLabel(bdayRule.mode, bdayRule.value) + ' на день народження' +
+        minOrderNote(bdayRule.minOrderUsd)
+      : 'знижка на день народження';
+
     return topbarHtml() +
       '<div class="stack">' +
         '<div class="panel">' +
           '<div class="panel__title">Клуб Way2Buy</div>' +
-          '<p class="panel__note">Кешбек ' + usd(state.config.cashback.reward) + ' за кожні ' +
-            usd(state.config.cashback.step) + ' покупок, знижка на день народження, персональні промокоди ' +
-            'та стрічка обох каналів в одному місці.</p>' +
+          '<p class="panel__note">' + esc(
+            discountLabel(cb.mode, cb.value) + ' бонусу за покупку від ' + usd(cb.minOrderUsd) + ', ' +
+            bdayText + ', і вся стрічка каналу в одному місці.'
+          ) + '</p>' +
         '</div>' +
+        // Exactly the four fields Maryna asked for: ім'я, адреса, телефон, ДН.
         '<form class="stack" id="joinForm">' +
           '<label class="field"><span class="field__label">Імʼя та прізвище</span>' +
             '<input class="field__input" name="name" required placeholder="Олена Ковальчук" /></label>' +
+          '<label class="field"><span class="field__label">Адреса доставки</span>' +
+            '<input class="field__input" name="address" required placeholder="Chicago, IL, 1234 W Main St" /></label>' +
           '<div class="form-grid">' +
-            '<label class="field"><span class="field__label">Телефон</span>' +
-              '<input class="field__input" name="phone" placeholder="+380…" /></label>' +
-            '<label class="field"><span class="field__label">День народження</span>' +
-              '<input class="field__input" name="birthday" type="date" /></label>' +
+            '<label class="field"><span class="field__label">Номер телефону</span>' +
+              '<input class="field__input" name="phone" required placeholder="+1…" /></label>' +
+            '<label class="field"><span class="field__label">Дата народження</span>' +
+              '<input class="field__input" name="birthday" type="date" required /></label>' +
           '</div>' +
-          '<div class="form-grid">' +
-            '<label class="field"><span class="field__label">Місто</span>' +
-              '<input class="field__input" name="city" placeholder="Київ" /></label>' +
-            '<label class="field"><span class="field__label">E-mail</span>' +
-              '<input class="field__input" name="email" type="email" placeholder="you@mail.com" /></label>' +
-          '</div>' +
+          '<p class="field__hint">Дату народження ми записуємо один раз — вона потрібна для знижки ' +
+            'і надалі не змінюється без менеджера.</p>' +
           '<label class="inline"><input type="checkbox" name="consent" checked /> ' +
             '<span class="muted">Погоджуюсь отримувати повідомлення про знижки</span></label>' +
           '<button class="btn btn--primary" type="submit">Приєднатися до клубу</button>' +
@@ -317,32 +417,74 @@
       '</div>';
   }
 
-  function renderFeed() {
-    var chips = [{ key: 'all', title: 'Все', flag: '✨' }].concat(state.config.channels);
+  // The photo of a post: the proxy URL when Telegram carries the file, the
+  // emoji placeholder otherwise. The audience picks by picture, so this is the
+  // most important element on the screen.
+  function postMediaHtml(p) {
+    var url = (p.photoUrls && p.photoUrls[0]) || null;
+    return url
+      ? '<img src="' + esc(url) + '" alt="' + esc(p.title || '') + '" loading="lazy" />'
+      : esc(p.image_url || '🛍️');
+  }
+
+  function tileHtml(p) {
+    var ch = p.channelMeta || {};
+    var inCart = Boolean(p.inCart);
+    return '<article class="tile">' +
+      '<div class="tile__media">' + postMediaHtml(p) +
+        '<span class="tile__chan">' + esc((ch.emoji || '🛍️') + ' ' + (ch.title || p.channel)) + '</span>' +
+      '</div>' +
+      '<div class="tile__body">' +
+        '<div class="tile__title">' + esc(p.title || 'Позиція') + '</div>' +
+        (p.article ? '<div class="tile__art">арт. ' + esc(p.article) + '</div>' : '') +
+        (p.price ? '<div class="tile__art">' + esc(money(p.price, p.currency)) + '</div>' : '') +
+        '<button class="btn ' + (inCart ? 'btn--ghost tile__btn is-in' : 'btn--primary tile__btn') +
+          '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
+          (inCart ? 'У примірочній ✓' : 'Хочу цю позицію') + '</button>' +
+      '</div>' +
+    '</article>';
+  }
+
+  // ── Каталоги: one chip per catalogue channel, pictures below ──────────────
+  function renderCatalog() {
+    var catalogs = (state.config.channels || []).filter(function (c) { return c.kind !== 'main'; });
+    var chips = [{ key: 'all', title: 'Все', emoji: '✨' }].concat(catalogs);
+
     var html = topbarHtml() + '<div class="stack">' +
       '<div class="chips">' + chips.map(function (c) {
         return '<button class="chip' + (state.feedChannel === c.key ? ' is-active' : '') +
-          '" data-channel="' + esc(c.key) + '">' + esc(c.flag || '') + ' ' + esc(c.title) + '</button>';
+          '" data-channel="' + esc(c.key) + '">' + esc((c.emoji || '') + ' ' + c.title) + '</button>';
       }).join('') + '</div>';
 
+    html += state.feed.length
+      ? '<div class="tiles">' + state.feed.map(tileHtml).join('') + '</div>'
+      : '<div class="empty">У цьому каталозі ще немає позицій.</div>';
+
+    return html + '</div>';
+  }
+
+  // ── Канал: the main channel's posts, read like a feed ────────────────────
+  function renderFeed() {
+    var html = topbarHtml() + '<div class="stack">';
+
     if (!state.feed.length) {
-      html += '<div class="empty">У цьому каналі ще немає публікацій.</div>';
+      html += '<div class="empty">У каналі ще немає публікацій.</div>';
     } else {
       html += state.feed.map(function (p) {
         var ch = p.channelMeta || {};
+        var inCart = Boolean(p.inCart);
         return '<article class="post">' +
-          '<div class="post__thumb">' + esc(p.image_url || '🛍️') + '</div>' +
+          '<div class="post__thumb">' + postMediaHtml(p) + '</div>' +
           '<div class="post__body">' +
-            '<div class="post__head">' + esc(ch.flag || '') + ' ' + esc(ch.title || p.channel) +
+            '<div class="post__head">' + esc((ch.emoji || '') + ' ' + (ch.title || p.channel)) +
               ' · ' + esc(timeAgo(p.created_at)) + '</div>' +
             '<div class="post__title">' + esc(p.title) + '</div>' +
             (p.body ? '<p class="post__text">' + esc(p.body) + '</p>' : '') +
             '<div class="post__foot">' +
               '<span class="post__price">' + esc(money(p.price, p.currency)) + '</span>' +
-              '<span class="inline">' +
-                '<span class="post__src">' + (p.source === 'channel' ? 'з каналу' : 'з застосунку') + '</span>' +
-                '<button class="btn btn--ghost" data-want="' + p.id + '">Хочу</button>' +
-              '</span>' +
+              '<button class="btn ' + (inCart ? 'btn--ghost is-in' : 'btn--primary') +
+                '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
+                (inCart ? 'У примірочній ✓' : 'Хочу') + '</button>' +
             '</div>' +
           '</div>' +
         '</article>';
@@ -351,10 +493,68 @@
     return html + '</div>';
   }
 
-  function renderHistory() {
+  // ── Примірочна: the message is already written; one button sends it ───────
+  function renderCart() {
     if (!state.me.registered) return renderJoin();
-    var p = state.purchases;
+    var c = state.cart || { items: [], count: 0 };
     var html = topbarHtml() + '<div class="stack">';
+
+    if (!c.items.length) {
+      return html +
+        '<div class="empty">Примірочна порожня. Відкрийте «Каталоги», ' +
+          'натисніть «Хочу цю позицію» — і всі обрані речі зберуться тут.</div>' +
+        '</div>';
+    }
+
+    html += '<div class="section-title">Обрані позиції (' + c.items.length + ')</div>';
+    html += c.items.map(function (i) {
+      return '<div class="row">' +
+        '<div class="fit-row__thumb">' +
+          (i.photo ? '<img src="' + esc(i.photo) + '" alt="" loading="lazy" />' : esc(i.emoji || '🛍️')) +
+        '</div>' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(i.title || 'Позиція') + '</div>' +
+          '<div class="row__sub">' + (i.article ? 'арт. ' + esc(i.article) + ' · ' : '') +
+            esc(i.channel || '') + (i.price ? ' · ' + esc(money(i.price, i.currency)) : '') + '</div>' +
+        '</div>' +
+        '<button class="btn btn--ghost" data-remove="' + i.id + '" aria-label="Прибрати">✕</button>' +
+      '</div>';
+    }).join('');
+
+    // The coupon applies itself — the client only sees that it is already on.
+    if (c.promo) {
+      html += '<div class="coupon">' +
+        '<span class="coupon__badge">−' + esc(c.promo.label) + '</span>' +
+        '<div class="grow">' +
+          '<div class="row__title">' + (c.promo.usable ? 'Знижку застосовано автоматично' : 'Знижка вже ваша') + '</div>' +
+          '<div class="row__sub">' + esc(c.promo.reason || 'Промокод ' + c.promo.code) +
+            (c.promo.usable
+              ? ''
+              : (c.promo.minOrderUsd ? ' · діє від замовлення ' + usd(c.promo.minOrderUsd) : ' · застосуємо при замовленні')) +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // Pre-filled text: they may send as-is or add a line of their own.
+    html += '<div class="section-title">Повідомлення Даші</div>' +
+      '<form class="stack" id="inquiryForm">' +
+        '<label class="field">' +
+          '<textarea class="field__textarea" name="message" rows="5" ' +
+            'placeholder="Можете дописати, що саме вас цікавить">' + esc(c.draft || '') + '</textarea>' +
+          '<span class="field__hint">Даша отримає це повідомлення разом зі списком обраних позицій.</span>' +
+        '</label>' +
+        '<button class="btn btn--primary btn--send" type="submit">Відправити Даші</button>' +
+      '</form>';
+
+    return html + '</div>';
+  }
+
+  // Promo codes + purchase history. Shown as sections of the «Знижки» tab, so a
+  // client has one place for everything money-related instead of two tabs.
+  function historySectionsHtml() {
+    var p = state.purchases;
+    var html = '';
 
     html += '<div class="section-title">Промокоди</div>';
     html += p.promos.length
@@ -362,9 +562,10 @@
           return '<div class="row">' +
             '<div class="row__icon">🎟️</div>' +
             '<div class="row__body">' +
-              '<div class="row__title">' + esc(pr.code) + ' · −' + pr.percent + '%</div>' +
-              '<div class="row__sub">' + esc(pr.reason || '') +
-                (pr.expires_at ? ' · до ' + esc(dateShort(pr.expires_at)) : '') + '</div>' +
+              '<div class="row__title">' + esc(pr.code) + ' · −' +
+                esc(pr.label || discountLabel(pr.mode, pr.value)) + '</div>' +
+              '<div class="row__sub">' + esc(pr.reason || '') + esc(minOrderNote(pr.minOrderUsd)) +
+                (pr.expiresAt ? ' · до ' + esc(dateShort(pr.expiresAt)) : '') + '</div>' +
             '</div>' +
             '<button class="btn btn--ghost" data-copy="' + esc(pr.code) + '">Копіювати</button>' +
           '</div>';
@@ -379,7 +580,7 @@
             '<div class="row__body">' +
               '<div class="row__title">' + esc(x.title || 'Покупка') + '</div>' +
               '<div class="row__sub">' + esc(dateShort(x.created_at)) +
-                (x.invoice_ref ? ' · ' + esc(x.invoice_ref) : '') + '</div>' +
+                (x.discount_usd ? ' · знижка ' + usd(x.discount_usd) : '') + '</div>' +
             '</div>' +
             '<div class="row__amount">' + esc(money(x.orig_amount || x.amount_usd, x.orig_currency)) +
               '<span>' + usd(x.amount_usd) + '</span></div>' +
@@ -388,29 +589,289 @@
       : '<div class="empty">Покупок ще не було.</div>';
 
     if (p.loyalty && p.loyalty.cashbackRedeemed > 0) {
-      html += '<div class="panel"><div class="panel__note">Списано кешбеку: ' +
+      html += '<div class="panel"><div class="panel__note">Списано бонусів: ' +
         usd(p.loyalty.cashbackRedeemed) + ' · нараховано: ' + usd(p.loyalty.cashbackEarned) + '</div></div>';
     }
-    return html + '</div>';
+    return html;
   }
 
-  function renderAdmin() {
-    var a = state.admin;
-    var html = topbarHtml() + '<div class="stack">';
+  var ADMIN_TABS = [
+    { key: 'bonuses', label: 'Бонуси' },
+    { key: 'inquiries', label: 'Заявки' },
+    { key: 'popular', label: 'Популярне' },
+    { key: 'profit', label: 'Прибуток' },
+    { key: 'customers', label: 'Клієнти' },
+    { key: 'content', label: 'Контент' },
+  ];
 
-    html += '<div class="panel"><div class="panel__head">' +
-        '<div class="panel__title">Кабінет</div>' +
-        '<span class="pill' + (state.config.live ? ' pill--ok' : ' pill--warn') + '">' +
-          (state.config.live ? 'Telegram LIVE' : 'DEMO — публікації симулюються') + '</span>' +
-      '</div>' +
-      '<div class="inline">' +
-        '<button class="btn btn--primary" data-action="new-post">Опублікувати товар</button>' +
-        '<button class="btn btn--ghost" data-action="new-campaign">Нова знижка</button>' +
-        '<button class="btn btn--ghost" data-action="new-purchase">Додати покупку</button>' +
+  // ── Заявки: what Dasha and Maryna both work from ──────────────────────────
+  function adminInquiriesHtml(a) {
+    var html = '<div class="section-title">Заявки від клієнтів</div>';
+    if (!a.inquiries.length) return html + '<div class="empty">Заявок ще немає.</div>';
+
+    return html + a.inquiries.map(function (q) {
+      var items = (q.items || []).map(function (i) {
+        return '• ' + esc(i.title || 'Позиція') + (i.article ? ' · арт. ' + esc(i.article) : '');
+      }).join('<br/>');
+      var STATUS = { new: ['🆕', 'нова'], answered: ['💬', 'відповіли'], closed: ['✅', 'закрита'] };
+      var s = STATUS[q.status] || ['•', q.status];
+
+      return '<div class="panel">' +
+        '<div class="panel__head">' +
+          '<div class="panel__title">' + esc(q.customerName || ('#' + q.customerId)) + ' · ' +
+            q.itemsCount + ' поз.</div>' +
+          '<span class="pill' + (q.status === 'new' ? ' pill--warn' : ' pill--ok') + '">' +
+            s[0] + ' ' + esc(s[1]) + '</span>' +
+        '</div>' +
+        '<div class="panel__note">' + items +
+          (q.message ? '<br/><br/>Питання клієнта:<br/>«' + esc(q.message) + '»' : '') +
+          (q.promoLabel ? '<br/><br/>Знижка: ' + esc(q.promoLabel) : '') +
+          (q.phone ? '<br/>📞 ' + esc(q.phone) : '') +
+          '<br/>' + esc(timeAgo(q.createdAt)) +
+        '</div>' +
+        '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+          (q.status === 'new'
+            ? '<button class="btn btn--ghost" data-inquiry="' + q.id + '" data-inquiry-status="answered">Відповіли</button>'
+            : '') +
+          (q.status !== 'closed'
+            ? '<button class="btn btn--ghost" data-inquiry="' + q.id + '" data-inquiry-status="closed">Закрити</button>'
+            : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ── Популярне: every add to the fitting room, by month or by year ─────────
+  function adminPopularHtml(a) {
+    var p = a.popular;
+    var html = '<div class="section-title">Що цікавить клієнтів</div>' +
+      '<div class="seg" style="margin-bottom:var(--w2b-space-3)">' +
+        ['month', 'year', 'all'].map(function (k) {
+          var label = { month: 'Місяць', year: 'Рік', all: 'Весь час' }[k];
+          return '<button class="seg__btn' + (a.popularPeriod === k ? ' is-active' : '') +
+            '" data-pop-period="' + k + '">' + label + '</button>';
+        }).join('') +
+      '</div>';
+
+    if (!p) return html + '<div class="empty">Завантаження…</div>';
+    var t = p.totals || {};
+
+    html += '<section class="stats">' +
+      '<div class="stat"><div class="stat__value">' + (t.adds || 0) + '</div><div class="stat__label">у примірочну</div></div>' +
+      '<div class="stat"><div class="stat__value">' + (t.inquiries || 0) + '</div><div class="stat__label">заявок</div></div>' +
+      '<div class="stat"><div class="stat__value">' + (t.people || 0) + '</div><div class="stat__label">клієнтів</div></div>' +
+    '</section>';
+
+    html += '<div class="panel"><div class="panel__note">' +
+      esc((p.period && p.period.label) || '') + ' · позицій: ' + (t.items || 0) +
+      (t.sendRatePct != null ? ' · доходить до заявки ' + t.sendRatePct + '%' : '') +
+      ' · прибрали з примірочної: ' + (t.removes || 0) +
+    '</div></div>';
+
+    html += '<div class="section-title">Топ позицій</div>';
+    html += (p.items || []).length
+      ? p.items.map(function (i, n) {
+          return '<div class="row">' +
+            '<div class="row__icon">' + (n + 1) + '</div>' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(i.title || 'Позиція') +
+                (i.article ? ' · арт. ' + esc(i.article) : '') + '</div>' +
+              '<div class="row__sub">' + esc(i.channel || '') + ' · ' + i.people + ' клієнт(ів)' +
+                (i.sendRatePct != null ? ' · заявка ' + i.sendRatePct + '%' : '') + '</div>' +
+            '</div>' +
+            '<div class="row__amount">' + i.adds + '<span>у примірочну</span></div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">За цей період нічого не додавали.</div>';
+
+    if ((p.byChannel || []).length) {
+      html += '<div class="section-title">По каталогах</div>';
+      html += p.byChannel.map(function (c) {
+        return '<div class="row">' +
+          '<div class="row__icon">🗂️</div>' +
+          '<div class="row__body">' +
+            '<div class="row__title">' + esc(c.channel) + '</div>' +
+            '<div class="row__sub">' + c.people + ' клієнт(ів) · ' + c.sends + ' у заявках</div>' +
+          '</div>' +
+          '<div class="row__amount">' + c.adds + '<span>додано</span></div>' +
+        '</div>';
+      }).join('');
+    }
+
+    if ((p.timeline || []).length) {
+      html += '<div class="section-title">Динаміка</div>';
+      html += p.timeline.map(function (b) {
+        return '<div class="row">' +
+          '<div class="row__body">' +
+            '<div class="row__title">' + esc(b.bucket) + '</div>' +
+            '<div class="row__sub">' + b.people + ' клієнт(ів) · ' + b.sends + ' у заявках</div>' +
+          '</div>' +
+          '<div class="row__amount">' + b.adds + '<span>додано</span></div>' +
+        '</div>';
+      }).join('');
+    }
+
+    return html;
+  }
+
+  // ── Бонуси: the $ ⇄ % switch for both rules and every holiday ─────────────
+  function adminBonusesHtml(a) {
+    var html = '<div class="section-title">Бонуси</div>';
+
+    html += a.rules.length
+      ? a.rules.map(function (r) {
+          return '<div class="row row--tap" data-rule="' + esc(r.key) + '">' +
+            '<div class="row__icon">' + esc(r.emoji || '🏷️') + '</div>' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(r.name) + ' · ' + esc(discountLabel(r.mode, r.value)) + '</div>' +
+              '<div class="row__sub">' + esc(r.summary || '') + '</div>' +
+            '</div>' +
+            '<span class="pill' + (r.enabled ? ' pill--ok' : ' pill--warn') + '">' +
+              (r.enabled ? 'увімкнено' : 'вимкнено') + '</span>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Правила не завантажені.</div>';
+
+    html += '<div class="section-title">Свята</div>' +
+      '<div class="panel"><p class="panel__note">Кожне свято налаштовується так само: сума в $ ' +
+      'або відсоток, мінімальне замовлення і скільки днів діє.</p>' +
+      '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+        '<button class="btn btn--ghost" data-action="new-holiday">Додати свято</button>' +
       '</div></div>';
 
-    // campaigns
-    html += '<div class="section-title">Правила знижок</div>';
+    html += a.holidays.map(function (h) {
+      return '<div class="row row--tap" data-holiday="' + h.id + '">' +
+        '<div class="row__icon">' + esc(h.emoji || '🎉') + '</div>' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(h.name) + ' · ' + esc(discountLabel(h.mode, h.value)) + '</div>' +
+          '<div class="row__sub">' + esc(h.date) + ' · діє ' + (h.validDays || 14) + ' дн' +
+            esc(minOrderNote(h.minOrderUsd)) + '</div>' +
+        '</div>' +
+        '<span class="pill' + (h.enabled ? ' pill--ok' : ' pill--warn') + '">' +
+          (h.enabled ? 'увімкнено' : 'вимкнено') + '</span>' +
+      '</div>';
+    }).join('');
+
+    // The birthday audit trail — every request, granted or refused.
+    html += '<div class="section-title">Заявки на знижку ДН</div>';
+    html += a.claims.length
+      ? a.claims.slice(0, 15).map(function (c) {
+          var VERDICT = {
+            granted: ['✅', 'видано'],
+            mismatch: ['⚠️', 'дата не збігається'],
+            already_claimed: ['🔁', 'вже отримано цього року'],
+            out_of_window: ['⏳', 'поза періодом'],
+            invalid_date: ['❌', 'некоректна дата'],
+            disabled: ['🚫', 'знижка вимкнена'],
+          };
+          var v = VERDICT[c.verdict] || ['•', c.verdict];
+          return '<div class="row">' +
+            '<div class="row__icon">' + v[0] + '</div>' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(c.name || ('#' + c.customerId)) + ' · ' + esc(v[1]) + '</div>' +
+              '<div class="row__sub">заявлено ' + esc(c.claimed || '—') +
+                (c.onFile ? ' · у базі ' + esc(String(c.onFile).slice(5)) : ' · у базі не було') +
+                ' · ' + esc(timeAgo(c.createdAt)) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Заявок ще не було.</div>';
+
+    return html;
+  }
+
+  // ── Прибуток: revenue − discount − cost, per bag ──────────────────────────
+  function adminProfitHtml(a) {
+    var p = a.profit || { totals: {}, items: [] };
+    var t = p.totals || {};
+    var html = '<div class="section-title">Прибуток</div>';
+
+    html += '<section class="stats">' +
+      '<div class="stat"><div class="stat__value">' + usd(t.netUsd || 0) + '</div><div class="stat__label">виручка</div></div>' +
+      '<div class="stat"><div class="stat__value">' + usd(t.costUsd || 0) + '</div><div class="stat__label">витрати</div></div>' +
+      '<div class="stat"><div class="stat__value">' + usd(t.profitUsd || 0) + '</div><div class="stat__label">чистий</div></div>' +
+    '</section>';
+
+    html += '<div class="panel"><p class="panel__note">' +
+      (t.marginPct != null ? 'Маржа ' + t.marginPct + '% · ' : '') +
+      'у прибутку враховано ' + (t.ordersWithCost || 0) + ' з ' + (t.orders || 0) + ' замовлень' +
+      (t.avgProfitUsd != null ? ' · середній прибуток ' + usd(t.avgProfitUsd) : '') +
+    '</p></div>';
+
+    // Sales still missing a cost: this is what the next-day reminder is about.
+    if (a.pendingCosts.length) {
+      html += '<div class="section-title">Без собівартості (' + a.pendingCosts.length + ')</div>';
+      html += a.pendingCosts.map(function (x) {
+        return '<div class="row row--tap" data-cost="' + x.id + '">' +
+          '<div class="row__icon">📊</div>' +
+          '<div class="row__body">' +
+            '<div class="row__title">' + esc(x.title || 'Покупка') + ' · ' + esc(x.customer_name || '') + '</div>' +
+            '<div class="row__sub">продано ' + esc(dateShort(x.created_at)) +
+              ' · клієнт заплатив ' + usd(x.amount_usd) + ' — введіть, скільки віддали в Китаї</div>' +
+          '</div>' +
+          '<button class="btn btn--ghost" data-cost="' + x.id + '">Ввести</button>' +
+        '</div>';
+      }).join('');
+    }
+
+    html += '<div class="section-title">По замовленнях</div>';
+    html += (p.items || []).length
+      ? p.items.slice(0, 30).map(function (x) {
+          return '<div class="row' + (x.complete ? '' : ' row--tap') + '"' +
+              (x.complete ? '' : ' data-cost="' + x.id + '"') + '>' +
+            '<div class="row__icon">' + (x.complete ? '👜' : '❓') + '</div>' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(x.title || 'Покупка') + ' · ' + esc(x.customerName || '') + '</div>' +
+              '<div class="row__sub">' + esc(dateShort(x.createdAt)) + ' · клієнт ' + usd(x.netUsd) +
+                (x.complete ? ' · закупка ' + usd(x.costUsd) : ' · собівартість не введена') + '</div>' +
+            '</div>' +
+            '<div class="row__amount">' + (x.complete ? usd(x.profitUsd) : '—') +
+              '<span>' + (x.marginPct != null ? x.marginPct + '%' : 'нема даних') + '</span></div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Підтверджених покупок ще немає.</div>';
+
+    return html;
+  }
+
+  function adminCustomersHtml(a) {
+    var html = '<div class="section-title">Клієнти (' + a.customers.length + ')</div>';
+    html += a.customers.map(function (c) {
+      var l = c.loyalty || {};
+      return '<div class="row row--tap" data-customer="' + c.id + '">' +
+        '<div class="row__icon">' + esc((c.name || '?')[0]) + '</div>' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(c.name) + '</div>' +
+          '<div class="row__sub">' + (l.purchases || 0) + ' покупок' +
+            (c.birthday ? ' · ДН ' + esc(String(c.birthday).slice(5)) : ' · ДН невідомий') +
+            (c.birthdaySource ? ' (' + esc(c.birthdaySource) + ')' : '') + '</div>' +
+        '</div>' +
+        '<div class="row__amount">' + usd(l.totalSpent || 0) +
+          '<span>бонус ' + usd(l.cashbackAvailable || 0) + '</span></div>' +
+      '</div>';
+    }).join('');
+    return html;
+  }
+
+  function adminContentHtml(a) {
+    var html = '<div class="section-title">Канали</div>' +
+      '<div class="panel"><p class="panel__note">Все, що адмін публікує в каналі, автоматично ' +
+        'зʼявляється у стрічці застосунку; публікація звідси йде в канал. Новий канал реєструється ' +
+        'сам, коли бот-адмін бачить перший пост.</p></div>';
+
+    html += (state.config.channels || []).map(function (c) {
+      return '<div class="row">' +
+        '<div class="row__icon">' + esc(c.emoji || '🛍️') + '</div>' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(c.title) + '</div>' +
+          '<div class="row__sub">' + esc(c.username ? '@' + c.username : c.key) +
+            ' · ' + (c.kind === 'main' ? 'головний' : 'каталог') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    // Campaigns stay available for one-off percentage promos.
+    html += '<div class="section-title">Кампанії</div>';
     html += a.campaigns.length
       ? a.campaigns.map(function (c) {
           var window_ = c.type === 'birthday'
@@ -426,25 +887,8 @@
             '<button class="btn btn--ghost" data-materialize="' + c.id + '">Видати</button>' +
           '</div>';
         }).join('')
-      : '<div class="empty">Правил ще немає — створіть перше.</div>';
+      : '<div class="empty">Кампаній немає.</div>';
 
-    // customers
-    html += '<div class="section-title">Клієнти (' + a.customers.length + ')</div>';
-    html += a.customers.map(function (c) {
-      var l = c.loyalty || {};
-      return '<div class="row row--tap" data-customer="' + c.id + '">' +
-        '<div class="row__icon">' + esc((c.name || '?')[0]) + '</div>' +
-        '<div class="row__body">' +
-          '<div class="row__title">' + esc(c.name) + '</div>' +
-          '<div class="row__sub">' + esc(l.tierName || '') + ' · ' + (l.purchases || 0) + ' покупок' +
-            (c.birthday ? ' · ДН ' + esc(c.birthday.slice(5)) : '') + '</div>' +
-        '</div>' +
-        '<div class="row__amount">' + usd(l.totalSpent || 0) +
-          '<span>кешбек ' + usd(l.cashbackAvailable || 0) + '</span></div>' +
-      '</div>';
-    }).join('');
-
-    // AI report
     html += '<div class="section-title">Звіт</div>' +
       '<div class="panel">' +
         '<div class="seg" style="margin-bottom:var(--w2b-space-3)">' +
@@ -456,6 +900,36 @@
             '<div class="panel__note" style="margin-top:var(--w2b-space-3)">Джерело: ' + esc(a.report.engine) + '</div>'
           : '<div class="empty">Натисніть період, щоб побудувати звіт.</div>') +
       '</div>';
+
+    return html;
+  }
+
+  function renderAdmin() {
+    var a = state.admin;
+    var html = topbarHtml() + '<div class="stack">';
+
+    html += '<div class="panel"><div class="panel__head">' +
+        '<div class="panel__title">Кабінет</div>' +
+        '<span class="pill' + (state.config.live ? ' pill--ok' : ' pill--warn') + '">' +
+          (state.config.live ? 'Telegram LIVE' : 'DEMO — публікації симулюються') + '</span>' +
+      '</div>' +
+      '<div class="inline">' +
+        '<button class="btn btn--primary" data-action="new-post">Опублікувати товар</button>' +
+        '<button class="btn btn--ghost" data-action="new-purchase">Додати покупку</button>' +
+        '<button class="btn btn--ghost" data-action="new-campaign">Нова кампанія</button>' +
+      '</div></div>';
+
+    html += '<div class="seg">' + ADMIN_TABS.map(function (t) {
+      return '<button class="seg__btn' + (a.adminTab === t.key ? ' is-active' : '') +
+        '" data-admin-tab="' + t.key + '">' + esc(t.label) + '</button>';
+    }).join('') + '</div>';
+
+    if (a.adminTab === 'profit') html += adminProfitHtml(a);
+    else if (a.adminTab === 'inquiries') html += adminInquiriesHtml(a);
+    else if (a.adminTab === 'popular') html += adminPopularHtml(a);
+    else if (a.adminTab === 'customers') html += adminCustomersHtml(a);
+    else if (a.adminTab === 'content') html += adminContentHtml(a);
+    else html += adminBonusesHtml(a);
 
     return html + '</div>';
   }
@@ -483,6 +957,112 @@
         '</div>' +
         '<p class="field__hint">Пост зʼявиться і в каналі Telegram, і у стрічці застосунку.</p>' +
         '<button class="btn btn--primary" type="submit">Опублікувати</button>' +
+      '</form>');
+  }
+
+  // The one form that makes every discount switchable between $ and %.
+  function modeFieldsHtml(o) {
+    return '<div class="form-grid">' +
+      '<label class="field"><span class="field__label">Тип знижки</span>' +
+        '<select class="field__select" name="mode">' +
+          '<option value="fixed"' + (o.mode === 'fixed' ? ' selected' : '') + '>$ — фіксована сума</option>' +
+          '<option value="percent"' + (o.mode === 'percent' ? ' selected' : '') + '>% — відсоток</option>' +
+        '</select></label>' +
+      '<label class="field"><span class="field__label">Розмір</span>' +
+        '<input class="field__input" name="value" type="number" step="0.01" min="0.01" required value="' +
+          esc(o.value) + '" /></label>' +
+    '</div>' +
+    '<label class="field"><span class="field__label">Мінімальне замовлення, $</span>' +
+      '<input class="field__input" name="minOrderUsd" type="number" step="1" min="0" value="' +
+        esc(o.minOrderUsd || 0) + '" /></label>';
+  }
+
+  function sheetRule(key) {
+    var r = state.admin.rules.filter(function (x) { return x.key === key; })[0];
+    if (!r) return;
+    var extra = '';
+    if (r.key === 'cashback') {
+      extra = '<label class="field"><span class="field__label">Максимум накопичення, $</span>' +
+        '<input class="field__input" name="capUsd" type="number" step="1" min="0" value="' +
+          esc(r.capUsd == null ? '' : r.capUsd) + '" />' +
+        '<span class="field__hint">Порожньо — без ліміту.</span></label>';
+    } else {
+      extra = '<label class="field"><span class="field__label">Скільки днів діє</span>' +
+        '<input class="field__input" name="validDays" type="number" min="1" max="365" value="' +
+          esc(r.validDays || 30) + '" /></label>';
+    }
+
+    openSheet(r.name,
+      '<form class="stack" id="ruleForm" data-key="' + esc(r.key) + '">' +
+        modeFieldsHtml(r) + extra +
+        '<label class="inline"><input type="checkbox" name="enabled"' + (r.enabled ? ' checked' : '') + ' /> ' +
+          '<span class="muted">Знижка активна</span></label>' +
+        '<p class="field__hint">' + esc(r.summary || '') + '</p>' +
+        '<button class="btn btn--primary" type="submit">Зберегти</button>' +
+      '</form>');
+  }
+
+  function sheetHoliday(id) {
+    var h = state.admin.holidays.filter(function (x) { return String(x.id) === String(id); })[0];
+    if (!h) return;
+    openSheet(h.name,
+      '<form class="stack" id="holidayForm" data-id="' + h.id + '">' +
+        modeFieldsHtml(h) +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Місяць</span>' +
+            '<input class="field__input" name="month" type="number" min="1" max="12" value="' + h.month + '" /></label>' +
+          '<label class="field"><span class="field__label">День</span>' +
+            '<input class="field__input" name="day" type="number" min="1" max="31" value="' + h.day + '" /></label>' +
+        '</div>' +
+        '<label class="field"><span class="field__label">Скільки днів діє</span>' +
+          '<input class="field__input" name="validDays" type="number" min="1" max="365" value="' +
+            (h.validDays || 14) + '" /></label>' +
+        '<label class="inline"><input type="checkbox" name="enabled"' + (h.enabled ? ' checked' : '') + ' /> ' +
+          '<span class="muted">Свято активне</span></label>' +
+        '<button class="btn btn--primary" type="submit">Зберегти</button>' +
+      '</form>');
+  }
+
+  function sheetNewHoliday() {
+    openSheet('Нове свято',
+      '<form class="stack" id="newHolidayForm">' +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Назва</span>' +
+            '<input class="field__input" name="name" required placeholder="Великдень" /></label>' +
+          '<label class="field"><span class="field__label">Емодзі</span>' +
+            '<input class="field__input" name="emoji" value="🎉" /></label>' +
+        '</div>' +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Місяць</span>' +
+            '<input class="field__input" name="month" type="number" min="1" max="12" required /></label>' +
+          '<label class="field"><span class="field__label">День</span>' +
+            '<input class="field__input" name="day" type="number" min="1" max="31" required /></label>' +
+        '</div>' +
+        modeFieldsHtml({ mode: 'percent', value: 15, minOrderUsd: 0 }) +
+        '<label class="field"><span class="field__label">Скільки днів діє</span>' +
+          '<input class="field__input" name="validDays" type="number" min="1" max="365" value="14" /></label>' +
+        '<button class="btn btn--primary" type="submit">Додати свято</button>' +
+      '</form>');
+  }
+
+  // "Скільки ця сумка коштувала нам" — the missing half of the profit figure.
+  function sheetCost(purchaseId) {
+    var src = state.admin.pendingCosts.filter(function (x) { return String(x.id) === String(purchaseId); })[0]
+      || ((state.admin.profit && state.admin.profit.items) || []).filter(function (x) { return String(x.id) === String(purchaseId); })[0];
+    var paid = src ? (src.amount_usd != null ? src.amount_usd : src.netUsd) : null;
+
+    openSheet('Собівартість замовлення',
+      '<form class="stack" id="costForm" data-id="' + purchaseId + '">' +
+        (src ? '<div class="panel"><div class="panel__note">' + esc(src.title || 'Покупка') +
+          (paid != null ? ' · клієнт заплатив ' + usd(paid) : '') + '</div></div>' : '') +
+        '<label class="field"><span class="field__label">Скільки витрачено разом, $</span>' +
+          '<input class="field__input" name="costUsd" type="number" step="0.01" min="0" required ' +
+            'placeholder="фабрика + доставка + збори" /></label>' +
+        '<label class="field"><span class="field__label">Коментар</span>' +
+          '<input class="field__input" name="note" placeholder="фабрика $180 + DHL $45" /></label>' +
+        '<p class="field__hint">Без цієї цифри замовлення не потрапляє у прибуток — ' +
+          'нагадування приходить наступного дня після продажу.</p>' +
+        '<button class="btn btn--primary" type="submit">Зберегти</button>' +
       '</form>');
   }
 
@@ -553,7 +1133,15 @@
               return '<option value="' + esc(c.key) + '">' + esc(c.title) + '</option>';
             }).join('') +
           '</select></label>' +
-        '<p class="field__hint">Сума перераховується в USD — кешбек рахується від неї.</p>' +
+        // Cost entered here means no reminder tomorrow.
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Собівартість, $</span>' +
+            '<input class="field__input" name="costUsd" type="number" step="0.01" min="0" placeholder="скільки віддали в Китаї" /></label>' +
+          '<label class="field"><span class="field__label">Знижка, $</span>' +
+            '<input class="field__input" name="discountUsd" type="number" step="0.01" min="0" placeholder="0" /></label>' +
+        '</div>' +
+        '<p class="field__hint">Сума перераховується в USD — бонус рахується від неї. ' +
+          'Якщо собівартість не ввести зараз, нагадаємо наступного дня.</p>' +
         '<button class="btn btn--primary" type="submit">Зберегти</button>' +
       '</form>');
   }
@@ -566,24 +1154,32 @@
       '<div class="stack">' +
         '<div class="panel"><div class="panel__note">' +
           (c.phone ? '📞 ' + esc(c.phone) + '<br/>' : '') +
-          (c.email ? '✉️ ' + esc(c.email) + '<br/>' : '') +
-          (c.birthday ? '🎂 ' + esc(c.birthday) + '<br/>' : '') +
-          (c.city ? '📍 ' + esc(c.city) : '') +
+          (c.address ? '📍 ' + esc(c.address) + '<br/>' : '') +
+          (c.birthday
+            ? '🎂 ' + esc(c.birthday) + (c.birthdaySource ? ' · джерело: ' + esc(c.birthdaySource) : '')
+            : '🎂 дата народження невідома') +
         '</div></div>' +
         '<section class="stats">' +
           '<div class="stat"><div class="stat__value">' + usd(l.totalSpent || 0) + '</div><div class="stat__label">разом</div></div>' +
           '<div class="stat"><div class="stat__value">' + (l.purchases || 0) + '</div><div class="stat__label">покупок</div></div>' +
-          '<div class="stat"><div class="stat__value">' + usd(l.cashbackAvailable || 0) + '</div><div class="stat__label">кешбек</div></div>' +
+          '<div class="stat"><div class="stat__value">' + usd(l.cashbackAvailable || 0) + '</div><div class="stat__label">бонус</div></div>' +
         '</section>' +
+        // Correcting the stored birthday is an admin action: that date is what
+        // every future discount request is verified against.
+        '<form class="stack" id="bdayFixForm" data-customer="' + c.id + '">' +
+          '<label class="field"><span class="field__label">Дата народження у базі</span>' +
+            '<input class="field__input" name="birthday" type="date" value="' +
+              esc(c.birthday && c.birthday.slice(0, 4) !== '1900' ? c.birthday : '') + '" required /></label>' +
+          '<button class="btn btn--ghost" type="submit">Оновити дату</button>' +
+        '</form>' +
         '<form class="stack" id="promoForm" data-customer="' + c.id + '">' +
+          modeFieldsHtml({ mode: 'fixed', value: 50, minOrderUsd: 0 }) +
           '<div class="form-grid">' +
-            '<label class="field"><span class="field__label">Промокод, %</span>' +
-              '<input class="field__input" name="percent" type="number" min="1" max="90" value="15" /></label>' +
             '<label class="field"><span class="field__label">Діє, днів</span>' +
-              '<input class="field__input" name="days" type="number" min="1" max="365" value="14" /></label>' +
+              '<input class="field__input" name="days" type="number" min="1" max="365" value="30" /></label>' +
+            '<label class="field"><span class="field__label">Причина</span>' +
+              '<input class="field__input" name="reason" placeholder="Персональна знижка" /></label>' +
           '</div>' +
-          '<label class="field"><span class="field__label">Причина</span>' +
-            '<input class="field__input" name="reason" placeholder="Персональна знижка" /></label>' +
           '<div class="inline">' +
             '<button class="btn btn--primary" type="submit">Видати промокод</button>' +
             '<button class="btn btn--ghost" type="button" data-action="new-purchase" data-customer="' + c.id + '">Додати покупку</button>' +
@@ -622,23 +1218,63 @@
 
   async function loadTab(tab) {
     if (tab === 'home') {
-      var r = await Promise.all([api.me(), api.discounts(), api.notifications()]);
+      var r = await Promise.all([api.me(), api.discounts(), api.notifications(), api.purchases()]);
       state.me = r[0];
       state.discounts = r[1];
       state.notifications = r[2];
+      state.purchases = r[3];
+      state.birthday = r[1].birthday || (r[0].birthday || null);
+    } else if (tab === 'catalog') {
+      // Catalogue tab: one specific catalogue, or all of them at once.
+      var cf = state.feedChannel && state.feedChannel !== 'all'
+        ? await api.feed(state.feedChannel)
+        : await api.feedKind('catalog');
+      state.feed = cf.posts || [];
     } else if (tab === 'feed') {
-      var f = await api.feed(state.feedChannel);
+      var f = await api.feedKind('main');
       state.feed = f.posts || [];
-    } else if (tab === 'history') {
-      state.purchases = await api.purchases();
+    } else if (tab === 'cart') {
+      state.cart = await api.cart.get();
+      paintCartBadge(state.cart.count);
     } else if (tab === 'admin') {
-      var a = await Promise.all([api.admin.customers(), api.admin.campaigns()]);
+      // One round-trip per panel, all in parallel; a failing panel must not
+      // blank the whole cabinet, so each result is taken defensively.
+      var a = await Promise.all([
+        api.admin.customers(), api.admin.campaigns(), api.admin.rules(),
+        api.admin.profit(), api.admin.pendingCosts(), api.admin.birthdayClaims(),
+      ]);
       state.admin.customers = a[0].customers || [];
       state.admin.campaigns = a[1].campaigns || [];
+      state.admin.rules = a[2].rules || [];
+      state.admin.holidays = a[2].holidays || [];
+      state.admin.profit = a[3] || null;
+      state.admin.pendingCosts = a[4].pending || [];
+      state.admin.claims = a[5].claims || [];
+      if (state.admin.adminTab === 'popular') await loadPopular();
+      if (state.admin.adminTab === 'inquiries') {
+        state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+      }
     }
   }
 
-  var VIEWS = { home: renderHome, feed: renderFeed, history: renderHistory, admin: renderAdmin };
+  async function loadPopular() {
+    var r = await api.admin.popular({ period: state.admin.popularPeriod });
+    state.admin.popular = r;
+  }
+
+  var VIEWS = {
+    home: renderHome, catalog: renderCatalog, feed: renderFeed,
+    cart: renderCart, admin: renderAdmin,
+  };
+
+  // The fitting-room counter lives in the nav, so it is visible from every tab.
+  function paintCartBadge(count) {
+    var badge = document.getElementById('cartBadge');
+    if (!badge) return;
+    state.cartCount = count;
+    badge.textContent = String(count || 0);
+    badge.hidden = !count;
+  }
 
   async function go(tab, opts) {
     state.tab = tab;
@@ -691,7 +1327,64 @@
     var chip = t.closest('[data-channel]');
     if (chip) {
       state.feedChannel = chip.getAttribute('data-channel');
-      go('feed');
+      go('catalog');
+      return;
+    }
+
+    var popPeriod = t.closest('[data-pop-period]');
+    if (popPeriod) {
+      state.admin.popularPeriod = popPeriod.getAttribute('data-pop-period');
+      try {
+        await loadPopular();
+        $app.innerHTML = renderAdmin();
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    var inqStatus = t.closest('[data-inquiry-status]');
+    if (inqStatus) {
+      try {
+        await api.admin.setInquiryStatus(
+          Number(inqStatus.getAttribute('data-inquiry')),
+          inqStatus.getAttribute('data-inquiry-status')
+        );
+        state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+        $app.innerHTML = renderAdmin();
+        toast('Статус заявки оновлено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    // One tap adds the item and updates the counter — no page reload, because a
+    // client browsing a catalogue must not lose their place.
+    var add = t.closest('[data-add]');
+    if (add) {
+      add.disabled = true;
+      try {
+        var ares = await api.cart.add(Number(add.getAttribute('data-add')));
+        add.textContent = 'У примірочній ✓';
+        add.classList.remove('btn--primary');
+        add.classList.add('btn--ghost', 'is-in');
+        paintCartBadge(ares.count);
+        toast(ares.added ? 'Додано в примірочну' : 'Вже у примірочній');
+      } catch (err) {
+        add.disabled = false;
+        toast(err.status === 404 ? 'Спочатку приєднайтесь до клубу' : err.message, 'error');
+      }
+      return;
+    }
+
+    var remove = t.closest('[data-remove]');
+    if (remove) {
+      remove.disabled = true;
+      try {
+        var rres = await api.cart.remove(Number(remove.getAttribute('data-remove')));
+        paintCartBadge(rres.count);
+        await go('cart', { keepScroll: true });
+      } catch (err) {
+        remove.disabled = false;
+        toast(err.message, 'error');
+      }
       return;
     }
 
@@ -705,6 +1398,31 @@
       } catch (err) { toast(err.message, 'error'); }
       return;
     }
+
+    var adminTab = t.closest('[data-admin-tab]');
+    if (adminTab) {
+      var key = adminTab.getAttribute('data-admin-tab');
+      state.admin.adminTab = key;
+      $app.innerHTML = renderAdmin();
+      // These two panels are fetched on demand rather than on every cabinet open.
+      try {
+        if (key === 'popular') { await loadPopular(); $app.innerHTML = renderAdmin(); }
+        if (key === 'inquiries') {
+          state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+          $app.innerHTML = renderAdmin();
+        }
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    var ruleRow = t.closest('[data-rule]');
+    if (ruleRow) { sheetRule(ruleRow.getAttribute('data-rule')); return; }
+
+    var holidayRow = t.closest('[data-holiday]');
+    if (holidayRow) { sheetHoliday(holidayRow.getAttribute('data-holiday')); return; }
+
+    var costRow = t.closest('[data-cost]');
+    if (costRow) { sheetCost(costRow.getAttribute('data-cost')); return; }
 
     var cust = t.closest('[data-customer]');
     if (cust && !t.closest('[data-action]')) { sheetCustomer(cust.getAttribute('data-customer')); return; }
@@ -735,7 +1453,22 @@
     if (name === 'notifications') { sheetNotifications(); return; }
     if (name === 'new-post') { sheetNewPost(); return; }
     if (name === 'new-campaign') { sheetNewCampaign(); return; }
+    if (name === 'new-holiday') { sheetNewHoliday(); return; }
     if (name === 'new-purchase') { sheetNewPurchase(action.getAttribute('data-customer')); return; }
+    // Claiming with a date already on file: the server verifies it and either
+    // grants once or refuses with a reason the client can read.
+    if (name === 'claim-birthday') {
+      action.disabled = true;
+      try {
+        var res = await api.claimBirthday();
+        toast(res.message, res.ok ? 'ok' : 'error');
+        await go('home');
+      } catch (err) {
+        toast(err.message, 'error');
+        action.disabled = false;
+      }
+      return;
+    }
     if (name === 'redeem') {
       try {
         await api.redeem();
@@ -755,11 +1488,78 @@
     try {
       if (form.id === 'joinForm') {
         await api.register({
-          name: data.name, phone: data.phone, email: data.email,
-          birthday: data.birthday, city: data.city, consent: data.consent ? 1 : 0,
+          name: data.name, phone: data.phone, address: data.address,
+          birthday: data.birthday, consent: data.consent ? 1 : 0,
         });
         toast('Вітаємо у клубі!');
         await go('home');
+      } else if (form.id === 'inquiryForm') {
+        // The client presses one button; Dasha and Maryna both get the message.
+        var ires = await api.cart.send(data.message);
+        // The confirmation sheet says it all — a toast on top of it would just
+        // cover the text.
+        tg.haptic('success');
+        paintCartBadge(0);
+        openSheet('Готово 💛',
+          '<div class="stack">' +
+            '<div class="panel"><p class="panel__note">Даша звʼяжеться з вами дуже скоро — ' +
+              'вона вже бачить ваш запит' +
+              (ires.promo ? ' і вашу знижку ' + esc(ires.promo.label) : '') + '.</p></div>' +
+            '<button class="btn btn--primary" type="button" data-close>Зрозуміло</button>' +
+          '</div>');
+        await go('cart', { keepScroll: true });
+      } else if (form.id === 'birthdayForm') {
+        // First claim: the date is recorded now and checked on every later one.
+        var bres = await api.claimBirthday(data.birthday);
+        toast(bres.message, bres.ok ? 'ok' : 'error');
+        await go('home');
+      } else if (form.id === 'ruleForm') {
+        await api.admin.updateRule(form.getAttribute('data-key'), {
+          mode: data.mode,
+          value: Number(data.value),
+          minOrderUsd: Number(data.minOrderUsd || 0),
+          capUsd: data.capUsd === undefined || data.capUsd === '' ? null : Number(data.capUsd),
+          validDays: data.validDays === undefined || data.validDays === '' ? null : Number(data.validDays),
+          enabled: Boolean(data.enabled),
+        });
+        closeSheet();
+        toast('Правило збережено');
+        await go('admin');
+      } else if (form.id === 'holidayForm') {
+        await api.admin.updateHoliday(Number(form.getAttribute('data-id')), {
+          mode: data.mode, value: Number(data.value),
+          minOrderUsd: Number(data.minOrderUsd || 0),
+          month: Number(data.month), day: Number(data.day),
+          validDays: Number(data.validDays || 14),
+          enabled: Boolean(data.enabled),
+        });
+        closeSheet();
+        toast('Свято збережено');
+        await go('admin');
+      } else if (form.id === 'newHolidayForm') {
+        await api.admin.createHoliday({
+          name: data.name, emoji: data.emoji || '🎉',
+          month: Number(data.month), day: Number(data.day),
+          mode: data.mode, value: Number(data.value),
+          minOrderUsd: Number(data.minOrderUsd || 0),
+          validDays: Number(data.validDays || 14),
+        });
+        closeSheet();
+        toast('Свято додано');
+        await go('admin');
+      } else if (form.id === 'costForm') {
+        await api.admin.setCost(Number(form.getAttribute('data-id')), {
+          costUsd: Number(data.costUsd), note: data.note || null,
+        });
+        closeSheet();
+        toast('Собівартість збережена — прибуток перерахований');
+        state.admin.adminTab = 'profit';
+        await go('admin');
+      } else if (form.id === 'bdayFixForm') {
+        await api.admin.setBirthday(Number(form.getAttribute('data-customer')), data.birthday);
+        closeSheet();
+        toast('Дату народження оновлено');
+        await go('admin');
       } else if (form.id === 'postForm') {
         var r = await api.admin.publishPost({
           channel: data.channel, title: data.title, body: data.body,
@@ -784,17 +1584,23 @@
         toast('Правило створено');
         await go('admin');
       } else if (form.id === 'purchaseForm') {
-        await api.admin.addPurchase({
+        var pres = await api.admin.addPurchase({
           customerId: Number(data.customerId), title: data.title,
           amount: Number(data.amount), currency: data.currency, channel: data.channel,
+          costUsd: data.costUsd === '' ? null : Number(data.costUsd),
+          discountUsd: data.discountUsd === '' ? 0 : Number(data.discountUsd),
         });
         closeSheet();
-        toast('Покупку додано — кешбек перерахований');
+        toast(pres.costMissing
+          ? 'Покупку додано. Собівартість не введена — нагадаємо завтра'
+          : 'Покупку додано — бонус і прибуток перерахований');
         await go('admin');
       } else if (form.id === 'promoForm') {
         var res = await api.admin.grantPromo({
           customerId: Number(form.getAttribute('data-customer')),
-          percent: Number(data.percent), days: Number(data.days), reason: data.reason,
+          mode: data.mode, value: Number(data.value),
+          minOrderUsd: Number(data.minOrderUsd || 0),
+          days: Number(data.days), reason: data.reason,
         });
         closeSheet();
         toast('Промокод ' + res.code + ' видано');
@@ -843,7 +1649,10 @@
     }
 
     $nav.hidden = false;
-    await go('home');
+    paintCartBadge(state.me.cartCount || 0);
+    // Catalogues first: browsing pictures is what the client came for, and the
+    // discounts tab is one tap away.
+    await go(state.me.registered ? 'catalog' : 'home');
   }
 
   boot();
