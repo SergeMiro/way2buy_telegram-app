@@ -78,6 +78,9 @@ app.get('/api/config', (req, res) => {
     holidays: rules.activeHolidays(),
     // The client UI stays deliberately bare: two bonuses, no tiers/badges/
     // streaks. The data still exists for the admin view.
+    // Dasha is the human every price question ends at. The Mini App never
+    // replaces her — it only pre-writes the message.
+    support: { username: (process.env.SUPPORT_USERNAME || 'daschamelnyk').replace(/^@/, '') },
     features: { tiers: false, badges: false, streak: false, aiChat: false },
     tiers: TIERS,
     live: liveMode(),

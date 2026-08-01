@@ -547,6 +547,15 @@
         '<button class="btn btn--primary btn--send" type="submit">Відправити Даші</button>' +
       '</form>';
 
+    // The escape hatch: a client who does not trust a form can always write to
+    // Dasha directly. Losing the client to confusion costs more than a tap.
+    var support = (state.config.support && state.config.support.username) || '';
+    if (support) {
+      html += '<div class="panel"><p class="panel__note">Або напишіть Даші напряму: ' +
+        '<a href="https://t.me/' + esc(support) + '" target="_blank" rel="noopener">@' +
+        esc(support) + '</a></p></div>';
+    }
+
     return html + '</div>';
   }
 

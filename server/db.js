@@ -577,13 +577,13 @@ export function seed({ force = false } = {}) {
     { channel: 'main', title: 'Нове надходження сумок 👜', body: 'Дівчата, виклала нові позиції Chanel та Dior у каталогах. Дивіться у застосунку — тиснете «Хочу цю позицію», і я скажу ціну.', price: null, currency: 'USD', source: 'channel', ago: 0, img: '👜' },
     { channel: 'main', title: 'Доставка США 10–14 днів ✈️', body: 'Замовлення цього тижня приходять до 20 числа. Оплата після підтвердження ціни.', price: null, currency: 'USD', source: 'channel', ago: 2, img: '✈️' },
     { channel: 'main', title: 'Бонуси клубу 💛', body: '$100 бонусу за покупку від $2000 та $50 на день народження від замовлення $500. Все видно у застосунку.', price: null, currency: 'USD', source: 'channel', ago: 5, img: '💛' },
-    { channel: 'ukraine', title: 'Levi\'s жіночий шкіряний ремінь', body: 'Оригінал з Macy\'s. Наявність — уточнюйте у боті 🤖', price: 1161, currency: 'UAH', source: 'channel', ago: 1, img: '👜' },
-    { channel: 'ukraine', title: 'Lauren Ralph Lauren ремінь двосторонній', body: 'Топ-сервіс, мінімальна комісія 🇺🇦', price: 1935, currency: 'UAH', source: 'channel', ago: 1, img: '🧣' },
-    { channel: 'ukraine', title: 'Calvin Klein сукня', body: 'Нова колекція. Доставка 10–14 днів.', price: 3480, currency: 'UAH', source: 'app', ago: 0, img: '👗' },
-    { channel: 'ukraine', title: 'Fossil жіночий годинник', body: 'Залишилось 2 шт.', price: 1773, currency: 'UAH', source: 'channel', ago: 2, img: '⌚' },
-    { channel: 'luxury', title: 'Bottega Veneta Jodie', body: 'Authentic. Full set, receipt included.', price: 2900, currency: 'USD', source: 'channel', ago: 1, img: '👜' },
-    { channel: 'luxury', title: 'Moncler Maya', body: 'Розміри 1–3 в наявності.', price: 1600, currency: 'USD', source: 'app', ago: 0, img: '🧥' },
-    { channel: 'luxury', title: 'Gucci GG Marmont ремінь', body: 'Pre-order 7 днів.', price: 520, currency: 'USD', source: 'channel', ago: 3, img: '🔗' },
+    // Older demo positions, re-homed into the real catalogues.
+    { channel: 'accessories', title: 'Lauren Ralph Lauren ремінь двосторонній', body: 'Ціну підтверджує Марина.', price: null, currency: 'USD', source: 'channel', ago: 1, img: '🧣' },
+    { channel: 'clothes', title: 'Calvin Klein сукня', body: 'Нова колекція. Доставка 10–14 днів.', price: null, currency: 'USD', source: 'app', ago: 0, img: '👗' },
+    { channel: 'watch', title: 'Fossil жіночий годинник', body: 'Залишилось 2 шт.', price: null, currency: 'USD', source: 'channel', ago: 2, img: '⌚' },
+    { channel: 'available', title: 'Bottega Veneta Jodie', body: 'В наявності, повний комплект.', price: 2900, currency: 'USD', source: 'channel', ago: 1, img: '👜' },
+    { channel: 'men', title: 'Moncler Maya', body: 'Розміри 1–3 в наявності.', price: 1600, currency: 'USD', source: 'app', ago: 0, img: '🧥' },
+    { channel: 'accessories', title: 'Gucci GG Marmont ремінь', body: 'Pre-order 7 днів.', price: 520, currency: 'USD', source: 'channel', ago: 3, img: '🔗' },
   ];
   const postIds = posts.map((p) =>
     Number(insPost.run({
@@ -598,31 +598,56 @@ export function seed({ force = false } = {}) {
   //  with two positions apiece so the catalogue tab, the filters and the
   //  popularity report all have something real to show before the test channel
   //  is connected.
+  //  These are Maryna's REAL catalogues (list received 01.08.2026) — thematic,
+  //  not per-brand. The `username` matters: when the bot is made an admin of a
+  //  channel, resolveChannel() matches the first post by @username and binds
+  //  the numeric chat_id, so a channel starts working with no configuration.
   const CATALOGS = [
-    { key: 'chanel',     title: 'Chanel',       emoji: '🖤', items: [['Chanel Classic Flap Medium', 'CH-1112'], ['Chanel 22 Small', 'CH-2205']] },
-    { key: 'dior',       title: 'Dior',         emoji: '🤍', items: [['Dior Lady D-Joy', 'DI-3301'], ['Dior Book Tote', 'DI-3390']] },
-    { key: 'lv',         title: 'Louis Vuitton', emoji: '🟤', items: [['LV Neverfull MM', 'LV-4410'], ['LV Pochette Métis', 'LV-4487']] },
-    { key: 'gucci',      title: 'Gucci',        emoji: '🟢', items: [['Gucci GG Marmont Small', 'GU-5510'], ['Gucci Jackie 1961', 'GU-5561']] },
-    { key: 'prada',      title: 'Prada',        emoji: '⚫', items: [['Prada Re-Edition 2005', 'PR-6612'], ['Prada Galleria Small', 'PR-6640']] },
-    { key: 'hermes',     title: 'Hermès',       emoji: '🟠', items: [['Hermès Evelyne III', 'HE-7701'], ['Hermès Garden Party', 'HE-7733']] },
-    { key: 'ysl',        title: 'Saint Laurent', emoji: '⬛', items: [['YSL Loulou Puffer', 'YS-8810'], ['YSL Kate Tassel', 'YS-8841']] },
-    { key: 'bottega',    title: 'Bottega Veneta', emoji: '🟩', items: [['Bottega Jodie Mini', 'BV-9910'], ['Bottega Cassette', 'BV-9955']] },
-    { key: 'balenciaga', title: 'Balenciaga',   emoji: '⬜', items: [['Balenciaga Hourglass', 'BA-1010'], ['Balenciaga City Bag', 'BA-1044']] },
-    { key: 'celine',     title: 'Celine',       emoji: '🟫', items: [['Celine Triomphe Teen', 'CE-1120'], ['Celine Belt Bag Nano', 'CE-1166']] },
-    { key: 'fendi',      title: 'Fendi',        emoji: '🟨', items: [['Fendi Baguette', 'FE-1230'], ['Fendi Peekaboo ISeeU', 'FE-1277']] },
-    { key: 'miumiu',     title: 'Miu Miu',      emoji: '💗', items: [['Miu Miu Wander Matelassé', 'MM-1340'], ['Miu Miu Arcadie', 'MM-1388']] },
-    { key: 'loewe',      title: 'Loewe',        emoji: '🟥', items: [['Loewe Puzzle Small', 'LO-1450'], ['Loewe Hammock Nano', 'LO-1499']] },
-    { key: 'chloe',      title: 'Chloé',        emoji: '🤎', items: [['Chloé Marcie Small', 'CL-1560'], ['Chloé Woody Tote', 'CL-1577']] },
-    { key: 'mk',         title: 'Michael Kors', emoji: '🩶', items: [['MK Hamilton Legacy', 'MK-1670'], ['MK Parker Medium', 'MK-1688']] },
+    { key: 'bags',        username: 'w2b_luxury_bags',        title: 'Сумки жіночі',        emoji: '👜', items: [['Chanel Classic Flap Medium', 'CH-1112'], ['Hermès Evelyne III', 'HE-7701']] },
+    { key: 'shoes',       username: 'w2b_luxury_shoes',       title: 'Взуття жіноче',       emoji: '👠', items: [['Christian Louboutin So Kate', 'CL-2210'], ['Chanel Slingback', 'CH-2255']] },
+    { key: 'clothes',     username: 'w2b_luxury_clothes',     title: 'Одяг жіночий',        emoji: '👗', items: [['Max Mara Teddy Coat', 'MM-3310'], ['Brunello Cucinelli светр', 'BC-3345']] },
+    { key: 'available',   username: 'w2b_luxury_available',   title: 'Товари в наявності',  emoji: '✅', items: [['LV Neverfull MM — в наявності', 'LV-4410'], ['Dior Book Tote — в наявності', 'DI-4455']] },
+    { key: 'jewelry',     username: 'w2b_luxury_jewelry',     title: 'Прикраси',            emoji: '💍', items: [['Cartier Love браслет', 'CA-5510'], ['Tiffany T кільце', 'TF-5544']] },
+    { key: 'men',         username: 'w2b_luxury_men',         title: 'Чоловічий одяг',      emoji: '🤵', items: [['Stone Island худі', 'SI-6610'], ['Moncler пуховик', 'MO-6655']] },
+    { key: 'shoes_man',   username: 'w2b_shoes_man',          title: 'Чоловіче взуття',     emoji: '👞', items: [['Gucci Ace кросівки', 'GU-7710'], ['Prada Monolith черевики', 'PR-7745']] },
+    { key: 'leather',     username: 'w2b_luxury_leather',     title: 'Шкіра та хутро',      emoji: '🧥', items: [['Шкіряна куртка Bottega', 'BV-8810'], ['Дублянка Loro Piana', 'LP-8855']] },
+    { key: 'wallet',      username: 'w2b_luxury_wallet',      title: 'Гаманці',             emoji: '👛', items: [['Chanel Classic гаманець', 'CH-9910'], ['YSL Monogram гаманець', 'YS-9955']] },
+    { key: 'accessories', username: 'w2b_luxury_accessories', title: 'Аксесуари',           emoji: '🕶️', items: [['Hermès хустка', 'HE-1010'], ['Dior окуляри', 'DI-1055']] },
+    { key: 'watch',       username: 'w2b_luxury_watch',       title: 'Годинники',           emoji: '⌚', items: [['Cartier Tank', 'CA-1110'], ['Rolex Datejust 31', 'RO-1155']] },
+    { key: 'chanel',      username: 'w2b_luxury_chanel',      title: 'Chanel',              emoji: '🖤', items: [['Chanel 22 Small', 'CH-2205'], ['Chanel 19 Flap', 'CH-2219']] },
+    { key: 'fine_jewelry', username: 'w2b_luxury_jewerly',    title: 'Коштовні прикраси',   emoji: '💎', items: [['Van Cleef Alhambra', 'VC-1310'], ['Bvlgari Serpenti', 'BV-1355']] },
+    { key: 'hermes',      username: 'w2b_hermes',             title: 'Hermès',              emoji: '🟠', items: [['Hermès Birkin 25', 'HE-1410'], ['Hermès Kelly 28', 'HE-1455']] },
   ];
 
-  const insCatalogChannel = db.prepare(`INSERT OR IGNORE INTO channels
+  // The two demo channels from the first prototype are not real catalogues —
+  // switching them off keeps the filter row honest without dropping old rows.
+  db.prepare("UPDATE channels SET enabled=0 WHERE key IN ('ukraine','luxury')").run();
+  // A catalogue that is no longer in the list (an earlier per-brand layout, a
+  // channel Maryna closed) is hidden rather than deleted: its posts and its
+  // popularity history stay readable.
+  const keep = CATALOGS.map((c) => c.key);
+  db.prepare(
+    `UPDATE channels SET enabled=0
+      WHERE kind='catalog' AND chat_id IS NULL AND key NOT IN (${keep.map(() => '?').join(',')})`
+  ).run(...keep);
+
+  // Upsert, not insert-or-ignore: the catalogue list is configuration that
+  // changes (Maryna renames a channel, adds one), and a stale row with the same
+  // key must not shadow the new definition. chat_id is never overwritten —
+  // that one is learned from Telegram and is the binding that actually works.
+  const insCatalogChannel = db.prepare(`INSERT INTO channels
     (key,chat_id,username,title,emoji,kind,enabled,created_at)
-    VALUES (?,NULL,NULL,?,?, 'catalog',1,?)`);
+    VALUES (?,NULL,?,?,?, 'catalog',1,?)
+    ON CONFLICT(key) DO UPDATE SET
+      username = excluded.username,
+      title    = excluded.title,
+      emoji    = excluded.emoji,
+      kind     = 'catalog',
+      enabled  = 1`);
   const catalogPostIds = [];
   let catSeq = 0;
   for (const cat of CATALOGS) {
-    insCatalogChannel.run(cat.key, cat.title, cat.emoji, daysAgo(60));
+    insCatalogChannel.run(cat.key, cat.username, cat.title, cat.emoji, daysAgo(60));
     for (const [title, article] of cat.items) {
       catSeq += 1;
       const id = Number(db.prepare(`INSERT INTO posts
