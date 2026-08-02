@@ -497,6 +497,48 @@ app.get('/api/admin/popular', requireAdmin, (req, res) => {
   });
 });
 
+// ── ADMIN: the catalogue card ────────────────────────────────────────────
+//
+// A channel post is prose plus a photo — Maryna writes "В наявності в США,
+// розмір 38", not "Chanel · взуття". The parser guesses; this is where a human
+// corrects the guess. The original text is never overwritten (it stays in
+// `body`), so a correction is always reversible.
+app.get('/api/admin/posts', requireAdmin, (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 200);
+  const rows = req.query.channel && req.query.channel !== 'all'
+    ? db.prepare('SELECT * FROM posts WHERE channel=? ORDER BY created_at DESC LIMIT ?').all(req.query.channel, limit)
+    : db.prepare('SELECT * FROM posts ORDER BY created_at DESC LIMIT ?').all(limit);
+  res.json({ posts: rows.map(shapePost) });
+});
+
+app.patch('/api/admin/posts/:id', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const post = db.prepare('SELECT * FROM posts WHERE id=?').get(id);
+  if (!post) return res.status(404).json({ error: 'not found' });
+
+  const { title, brand, category, article, price, currency, status } = req.body || {};
+  if (status && !['published', 'hidden'].includes(status)) {
+    return res.status(400).json({ error: 'status must be published|hidden' });
+  }
+  const clean = (v, max = 120) => (v === undefined || v === null ? null : String(v).trim().slice(0, max) || null);
+
+  db.prepare(`UPDATE posts SET
+      title    = COALESCE(?, title),
+      brand    = COALESCE(?, brand),
+      category = COALESCE(?, category),
+      article  = COALESCE(?, article),
+      price    = COALESCE(?, price),
+      currency = COALESCE(?, currency),
+      status   = COALESCE(?, status),
+      edited_at = ?
+    WHERE id=?`)
+    .run(clean(title), clean(brand, 40), clean(category, 40), clean(article, 40),
+      price === undefined || price === '' || price === null ? null : Number(price),
+      clean(currency, 4), status || null, now(), id);
+
+  res.json({ ok: true, post: shapePost(db.prepare('SELECT * FROM posts WHERE id=?').get(id)) });
+});
+
 // ── ADMIN: channels ──────────────────────────────────────────────────────
 app.get('/api/admin/channels', requireAdmin, (req, res) => {
   res.json({ channels: listChannels({ includeDisabled: true }) });

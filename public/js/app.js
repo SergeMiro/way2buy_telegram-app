@@ -39,7 +39,7 @@
     admin: {
       customers: [], campaigns: [], report: null, reportPeriod: 'day',
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
-      inquiries: [], popular: null, popularPeriod: 'month',
+      inquiries: [], popular: null, popularPeriod: 'month', posts: [],
       adminTab: 'bonuses',
     },
   };
@@ -937,6 +937,30 @@
       '</div>';
     }).join('');
 
+    // Cards that arrived from the channels: this is where a guessed title gets
+    // corrected into a brand and a category.
+    html += '<div class="section-title">Картки з каналів</div>';
+    html += a.posts.length
+      ? a.posts.slice(0, 20).map(function (p) {
+          var thumb = (p.photoUrls && p.photoUrls[0]) ||
+            (p.image_url && /^[/.]|^https?:/.test(p.image_url) ? p.image_url : null);
+          return '<div class="row row--tap" data-post="' + p.id + '">' +
+            '<div class="fit-row__thumb">' +
+              (thumb ? '<img src="' + esc(thumb) + '" alt="" loading="lazy" />' : '<span class="ph">🛍️</span>') +
+            '</div>' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(p.title || 'Без назви') + '</div>' +
+              '<div class="row__sub">' + esc(p.channel) +
+                (p.brand ? ' · ' + esc(p.brand) : '') +
+                (p.category ? ' · ' + esc(p.category) : '') +
+                (p.article ? ' · ' + esc(p.article) : '') +
+                (p.status === 'hidden' ? ' · прихована' : '') + '</div>' +
+            '</div>' +
+            '<button class="btn btn--ghost" data-post="' + p.id + '">Змінити</button>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Постів із каналів ще немає</div>';
+
     // Campaigns stay available for one-off percentage promos.
     html += '<div class="section-title">Кампанії</div>';
     html += a.campaigns.length
@@ -1109,6 +1133,39 @@
         '<label class="field"><span class="field__label">Скільки днів діє</span>' +
           '<input class="field__input" name="validDays" type="number" min="1" max="365" value="14" /></label>' +
         '<button class="btn btn--primary" type="submit">Додати свято</button>' +
+      '</form>');
+  }
+
+  // A channel post is prose; this turns it into a catalogue card. Brand and
+  // category are what the vitrine and the filters actually show, so they are
+  // the first two fields.
+  function sheetPost(id) {
+    var p = state.admin.posts.filter(function (x) { return String(x.id) === String(id); })[0];
+    if (!p) return;
+    var thumb = (p.photoUrls && p.photoUrls[0]) ||
+      (p.image_url && /^[/.]|^https?:/.test(p.image_url) ? p.image_url : null);
+
+    openSheet('Картка позиції',
+      '<form class="stack" id="postEditForm" data-id="' + p.id + '">' +
+        (thumb ? '<img src="' + esc(thumb) + '" alt="" style="width:100%;max-height:240px;object-fit:cover" />' : '') +
+        '<label class="field"><span class="field__label">Назва у вітрині</span>' +
+          '<input class="field__input" name="title" value="' + esc(p.title || '') + '" required /></label>' +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Бренд</span>' +
+            '<input class="field__input" name="brand" value="' + esc(p.brand || '') + '" placeholder="Chanel" /></label>' +
+          '<label class="field"><span class="field__label">Категорія</span>' +
+            '<input class="field__input" name="category" value="' + esc(p.category || '') + '" placeholder="сумка" /></label>' +
+        '</div>' +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Артикул</span>' +
+            '<input class="field__input" name="article" value="' + esc(p.article || '') + '" /></label>' +
+          '<label class="field"><span class="field__label">Ціна, $</span>' +
+            '<input class="field__input" name="price" type="number" step="0.01" value="' + esc(p.price == null ? '' : p.price) + '" /></label>' +
+        '</div>' +
+        '<label class="inline"><input type="checkbox" name="hidden"' + (p.status === 'hidden' ? ' checked' : '') + ' /> ' +
+          '<span class="muted">Сховати з вітрини</span></label>' +
+        '<p class="field__hint">Оригінальний текст поста зберігається — правки стосуються лише картки.</p>' +
+        '<button class="btn btn--primary" type="submit">Зберегти</button>' +
       '</form>');
   }
 
@@ -1319,6 +1376,7 @@
       state.admin.pendingCosts = a[4].pending || [];
       state.admin.claims = a[5].claims || [];
       if (state.admin.adminTab === 'popular') await loadPopular();
+      if (state.admin.adminTab === 'content') state.admin.posts = (await api.admin.posts()).posts || [];
       if (state.admin.adminTab === 'inquiries') {
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
       }
@@ -1518,6 +1576,10 @@
           state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
           $app.innerHTML = renderAdmin();
         }
+        if (key === 'content') {
+          state.admin.posts = (await api.admin.posts()).posts || [];
+          $app.innerHTML = renderAdmin();
+        }
       } catch (err) { toast(err.message, 'error'); }
       return;
     }
@@ -1527,6 +1589,9 @@
 
     var holidayRow = t.closest('[data-holiday]');
     if (holidayRow) { sheetHoliday(holidayRow.getAttribute('data-holiday')); return; }
+
+    var postRow = t.closest('[data-post]');
+    if (postRow) { sheetPost(postRow.getAttribute('data-post')); return; }
 
     var costRow = t.closest('[data-cost]');
     if (costRow) { sheetCost(costRow.getAttribute('data-cost')); return; }
@@ -1662,6 +1727,19 @@
         closeSheet();
         toast('Свято додано');
         await go('admin');
+      } else if (form.id === 'postEditForm') {
+        await api.admin.updatePost(Number(form.getAttribute('data-id')), {
+          title: data.title,
+          brand: data.brand || null,
+          category: data.category || null,
+          article: data.article || null,
+          price: data.price === '' ? null : Number(data.price),
+          status: data.hidden ? 'hidden' : 'published',
+        });
+        closeSheet();
+        toast('Картку оновлено');
+        state.admin.posts = (await api.admin.posts()).posts || [];
+        $app.innerHTML = renderAdmin();
       } else if (form.id === 'costForm') {
         await api.admin.setCost(Number(form.getAttribute('data-id')), {
           costUsd: Number(data.costUsd), note: data.note || null,

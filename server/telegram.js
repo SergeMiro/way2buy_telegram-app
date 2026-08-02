@@ -112,9 +112,14 @@ export async function fetchPhoto(fileId) {
   const file = await tg('getFile', { file_id: fileId });
   const res = await fetch(`https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`);
   if (!res.ok) throw new Error(`file download ${res.status}`);
+  // Telegram answers with application/octet-stream, which some browsers refuse
+  // to render in an <img>; the real type is in the file path.
+  const ext = (file.file_path.match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+  const byExt = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' }[ext];
+  const served = res.headers.get('content-type');
   return {
     buffer: Buffer.from(await res.arrayBuffer()),
-    contentType: res.headers.get('content-type') || 'image/jpeg',
+    contentType: byExt || (served && served !== 'application/octet-stream' ? served : 'image/jpeg'),
   };
 }
 
@@ -147,16 +152,91 @@ export function parsePrice(text = '') {
   return { price: num, currency };
 }
 
+// Maryna's posts are prose, not product records: "В наявності в США, розмір 38,
+// відправка в будь-яку точку…". Using the first line as a title fills the
+// vitrine with paragraphs. So the title is derived — brand first (that is what
+// the client scans for), then category, and only then a trimmed first phrase.
+const BRANDS = [
+  'Chanel', 'Dior', 'Hermès', 'Hermes', 'Louis Vuitton', 'Gucci', 'Prada',
+  'Saint Laurent', 'YSL', 'Bottega Veneta', 'Bottega', 'Balenciaga', 'Celine',
+  'Céline', 'Fendi', 'Miu Miu', 'Loewe', 'Chloé', 'Chloe', 'Valentino',
+  'Givenchy', 'Burberry', 'Versace', 'Dolce & Gabbana', 'Dolce&Gabbana',
+  'Michael Kors', 'Marc Jacobs', 'Coach', 'Tory Burch', 'Furla', 'Moncler',
+  'Max Mara', 'Brunello Cucinelli', 'Loro Piana', 'Stone Island', 'Canada Goose',
+  'Cartier', 'Rolex', 'Tiffany', 'Van Cleef', 'Bvlgari', 'Bulgari', 'Swarovski',
+  'Christian Louboutin', 'Louboutin', 'Jimmy Choo', 'Manolo Blahnik',
+  'Nike', 'Adidas', 'New Balance', 'Golden Goose', 'Zara', 'Massimo Dutti',
+];
+
+// Ukrainian/Russian category words as they appear in the catalogues.
+// Both alphabets: the descriptions are Ukrainian, the model names are not
+// ("Book Tote", "Neverfull", "Speedy").
+const CATEGORIES = [
+  [/(сумк|клатч|тоут|шопер|рюкзак)|\b(bag|tote|clutch|backpack|shopper|hobo|baguette)\b/i, 'сумка'],
+  [/(гаманц|гаманец|кошель|портмоне)|\b(wallet|cardholder|card holder)\b/i, 'гаманець'],
+  [/(взутт|кросівк|кросовк|туфл|черевик|босоніжк|чобот|сандал|лофер|мюл|балетк)|\b(sneakers|boots|sandals|mules|loafers|pumps|slingback|ballerinas)\b/i, 'взуття'],
+  [/(куртк|пуховик|пальт|шуб|дублянк|тренч|плащ)|\b(coat|jacket|puffer|parka|trench|fur)\b/i, 'верхній одяг'],
+  [/(сукн|плать|спідниц|блуз|сорочк|футболк|худі|светр|костюм|штан|джинс|шорт)|\b(dress|skirt|shirt|hoodie|sweater|pants|jeans|shorts|t-shirt)\b/i, 'одяг'],
+  [/(годинник|часы)|\b(watch)\b/i, 'годинник'],
+  [/(окуляр|очки)|\b(sunglasses|glasses)\b/i, 'окуляри'],
+  [/(прикрас|браслет|каблучк|кільц|сереж|ланцюж|кулон|намист)|\b(bracelet|ring|earrings|necklace|pendant)\b/i, 'прикраси'],
+  [/(ремін|ремень|пояс)|\b(belt)\b/i, 'ремінь'],
+  [/(хустк|шарф|платок|палантин)|\b(scarf|shawl)\b/i, 'аксесуар'],
+  [/(косметичк|несесер)|\b(pouch|cosmetic)\b/i, 'косметичка'],
+  [/(парфум|аромат|духи)|\b(perfume|fragrance)\b/i, 'парфуми'],
+];
+
+export function detectBrand(text = '') {
+  const s = String(text);
+  for (const brand of BRANDS) {
+    // Word-boundary match so "Dior" does not fire inside another word.
+    const re = new RegExp(`(^|[^\\p{L}])${brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'iu');
+    if (re.test(s)) return brand;
+  }
+  return null;
+}
+
+export function detectCategory(text = '') {
+  for (const [re, label] of CATEGORIES) if (re.test(text)) return label;
+  return null;
+}
+
+// A short, scannable name. Never a paragraph.
+export function buildTitle(text = '') {
+  const clean = String(text).replace(/\s+/g, ' ').trim();
+  const brand = detectBrand(clean);
+  const category = detectCategory(clean);
+
+  if (brand && category) return `${brand} · ${category}`;
+  if (brand) return brand;
+
+  if (!clean) return category ? capitalise(category) : 'Нова позиція';
+
+  // No brand: the first phrase, cut on a sentence break. A phrase that would
+  // have to be truncated is a paragraph, not a name — in that case the category
+  // ("Сумка") reads better on a card than half a sentence with an ellipsis.
+  const phrase = clean.split(/[.!?•\n]/)[0].trim();
+  if (phrase.length <= 46) return phrase || (category ? capitalise(category) : 'Нова позиція');
+  if (category) return capitalise(category);
+  const cut = phrase.slice(0, 46);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+
+const capitalise = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export function parsePostText(text = '') {
   const clean = String(text || '').trim();
-  const [firstLine, ...rest] = clean.split('\n');
   const { price, currency } = parsePrice(clean);
   return {
-    title: (firstLine || 'Нова позиція').slice(0, 120),
-    body: rest.join('\n').slice(0, 1000),
+    title: buildTitle(clean),
+    // The whole post stays as the body — nothing the client wrote is lost.
+    body: clean.slice(0, 1000),
     price,
     currency,
     article: parseArticle(clean),
+    brand: detectBrand(clean),
+    category: detectCategory(clean),
   };
 }
 
@@ -222,13 +302,13 @@ export function ingestChannelPost(update) {
   }
 
   const info = db.prepare(`INSERT INTO posts
-    (channel,tg_message_id,title,body,price,currency,image_url,article,photos_json,media_group_id,source,status,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?, 'channel','published',?)`)
+    (channel,tg_message_id,title,body,price,currency,image_url,article,brand,category,photos_json,media_group_id,source,status,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'channel','published',?)`)
     .run(
       channel.key, post.message_id, parsed.title, parsed.body,
       parsed.price, parsed.currency || 'USD',
       photos.length ? null : '🛍️',
-      parsed.article,
+      parsed.article, parsed.brand, parsed.category,
       photos.length ? JSON.stringify(photos) : null,
       post.media_group_id ? String(post.media_group_id) : null,
       createdAt,

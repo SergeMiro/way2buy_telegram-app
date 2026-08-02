@@ -14,7 +14,7 @@ import '../server/env.js';
 import { init, db } from '../server/db.js';
 import {
   liveMode, botInfo, webhookInfo, setWebhook, configureBot,
-  checkChannelAccess, listChannels,
+  checkChannelAccess, listChannels, parsePostText,
 } from '../server/telegram.js';
 
 const [cmd = 'status', arg] = process.argv.slice(2);
@@ -98,7 +98,27 @@ async function unhook() {
   line(JSON.stringify(await res.json()));
 }
 
-const commands = { status, setup, channels, unhook };
+// Re-derive title/brand/category for posts already stored. Needed whenever the
+// parser improves: the raw text is kept in `body`, so nothing is lost and the
+// vitrine can be rebuilt from it.
+async function reparse() {
+  const rows = db.prepare("SELECT id, body, title FROM posts WHERE source='channel'").all();
+  const upd = db.prepare('UPDATE posts SET title=?, brand=?, category=?, article=COALESCE(article, ?) WHERE id=?');
+  let changed = 0;
+  for (const r of rows) {
+    const parsed = parsePostText(r.body || r.title || '');
+    if (parsed.title !== r.title || parsed.brand || parsed.category) {
+      upd.run(parsed.title, parsed.brand, parsed.category, parsed.article, r.id);
+      if (parsed.title !== r.title) changed += 1;
+    }
+  }
+  line(`переоброблено ${rows.length} постів, назв змінено: ${changed}`);
+  for (const r of db.prepare("SELECT title, brand, category FROM posts WHERE source='channel' ORDER BY id DESC LIMIT 8").all()) {
+    ok(`${r.title}${r.brand ? ` · ${r.brand}` : ''}${r.category ? ` · ${r.category}` : ''}`);
+  }
+}
+
+const commands = { status, setup, channels, unhook, reparse };
 const run = commands[cmd];
 if (!run) {
   console.error(`unknown command "${cmd}". Use: ${Object.keys(commands).join(' | ')}`);

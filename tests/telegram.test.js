@@ -25,13 +25,32 @@ test('prices are read in both currencies the club uses', () => {
   assert.deepEqual(parsePrice('немає ціни'), { price: null, currency: null });
 });
 
-test('the first line becomes the title, the rest the body', () => {
+test('the title is derived from the brand, the whole post stays as the body', () => {
   const p = parsePostText('Dior Book Tote\nОригінальна якість, 3 кольори\nАртикул: D-4455\n$780');
-  assert.equal(p.title, 'Dior Book Tote');
+  // Maryna writes prose, so the card title is built (brand · category), not
+  // taken verbatim from the first line.
+  assert.equal(p.title, 'Dior · сумка');
+  assert.equal(p.brand, 'Dior');
+  assert.equal(p.category, 'сумка');
   assert.match(p.body, /Оригінальна якість/);
   assert.equal(p.article, 'D-4455');
   assert.equal(p.price, 780);
   assert.equal(p.currency, 'USD');
+});
+
+test('a post with no brand keeps a short first phrase, never a paragraph', () => {
+  const long = parsePostText('В наявності в США, розмір 38, відправка в будь-яку точку світу протягом тижня');
+  assert.ok(long.title.length <= 47, `title too long: ${long.title}`);
+  assert.match(long.title, /^В наявності в США/);
+  assert.equal(long.brand, null);
+
+  const short = parsePostText('Нова колекція вже тут');
+  assert.equal(short.title, 'Нова колекція вже тут');
+});
+
+test('the brand is matched on word boundaries, not inside another word', () => {
+  assert.equal(parsePostText('Сумка Chanel 22').brand, 'Chanel');
+  assert.equal(parsePostText('Chanelesque стиль').brand, null);
 });
 
 test('an empty post still produces a usable card', () => {
@@ -85,7 +104,9 @@ test('editing the post in the channel updates the card in the app', () => {
     },
   });
   const row = db.prepare('SELECT * FROM posts WHERE id=?').get(id);
-  assert.match(row.title, /РОЗПРОДАЖ/);
+  // The edit is reflected in the body (the raw text); the title is derived, so
+  // it stays the brand-based one.
+  assert.match(row.body, /РОЗПРОДАЖ/);
   assert.equal(row.price, 350);
   assert.ok(row.edited_at);
 });
@@ -104,7 +125,7 @@ test('an album arrives as several updates but becomes one card', () => {
   assert.equal(b, c);
   const row = db.prepare('SELECT * FROM posts WHERE id=?').get(a);
   assert.deepEqual(JSON.parse(row.photos_json), ['ph-1', 'ph-2', 'ph-3']);
-  assert.equal(row.title, 'Hermes Birkin');
+  assert.equal(row.title, 'Hermes');
 });
 
 test('the largest photo size is the one stored', () => {

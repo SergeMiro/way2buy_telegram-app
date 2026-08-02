@@ -136,6 +136,10 @@
       birthdayClaims: function (verdict) { return request('GET', '/api/admin/birthday-claims', undefined, verdict ? { verdict: verdict } : {}); },
       setBirthday: function (customerId, date) { return request('POST', '/api/admin/customers/' + customerId + '/birthday', { birthday: date }); },
 
+      // ── catalogue cards: fix what the parser guessed ──
+      posts: function (channel) { return request('GET', '/api/admin/posts', undefined, channel ? { channel: channel } : {}); },
+      updatePost: function (id, patch) { return request('PATCH', '/api/admin/posts/' + id, patch); },
+
       // ── channels + the scheduler tick ──
       channels: function () { return request('GET', '/api/admin/channels'); },
       updateChannel: function (key, patch) { return request('PATCH', '/api/admin/channels/' + encodeURIComponent(key), patch); },

@@ -336,6 +336,10 @@ function migrateV2() {
   addColumn('posts', 'photos_json', 'TEXT');
   addColumn('posts', 'media_group_id', 'TEXT');
   addColumn('posts', 'edited_at', 'TEXT');
+  // Derived from the post text at ingest time: the brand is what a client
+  // scans for, the category is what the catalogue filter groups by.
+  addColumn('posts', 'brand', 'TEXT');
+  addColumn('posts', 'category', 'TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS idx_posts_media_group ON posts(media_group_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_purchases_cost ON purchases(cost_usd, created_at)');
 
