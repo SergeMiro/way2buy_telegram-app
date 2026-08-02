@@ -4,6 +4,7 @@
 //
 //    npm run tg -- status                 what Telegram thinks right now
 //    npm run tg -- setup <https-url>      webhook + menu button + commands
+//    npm run tg -- app <https-url>        Mini App URL only (keeps polling)
 //    npm run tg -- channels               is the bot an admin of each channel?
 //    npm run tg -- unhook                 detach the webhook (local dev)
 //
@@ -93,6 +94,19 @@ async function channels() {
   }
 }
 
+// Point the bot's Mini App at a URL WITHOUT touching the webhook. Needed while
+// developing over a tunnel: polling and webhooks are mutually exclusive, so
+// `setup` (which sets a webhook) would silently kill the local poller.
+async function app(url) {
+  if (!url || !url.startsWith('https://')) {
+    console.error('usage: npm run tg -- app https://your-tunnel.example');
+    process.exit(1);
+  }
+  const conf = await configureBot(url);
+  line(`Mini App → ${url}`);
+  line(JSON.stringify(conf.menuButton ?? conf));
+}
+
 async function unhook() {
   const res = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/deleteWebhook`, { method: 'POST' });
   line(JSON.stringify(await res.json()));
@@ -118,7 +132,7 @@ async function reparse() {
   }
 }
 
-const commands = { status, setup, channels, unhook, reparse };
+const commands = { status, setup, app, channels, unhook, reparse };
 const run = commands[cmd];
 if (!run) {
   console.error(`unknown command "${cmd}". Use: ${Object.keys(commands).join(' | ')}`);
