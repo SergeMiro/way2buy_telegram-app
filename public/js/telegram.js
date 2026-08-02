@@ -35,6 +35,23 @@
 
   var userId = inTelegram ? String(wa.initDataUnsafe.user.id) : readDemoId();
 
+  // In Fullscreen launch mode the Mini App owns the whole screen — including
+  // the strip under the clock and the camera notch. Telegram reports how much
+  // room that takes; without honouring it the wordmark sits under the status
+  // bar. Compact/Fullsize report zeros, so the same code is correct in all
+  // three modes.
+  function applyInsets() {
+    if (!wa) return;
+    var safe = wa.safeAreaInset || {};
+    var content = wa.contentSafeAreaInset || {};
+    var top = (Number(safe.top) || 0) + (Number(content.top) || 0);
+    var bottom = Math.max(Number(safe.bottom) || 0, Number(content.bottom) || 0);
+    var root = document.documentElement;
+    root.style.setProperty('--w2b-safe-top', top + 'px');
+    if (bottom) root.style.setProperty('--w2b-safe-bottom', bottom + 'px');
+    root.classList.toggle('is-fullscreen', Boolean(wa.isFullscreen));
+  }
+
   var tg = {
     inTelegram: inTelegram,
     // Demo mode also unlocks the admin tab; in production ADMIN_TG_IDS decides
@@ -56,10 +73,21 @@
       if (!wa) return;
       wa.ready();
       wa.expand();
+      // The header must match the paper canvas, not the old dark theme.
       if (wa.setHeaderColor) {
-        try { wa.setHeaderColor('#14122b'); } catch (e) { /* older clients */ }
+        try { wa.setHeaderColor('#f6f4f1'); } catch (e) { /* older clients */ }
+      }
+      if (wa.setBackgroundColor) {
+        try { wa.setBackgroundColor('#f6f4f1'); } catch (e) { /* older clients */ }
       }
       if (wa.enableClosingConfirmation) wa.enableClosingConfirmation();
+      applyInsets();
+      // Fullscreen mode, rotation and the keyboard all move the safe area, and
+      // Telegram reports each as its own event.
+      ['safeAreaChanged', 'contentSafeAreaChanged', 'fullscreenChanged', 'viewportChanged']
+        .forEach(function (evt) {
+          try { wa.onEvent(evt, applyInsets); } catch (e) { /* older clients */ }
+        });
     },
 
     haptic: function (style) {
