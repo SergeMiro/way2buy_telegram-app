@@ -52,6 +52,13 @@
     return usd(v);
   }
 
+  // Who the client is writing to. A name in the interface is a setting, not a
+  // string literal: during the test everything routes to Serhiy, in production
+  // to Dasha. Ukrainian needs the dative ("написати Даші / Сергію").
+  function support() {
+    return (state.config && state.config.support) || { name: 'Менеджер', dative: 'менеджеру', username: '' };
+  }
+
   function minOrderNote(minOrderUsd) {
     return Number(minOrderUsd) > 0 ? ' від замовлення ' + usd(minOrderUsd) : '';
   }
@@ -595,23 +602,23 @@
     }
 
     // Pre-filled text: they may send as-is or add a line of their own.
-    html += '<div class="section-title">Повідомлення Даші</div>' +
+    html += '<div class="section-title">Повідомлення ' + esc(support().dative) + '</div>' +
       '<form class="stack" id="inquiryForm">' +
         '<label class="field">' +
           '<textarea class="field__textarea" name="message" rows="5" ' +
             'placeholder="Можете дописати, що саме вас цікавить">' + esc(c.draft || '') + '</textarea>' +
-          '<span class="field__hint">Даша отримає це повідомлення разом зі списком обраних позицій.</span>' +
+          '<span class="field__hint">' + esc(support().name) + ' отримає це повідомлення разом зі списком обраних позицій.</span>' +
         '</label>' +
-        '<button class="btn btn--primary btn--send" type="submit">Відправити Даші</button>' +
+        '<button class="btn btn--primary btn--send" type="submit">Відправити ' + esc(support().dative) + '</button>' +
       '</form>';
 
-    // The escape hatch: a client who does not trust a form can always write to
-    // Dasha directly. Losing the client to confusion costs more than a tap.
-    var support = (state.config.support && state.config.support.username) || '';
-    if (support) {
-      html += '<div class="panel"><p class="panel__note">Або напишіть Даші напряму: ' +
-        '<a href="https://t.me/' + esc(support) + '" target="_blank" rel="noopener">@' +
-        esc(support) + '</a></p></div>';
+    // The escape hatch: a client who does not trust a form can always write
+    // directly. Losing the client to confusion costs more than a tap.
+    var uname = support().username;
+    if (uname) {
+      html += '<div class="panel"><p class="panel__note">Або напишіть ' + esc(support().dative) +
+        ' напряму: <a href="https://t.me/' + esc(uname) + '" target="_blank" rel="noopener">@' +
+        esc(uname) + '</a></p></div>';
     }
 
     return html + '</div>';
@@ -1682,8 +1689,8 @@
         paintCartBadge(0);
         openSheet('Готово 💛',
           '<div class="stack">' +
-            '<div class="panel"><p class="panel__note">Даша звʼяжеться з вами дуже скоро — ' +
-              'вона вже бачить ваш запит' +
+            '<div class="panel"><p class="panel__note">' + esc(support().name) +
+              ' звʼяжеться з вами дуже скоро — ваш запит уже видно' +
               (ires.promo ? ' і вашу знижку ' + esc(ires.promo.label) : '') + '.</p></div>' +
             '<button class="btn btn--primary" type="button" data-close>Зрозуміло</button>' +
           '</div>');

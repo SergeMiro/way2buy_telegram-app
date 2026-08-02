@@ -37,6 +37,15 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export const supportIds = () =>
   (process.env.SUPPORT_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
 
+// Who the client is writing to. Ukrainian needs the dative case for "написати
+// Даші / Сергію", and a name is not something to hardcode: during the test the
+// inquiries go to Serhiy, in production to Dasha.
+export const support = () => ({
+  name: process.env.SUPPORT_NAME || 'Даша',
+  dative: process.env.SUPPORT_NAME_DATIVE || process.env.SUPPORT_NAME || 'Даші',
+  username: (process.env.SUPPORT_USERNAME || '').replace(/^@/, ''),
+});
+
 const FX = { USD: 1, EUR: 1.08, UAH: 1 / 41 };
 const toUsd = (amount, currency) =>
   amount == null ? null : round2(Number(amount) * (FX[currency] ?? 1));
@@ -265,11 +274,12 @@ export function sendInquiry({ customer, message = '', now = Date.now() }) {
   }
 
   // ── exactly the wording Maryna asked for ──
+  const who = support();
   const title = `🛍️ Клієнт ${shortName(customer)} цікавиться товаром`;
   const body =
     `Клієнт ${shortName(customer)} цікавиться товаром:\n${items.map(itemLine).join('\n')}\n` +
     (clientText
-      ? `\nі задав питання адміністратору Даші:\n«${clientText}»`
+      ? `\nі задав питання адміністратору ${who.dative}:\n«${clientText}»`
       : '\nПитання не додав — просить ціну та наявність.') +
     // The coupon is stated either way: an unusable one still matters, because
     // Maryna is the person who sets the price the minimum is measured against.
@@ -296,7 +306,7 @@ export function sendInquiry({ customer, message = '', now = Date.now() }) {
     customerId: customer.id,
     kind: 'inquiry_sent',
     title: 'Заявку надіслано ✅',
-    body: `Даша звʼяжеться з вами дуже скоро щодо ${items.length === 1 ? 'позиції' : items.length + ' позицій'}.`,
+    body: `${who.name} звʼяжеться з вами дуже скоро щодо ${items.length === 1 ? 'позиції' : items.length + ' позицій'}.`,
     dedupeKey: `inquiry-ack:${inquiryId}`,
   });
 
@@ -305,7 +315,7 @@ export function sendInquiry({ customer, message = '', now = Date.now() }) {
     inquiryId,
     items: items.length,
     promo: promo && promo.usable ? { code: promo.code, label: promo.label } : null,
-    message: 'Даша звʼяжеться з вами дуже скоро 💛',
+    message: `${who.name} звʼяжеться з вами дуже скоро 💛`,
   };
 }
 

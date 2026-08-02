@@ -375,7 +375,7 @@ export async function handleMessage(update) {
   const name = msg.from?.first_name ? `, ${msg.from.first_name}` : '';
   const body =
     `<b>Way2Buy</b>\n\nВітаємо${escapeHtml(name)}! Тут усі наші каталоги в одному місці: ` +
-    'обираєте позицію, додаєте в примірочну — і Даша відповість щодо ціни та наявності.\n\n' +
+    `обираєте позицію, додаєте в примірочну — і ${process.env.SUPPORT_NAME || 'Даша'} відповість щодо ціни та наявності.\n\n` +
     'Бонуси клубу теж тут: знижка на день народження та бонус за покупку.';
 
   if (!liveMode()) return { simulated: true, body };
