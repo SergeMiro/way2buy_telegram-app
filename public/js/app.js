@@ -282,7 +282,7 @@
             '</g>' +
           '</svg>' +
         '</div>' +
-        '<div class="wordmark__sub">знайдемо ту саму річ</div>' +
+        '<div class="wordmark__sub">ваша річ уже існує</div>' +
       '</div>' +
       '<header class="topbar">' +
       '<div class="topbar__avatar">' + esc(initials) + '</div>' +
