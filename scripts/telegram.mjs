@@ -6,6 +6,7 @@
 //    npm run tg -- setup <https-url>      webhook + menu button + commands
 //    npm run tg -- app <https-url>        Mini App URL only (keeps polling)
 //    npm run tg -- channels               is the bot an admin of each channel?
+//    npm run tg -- demo-off               hide seeded demo positions
 //    npm run tg -- unhook                 detach the webhook (local dev)
 //
 //  The token comes from .env (TELEGRAM_BOT_TOKEN) and never from an argument,
@@ -112,6 +113,27 @@ async function unhook() {
   line(JSON.stringify(await res.json()));
 }
 
+// Hide the seeded demo positions once real channel posts have arrived. A real
+// post carries Telegram photo file_ids; a seeded one only has an emoji — that
+// is the cleanest way to tell them apart without a flag column. Hidden, not
+// deleted: the demo data is still there if a screenshot needs it.
+async function demoOff() {
+  const info = db.prepare(
+    `UPDATE posts SET status='hidden'
+      WHERE status='published' AND photos_json IS NULL
+        AND (image_url IS NULL OR length(image_url) <= 8)`
+  ).run();
+  const left = db.prepare("SELECT COUNT(*) n FROM posts WHERE status='published'").get().n;
+  line(`сховано демо-позицій: ${info.changes}`);
+  line(`лишилось у вітрині: ${left} (справжні пости з каналів)`);
+}
+
+// Bring them back.
+async function demoOn() {
+  const info = db.prepare("UPDATE posts SET status='published' WHERE status='hidden'").run();
+  line(`повернуто у вітрину: ${info.changes}`);
+}
+
 // Re-derive title/brand/category for posts already stored. Needed whenever the
 // parser improves: the raw text is kept in `body`, so nothing is lost and the
 // vitrine can be rebuilt from it.
@@ -132,7 +154,7 @@ async function reparse() {
   }
 }
 
-const commands = { status, setup, app, channels, unhook, reparse };
+const commands = { status, setup, app, channels, unhook, reparse, 'demo-off': demoOff, 'demo-on': demoOn };
 const run = commands[cmd];
 if (!run) {
   console.error(`unknown command "${cmd}". Use: ${Object.keys(commands).join(' | ')}`);

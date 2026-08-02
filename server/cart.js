@@ -43,13 +43,23 @@ const toUsd = (amount, currency) =>
 
 // ── the fitting room ──────────────────────────────────────────────────────
 
+// The stored `channel` is a slug ('clothes'); nobody outside the code should
+// ever see it. The human title is looked up, with the slug as a last resort in
+// case the channel row was removed.
+const channelTitle = (key) => {
+  if (!key) return null;
+  const row = db.prepare('SELECT title FROM channels WHERE key=?').get(key);
+  return row?.title || key;
+};
+
 export function shapeItem(r) {
   return {
     id: r.id,
     postId: r.post_id,
     title: r.title,
     article: r.article,
-    channel: r.channel,
+    channel: channelTitle(r.channel),
+    channelKey: r.channel,
     price: r.price,
     currency: r.currency,
     // A Telegram file_id is served through the photo proxy; an emoji is shown
