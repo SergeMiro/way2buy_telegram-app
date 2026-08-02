@@ -277,7 +277,7 @@
             '</g>' +
           '</svg>' +
         '</div>' +
-        '<div class="wordmark__sub">клуб байєра Марини</div>' +
+        '<div class="wordmark__sub">знайдемо ту саму річ</div>' +
       '</div>' +
       '<header class="topbar">' +
       '<div class="topbar__avatar">' + esc(initials) + '</div>' +
