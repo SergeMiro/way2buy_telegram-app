@@ -264,16 +264,21 @@
     return '<div class="wordmark">' +
         '<div class="wordmark__row">' +
           '<span class="wordmark__name">Way2Buy</span>' +
-          '<svg class="brush" viewBox="0 0 58 30" role="img" aria-label="Україна">' +
-            '<g class="brush__blue">' +
-              '<path d="M3 10.2c4.4-3 9.2-4.7 14.4-5 4-.2 8 .3 12 .5 5.9.3 11.6-.7 17.1-3l6.2-.8-1.5 6.3-5.4 2.3c-5.5 2.1-11.2 3-17.1 2.6-4-.3-8-.9-12-.7-4.9.2-9.5 1.6-13.8 4.2z"/>' +
-              '<path d="M44.8 5.9l9.6-2.1-.5 2.1-9.4 2.4z" opacity="0.55"/>' +
-              '<path d="M45.2 9.1l7.9-1.2-.4 1.6-7.7 1.4z" opacity="0.33"/>' +
-            '</g>' +
-            '<g class="brush__yellow">' +
-              '<path d="M3.4 18.6c4.4-3 9.2-4.7 14.4-5 4-.2 8 .3 12 .5 5.9.3 11.6-.7 17.1-3l6.1-.8-1.4 6.3-5.4 2.3c-5.5 2.1-11.2 3-17.1 2.6-4-.3-8-.9-12-.7-4.9.2-9.5 1.6-13.8 4.2z"/>' +
-              '<path d="M45.2 14.3l9.6-2.1-.5 2.1-9.4 2.4z" opacity="0.55"/>' +
-              '<path d="M45.6 17.5l7.9-1.2-.4 1.6-7.7 1.4z" opacity="0.33"/>' +
+          '<svg class="brush" viewBox="0 0 40 26" role="img" aria-label="Україна">' +
+            '<defs>' +
+              // Watercolour is edge behaviour, not colour: turbulence pushes the
+              // outline around so it wanders like a wet edge, a slight blur
+              // softens it, and the paint stays translucent so the paper shows
+              // through and the two washes bleed where they meet.
+              '<filter id="w2b-wc" x="-20%" y="-25%" width="140%" height="150%">' +
+                '<feTurbulence type="fractalNoise" baseFrequency="0.055" numOctaves="4" seed="9" result="n"/>' +
+                '<feDisplacementMap in="SourceGraphic" in2="n" scale="3.4" xChannelSelector="R" yChannelSelector="G"/>' +
+                '<feGaussianBlur stdDeviation="0.32"/>' +
+              '</filter>' +
+            '</defs>' +
+            '<g filter="url(#w2b-wc)">' +
+              '<path class="wash wash--blue" d="M2.6 7.4c4-1.9 8.2-2.9 12.6-2.9 3.5 0 6.9.5 10.3.7 3.9.2 7.7-.4 11.3-1.9l1.5 5.6c-3.9 1.6-8 2.3-12.2 2.1-3.5-.2-6.9-.7-10.4-.7-4.2 0-8.2.8-12.1 2.4z"/>' +
+              '<path class="wash wash--yellow" d="M2.9 14.3c4-1.9 8.2-2.9 12.6-2.9 3.5 0 6.9.5 10.3.7 3.9.2 7.7-.4 11.3-1.9l1.4 5.6c-3.9 1.6-8 2.3-12.2 2.1-3.5-.2-6.9-.7-10.4-.7-4.2 0-8.2.8-12.1 2.4z"/>' +
             '</g>' +
           '</svg>' +
         '</div>' +

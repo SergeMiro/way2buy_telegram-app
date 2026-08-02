@@ -831,10 +831,14 @@
   gap: 10px;
 }
 .brush {
-  width: 42px;
-  height: 22px;
+  /* 30% shorter than the painted version it replaces. */
+  width: 29px;
+  height: 19px;
   flex: none;
-  transform: rotate(-5deg);
+  transform: rotate(-4deg);
 }
-.brush__blue  { fill: #0d5eaf; }
-.brush__yellow { fill: #f0c419; }
+/* Translucent washes: multiply lets the lower edge of the blue darken where it
+   overlaps the yellow, the way wet paint does. */
+.wash { mix-blend-mode: multiply; }
+.wash--blue { fill: #5aa7dd; opacity: 0.82; }
+.wash--yellow { fill: #f3cf4e; opacity: 0.86; }
