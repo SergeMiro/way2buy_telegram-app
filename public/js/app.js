@@ -256,8 +256,27 @@
       ? (tiersOn ? c.loyalty.tierName + ' · ' : '') + usd(c.loyalty.totalSpent) + ' покупок'
       : 'Гість';
     var unread = state.notifications.unread;
+    // The flag beside the wordmark is painted, not an emoji: a coloured OS
+    // glyph would break the monochrome storefront. Each sweep is a tapered
+    // body — thin at the start, loaded in the middle, frayed where the brush
+    // lifts — plus two bristle trails running past the end. That raggedness is
+    // what makes paint read as paint rather than as two tidy bars.
     return '<div class="wordmark">' +
-        '<div class="wordmark__name">Way2Buy</div>' +
+        '<div class="wordmark__row">' +
+          '<span class="wordmark__name">Way2Buy</span>' +
+          '<svg class="brush" viewBox="0 0 58 30" role="img" aria-label="Україна">' +
+            '<g class="brush__blue">' +
+              '<path d="M3 10.2c4.4-3 9.2-4.7 14.4-5 4-.2 8 .3 12 .5 5.9.3 11.6-.7 17.1-3l6.2-.8-1.5 6.3-5.4 2.3c-5.5 2.1-11.2 3-17.1 2.6-4-.3-8-.9-12-.7-4.9.2-9.5 1.6-13.8 4.2z"/>' +
+              '<path d="M44.8 5.9l9.6-2.1-.5 2.1-9.4 2.4z" opacity="0.55"/>' +
+              '<path d="M45.2 9.1l7.9-1.2-.4 1.6-7.7 1.4z" opacity="0.33"/>' +
+            '</g>' +
+            '<g class="brush__yellow">' +
+              '<path d="M3.4 18.6c4.4-3 9.2-4.7 14.4-5 4-.2 8 .3 12 .5 5.9.3 11.6-.7 17.1-3l6.1-.8-1.4 6.3-5.4 2.3c-5.5 2.1-11.2 3-17.1 2.6-4-.3-8-.9-12-.7-4.9.2-9.5 1.6-13.8 4.2z"/>' +
+              '<path d="M45.2 14.3l9.6-2.1-.5 2.1-9.4 2.4z" opacity="0.55"/>' +
+              '<path d="M45.6 17.5l7.9-1.2-.4 1.6-7.7 1.4z" opacity="0.33"/>' +
+            '</g>' +
+          '</svg>' +
+        '</div>' +
         '<div class="wordmark__sub">клуб байєра Марини</div>' +
       '</div>' +
       '<header class="topbar">' +

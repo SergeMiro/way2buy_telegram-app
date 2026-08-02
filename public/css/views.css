@@ -808,3 +808,33 @@
 .tile__title { min-height: 2.4em; }
 .tile__btn { margin-top: auto; }
 .tile { height: 100%; }
+
+/* ── the Ukrainian brush mark beside the wordmark ─────────────────────────
+   Two hand-painted strokes rather than the 🇺🇦 emoji: an emoji is an OS glyph
+   that renders differently on every device and reads as a sticker on a
+   monochrome storefront. The strokes carry the flag's blue over yellow, with
+   uneven, tapered edges so they look painted.                              */
+.wordmark__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+/* ── the flag, painted ────────────────────────────────────────────────────
+   Two brush sweeps beside the wordmark. Slight rotation and unequal opacity
+   keep it looking applied by hand; a perfectly level, fully saturated pair of
+   bars would read as a flag icon, which is not the register of the rest. */
+.wordmark__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.brush {
+  width: 42px;
+  height: 22px;
+  flex: none;
+  transform: rotate(-5deg);
+}
+.brush__blue  { fill: #0d5eaf; }
+.brush__yellow { fill: #f0c419; }
