@@ -1,63 +1,380 @@
 # Way2Buy — Telegram Mini App
 
-Клуб покупців Way2Buy: кешбек, знижки, стрічка двох Telegram-каналів і кабінет
-адміністратора — в одному застосунку. Канал продовжує працювати як раніше;
-Mini App — другий, ширший вхід до того самого контенту.
+**A loyalty, cashback and discount system for a Telegram-native buyers' club:** cashback
+wallet, tiered membership, automated birthday and holiday discounts, a fitting-room cart, a
+two-channel content feed, margin tracking, and an admin office with an AI reporting agent —
+in one zero-build Node application.
 
-## Що вже працює
+[![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4.21-000000?logo=express&logoColor=white)](https://expressjs.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite&logoColor=white)](https://github.com/WiseLibs/better-sqlite3)
+[![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
+[![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
+[![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
+[![Tests](https://img.shields.io/badge/tests-81_node%3Atest-brightgreen)](#testing)
+[![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
-| Розділ | Що робить |
-|---|---|
-| **Клуб** | Кешбек-гаманець ($3000 → $100), кільце прогресу, рівні Silver/Gold/Platinum, картки знижок (🎂 ДН · 🎉 свято · 💎 VIP · 🏷️ загальна), майлстоуни та бейджі |
-| **Стрічка** | Публікації обох каналів (🇺🇦 Ukraine + 💎 Luxury), фільтр по каналу, кнопка «Хочу» |
-| **Покупки** | Історія покупок (у валюті замовлення + в USD), активні промокоди з копіюванням |
-| **Кабінет** | Список клієнтів з рівнями та кешбеком, публікація товару в канал, правила знижок, видача промокодів, звіт (шаблон або Gemini) |
+🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
+zero configuration; Telegram publishing is simulated and a demo-profile switcher appears in
+the header.
 
-Два напрямки синхронізації з Telegram: **APP → канал** (публікація з кабінету)
-і **канал → APP** (webhook `channel_post` наповнює стрічку).
+---
 
-## Запуск локально
+## Table of contents
+
+- [The problem](#the-problem)
+- [What it does](#what-it-does)
+- [Complete tech stack](#complete-tech-stack)
+- [Architecture](#architecture)
+- [Data model](#data-model)
+- [API](#api)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Telegram wiring](#telegram-wiring)
+- [The scheduler](#the-scheduler)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Project structure](#project-structure)
+- [Design constraints](#design-constraints)
+- [License](#license)
+
+## The problem
+
+Way2Buy is a buyers' club that sells through Telegram — there is no website, and there does
+not need to be one. Its customers are women aged roughly 30–50 with very low digital
+literacy: they will not search a brand site for a product code, but they will scroll pictures
+and message a person to say *"I want this one."*
+
+That shapes every decision here:
+
+- **The Telegram channel keeps working exactly as before.** The Mini App is a second, wider
+  entrance to the same content — not a replacement. No existing subscriber has to change a
+  habit.
+- **Zero learning curve.** Every screen has to be obvious without explanation.
+- **The whole UI is in Ukrainian.**
+- **Staff screens are one or two buttons.** An interface more complex than that will not be
+  used, so it does not exist.
+
+The engineering problem is therefore not "build a storefront" — it is to automate loyalty,
+discounts, reminders and margin bookkeeping *around* a conversation that stays human.
+
+## What it does
+
+### Membership club
+
+- **Cashback wallet** — the rule is one line of configuration: every `$3000` spent returns
+  `$100`. Progress is shown as a ring, not a number in a table.
+- **Tiers** — Silver / Gold / Platinum, derived from spend rather than assigned by hand.
+- **Milestones, badges and streaks** — computed in `loyalty.js`, with `snapshotBatch()`
+  producing the whole client list without an N+1 query.
+- **Purchase history** in both the order currency and USD.
+
+### Discounts that fire themselves
+
+- **Four discount kinds** — 🎂 birthday · 🎉 holiday · 💎 VIP · 🏷️ general
+- **Birthday windows** (`birthday.js`) — a claimable window opens around the date; the client
+  is nudged when it opens, and the claim is recorded in `birthday_claims` so it cannot be
+  taken twice
+- **Holiday calendar** (`holidays`) and **campaigns** (`campaigns.js`) that activate and
+  expire on schedule, with a `materialize` step that turns a campaign into concrete
+  per-customer discounts
+- **Rules engine** (`rules.js`) — `discount_rules` are editable from the admin office, so
+  changing the promotion does not mean changing the code
+- **Promo codes** (`promo_codes`, `redemptions`) with copy-to-clipboard and redemption tracking
+
+### Feed and fitting room
+
+- **Two-channel feed** — posts from both Telegram channels (🇺🇦 Ukraine and 💎 Luxury) in one
+  scroll, filterable by channel
+- **"I want this"** turns a post into an `inquiry`, delivered as a direct message to the owner
+  and to support
+- **Cart / fitting room** (`cart.js`) — collect items, then send the whole selection as one
+  request instead of ten separate messages; `cart_events` records what was added, removed and
+  sent, which is where the popular-items view comes from
+- **Photo proxying** (`/api/photo/:fileId`) so channel images render inside the Mini App
+
+### Admin office
+
+- Client list with tier, cashback balance and streak
+- **Publish a product to a channel** straight from the panel — one composer, two channels
+- Discount rules, holidays and campaigns, all editable
+- Issue a promo code to a specific client
+- **Margin tracking** (`profit.js`) — the sale price is known immediately, the factory cost is
+  entered later, so the app chases the missing entry and only then reports real profit
+- **Pending-cost and alert views**, popular-item ranking, scheduler status
+- **Reports** — a built-in template narrative, or a generated one through **Gemini 1.5 Flash**
+  when a key is present; reports can be sent to Telegram
+- **AI proposal loop** — `ai_conversations`, `ai_messages` and `ai_proposals` back an admin
+  agent that proposes an action and applies it only on confirmation
+
+### Telegram integration, both directions
+
+- **App → channel:** publishing from the admin office posts to the real channels
+- **Channel → app:** the `channel_post` webhook fills the feed, so content posted the old way
+  still appears in the Mini App
+- **Long-polling fallback** (`polling.js`) for local development, where no public webhook URL
+  exists
+- **Direct messages** (`notify.js`) for birthday nudges, inquiries and reward notifications
+
+## Complete tech stack
+
+| Area | Technology | Why |
+| --- | --- | --- |
+| Runtime | **Node.js 20+**, ES modules | — |
+| HTTP | **Express 4.21** | One process, one router, 51 endpoints |
+| Database | **SQLite** via **better-sqlite3 11** | Synchronous, in-process, no server to run — 19 tables, 15 indexes |
+| Migrations | Additive schema in `db.js` | The schema maps 1:1 onto PocketBase/Postgres for production |
+| Frontend | **Vanilla JavaScript**, no framework, no bundler | Zero build step (ADR-001) |
+| Styling | Three CSS layers — `tokens.css` (design tokens), `app.css` (components), `views.css` (screens) | Custom properties instead of a utility framework |
+| Telegram | **Mini App SDK** on the client, **Bot API** on the server — publishing, `channel_post` webhook, DMs, photo proxy, long-polling fallback | — |
+| AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
+| Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
+| Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
+| Tests | **`node:test`** — 81 tests across 6 suites | No test framework dependency |
+| Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
+| Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
+
+Three runtime dependencies in total: `express`, `better-sqlite3`, `dotenv`. That is the point.
+
+## Architecture
+
+```
+                        Telegram
+        ┌──────────────────┴───────────────────┐
+        │                                      │
+   Mini App WebView                    Channels + Bot
+   public/index.html                   @Way2Buy_Ukraine
+   js/{telegram,api,app}.js            @Way2Buy_Luxury
+   css/{tokens,app,views}.css                 │
+        │                                     │
+        │  fetch /api/*         channel_post webhook · DMs · publish
+        ▼                                     ▼
+   ┌──────────────────────────────────────────────────────┐
+   │  server/index.js — Express router (51 endpoints)     │
+   │                                                      │
+   │   loyalty.js     cashback · tiers · badges · streaks │
+   │   birthday.js    claim windows, one claim per year   │
+   │   campaigns.js   scheduled campaigns → materialise   │
+   │   rules.js       editable discount rules             │
+   │   cart.js        fitting room + cart_events          │
+   │   profit.js      sale vs factory cost, margin        │
+   │   telegram.js    Bot API: publish · webhook · DM     │
+   │   notify.js      customer notifications              │
+   │   scheduler.js   idempotent tick (15 min)            │
+   │   ai.js          Gemini reports + proposal loop      │
+   │   db.js          schema, indexes, seed (19 tables)   │
+   │   env.js         validated configuration             │
+   └──────────────────────┬───────────────────────────────┘
+                          ▼
+                 SQLite (better-sqlite3)
+```
+
+Decisions worth naming:
+
+- **Zero build step.** No bundler, no transpiler, no framework runtime. The file you edit is
+  the file the browser runs — which matters for a project that has to stay maintainable by
+  whoever inherits it.
+- **The scheduler reconciles, it does not fire.** All three jobs compare desired state to
+  actual state, so a restart can never miss a notification or send it twice.
+- **Demo mode is a first-class path,** not a mock. Without `TELEGRAM_BOT_TOKEN` the app runs
+  fully: publishing is simulated, the admin office is open, and a profile switcher lets you
+  view the app as different clients. That is what the public demo is.
+- **The schema is portable on purpose.** SQLite is the development and demo store; the same
+  tables move to PocketBase or Postgres for production by pointing `W2B_DB_PATH` elsewhere or
+  replacing the `db.js` layer.
+- **Margin is tracked in two steps** because that is how the business works: the sale is known
+  now, the factory cost arrives later, so the system chases it instead of pretending it has it.
+
+## Data model
+
+19 SQLite tables with 15 indexes, created and seeded by `server/db.js`:
+
+- **Customers & loyalty** — `customers`, `purchases`, `redemptions`
+- **Discounts** — `discount_rules`, `campaigns`, `holidays`, `birthday_claims`, `promo_codes`
+- **Content & demand** — `channels`, `posts`, `inquiries`, `cart_items`, `cart_events`
+- **Comms** — `notifications`, `events`
+- **AI** — `ai_conversations`, `ai_messages`, `ai_proposals`
+- **Infrastructure** — `scheduler_lock`
+
+`npm run seed` produces a realistic demo set: 7 clients, 25 purchases, a holiday campaign, a
+birthday campaign and 9 holidays.
+
+## API
+
+51 endpoints. The client-facing set:
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/config` | Feature flags, demo mode, cashback rule |
+| `GET` | `/api/me` | Profile, cashback, tier, badges, streak |
+| `POST` | `/api/register` | First-run registration from Telegram init data |
+| `GET` | `/api/feed` | Both channels' posts, filterable |
+| `POST` | `/api/interest` | "I want this" → inquiry + DM |
+| `GET` `POST` | `/api/cart`, `/api/cart/{add,remove,send}` | Fitting room |
+| `GET` | `/api/purchases` | History in order currency and USD |
+| `GET` `POST` | `/api/discounts`, `/api/redeem` | Available discounts and redemption |
+| `GET` `POST` | `/api/birthday`, `/api/birthday/claim` | Birthday window and claim |
+| `GET` `POST` | `/api/notifications`, `/api/notifications/read` | In-app notifications |
+| `GET` | `/api/catalogs`, `/api/photo/:fileId` | Catalogues, channel photo proxy |
+| `GET` | `/api/demo/profiles` | Demo-mode profile switcher |
+
+The admin set is mounted under `/api/admin/*`: `customers`, `posts`, `post`, `purchase`,
+`purchases/:id/cost`, `pending-costs`, `profit`, `popular`, `rules`, `campaigns`,
+`campaigns/:id/materialize`, `holidays`, `birthday-claims`, `promo`, `inquiries`, `channels`,
+`telegram`, `alerts`, `scheduler`, `tick`, `report`, `report/send`.
+
+`POST /telegram/webhook` receives channel posts and bot updates.
+
+## Getting started
 
 ```bash
+git clone https://github.com/SergeMiro/way2buy_telegram-app.git
+cd way2buy_telegram-app
 npm install
-cp .env.example .env      # можна залишити порожнім — демо працює без конфігу
-npm run seed              # демо-дані: 7 клієнтів, 25 покупок, 3 правила знижок
+cp .env.example .env      # can stay empty — the demo runs with no config
+npm run seed              # demo data: 7 clients, 25 purchases, 3 discount rules
 npm start                 # http://localhost:4010
 ```
 
-Без `TELEGRAM_BOT_TOKEN` застосунок працює в **демо-режимі**: публікація в канал
-симулюється, кабінет відкритий, а в шапці зʼявляється перемикач демо-профілів.
-Щойно в `.env` з'являються `TELEGRAM_BOT_TOKEN` + `ADMIN_TG_IDS`, режим стає
-живим і кабінет бачать лише вказані Telegram-id.
+| Command | What it does |
+| --- | --- |
+| `npm start` | Run the server |
+| `npm run dev` | Run with `node --watch` |
+| `npm run seed` | Recreate and seed the database |
+| `npm test` | Run the `node:test` suites |
+| `npm run tg` | Bot and webhook setup helper |
+| `npm run import` | Import existing purchase history |
 
-## Архітектура
+## Configuration
 
-- **Сервер** — Node.js + Express, zero-build (ADR-001), SQLite через
-  `better-sqlite3`. Схема 1:1 переноситься в PocketBase для продакшену.
-- **Клієнт** — vanilla JS + CSS-змінні (`public/css/tokens.css` — дизайн-токени,
-  `app.css` — компоненти, `views.css` — рівень екранів). Жодного збирача.
-- **Документація** — `scratchpad/way2buy-discounts-ai/`: spec, architecture (+7
-  ADR), plan (13 кроків), nfr, risks, handoff-и.
+Everything is optional — the app runs in demo mode with an empty `.env`.
 
-### Структура
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `4010` | HTTP port |
+| `TELEGRAM_BOT_TOKEN` | — | Bot that hosts the Mini App and posts to the channels. **Leaving it empty is what enables demo mode.** |
+| `CHANNEL_UKRAINE` | `Way2Buy_Ukraine` | Channel username, without `@` |
+| `CHANNEL_LUXURY` | `Way2Buy_Luxury` | Channel username, without `@` |
+| `ADMIN_TG_IDS` | — | Comma-separated Telegram ids allowed into the admin office |
+| `SUPPORT_TG_IDS` | — | Ids that receive client inquiries as DMs without admin access |
+| `PUBLIC_URL` | — | Public HTTPS URL, needed for the channel-post webhook |
+| `CASHBACK_STEP_USD` | `3000` | Spend step that earns a reward |
+| `CASHBACK_REWARD_USD` | `100` | Reward per step |
+| `GEMINI_API_KEY` | — | AI reports; empty falls back to the template narrative |
+| `SCHEDULER_INTERVAL_MIN` | `15` | Tick interval, in minutes |
+| `W2B_DB_PATH` | — | Move the SQLite file (used on serverless hosts) |
+
+## Telegram wiring
+
+The bot must be an **administrator in both channels** — to publish, and to receive
+`channel_post` updates.
+
+```bash
+npm run tg        # registers the webhook against PUBLIC_URL and checks bot rights
+```
+
+Once `TELEGRAM_BOT_TOKEN` and `ADMIN_TG_IDS` are set, demo mode switches off: publishing
+becomes real, and the admin office is visible only to the listed Telegram ids. Locally, where
+there is no public URL, `polling.js` long-polls instead of using a webhook. See
+[`docs/SETUP-TELEGRAM.md`](docs/SETUP-TELEGRAM.md).
+
+## The scheduler
+
+Three idempotent jobs, every 15 minutes:
+
+1. **Birthday windows opening today** → notify the client that the discount is claimable
+2. **A sale older than a day with no factory cost** → remind the admin, so margin data stays
+   complete
+3. **Campaign statuses** → activate and expire on schedule
+
+Because each job reconciles state rather than firing an event, a restart cannot skip or
+duplicate a notification. `scheduler_lock` prevents two processes from ticking at once. On a
+serverless host there is no long-lived process, so the same work is exposed as
+`POST /api/admin/tick` for an external cron to call.
+
+## Testing
+
+```bash
+npm test
+```
+
+81 tests across six suites, on the Node built-in test runner — no test framework dependency:
+
+| Suite | Covers |
+| --- | --- |
+| `loyalty.test.js` | Cashback maths, tiers, badges, streaks |
+| `cart.test.js` | Fitting room, cart events, send flow |
+| `birthday.test.js` | Claim windows, one claim per year, edge dates |
+| `rules.test.js` | Discount rule resolution and precedence |
+| `profit.test.js` | Sale/cost pairing and margin calculation |
+| `telegram.test.js` | Publishing, webhook parsing, DM delivery |
+
+## Deployment
+
+**Vercel** — static files from `public/`, with all API and webhook traffic rewritten to a
+single serverless function (`api/index.js`):
+
+```json
+"rewrites": [
+  { "source": "/api/(.*)",      "destination": "/api/index" },
+  { "source": "/telegram/(.*)", "destination": "/api/index" }
+]
+```
+
+⚠️ On Vercel the SQLite file lives in `/tmp` and is **recreated on every cold start** — that
+deployment is a demo stand for browsing, not a production store. Production needs a durable
+database: set `W2B_DB_PATH` to a persistent volume, or swap the `db.js` layer for
+PocketBase/Postgres on a VPS. The scheduler also needs an external cron calling
+`POST /api/admin/tick`, since serverless has no long-lived process.
+
+## Project structure
 
 ```
-server/    index.js (API) · db.js (схема+seed) · loyalty.js (кешбек+гейміфікація)
-           campaigns.js (правила знижок) · telegram.js (2 канали) · ai.js (звіти)
-public/    index.html · css/{tokens,app,views}.css · js/{telegram,api,app}.js
-api/       index.js — точка входу для Vercel
+server/
+  index.js        Express router — 51 endpoints
+  db.js           schema (19 tables, 15 indexes), additive migration, seed
+  env.js          validated configuration
+  loyalty.js      cashback, tiers, milestones, badges, streaks
+  birthday.js     claim windows and one-claim-per-year enforcement
+  campaigns.js    scheduled campaigns and materialisation
+  rules.js        editable discount rules
+  cart.js         fitting room, cart events, popularity
+  profit.js       sale vs factory cost, margin, pending-cost reminders
+  telegram.js     Bot API — publish, channel_post webhook, DM, photo proxy
+  polling.js      long-polling fallback for local development
+  notify.js       customer notifications
+  scheduler.js    idempotent 15-minute tick
+  ai.js           Gemini reports and the proposal loop
+public/
+  index.html      the Mini App shell
+  js/telegram.js  Telegram Mini App SDK integration
+  js/api.js       fetch layer
+  js/app.js       screens and state
+  css/tokens.css  design tokens
+  css/app.css     components
+  css/views.css   screen-level layout
+api/index.js      Vercel serverless entry point
+scripts/          telegram.mjs (bot setup) · import-history.mjs
+tests/            6 node:test suites, 81 tests
+docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
 
-## Деплой
+## Design constraints
 
-Vercel: статика з `public/`, API — одна serverless-функція (`api/index.js`).
-На Vercel база живе в `/tmp` і **перестворюється на кожному холодному старті** —
-це демо-стенд для перегляду. Для продакшену потрібна постійна база
-(PocketBase/Postgres на VPS) — тоді досить задати `W2B_DB_PATH` або замінити
-шар `db.js`.
+These are product requirements, not preferences — they are why the code looks the way it does:
 
-## Що далі (кроки 5–13 плану)
+1. **The channel is untouched.** The Mini App is additive. Breaking a subscriber's habit means
+   losing the subscriber.
+2. **The UI is Ukrainian**, and assumes no digital literacy: pictures to choose from, and one
+   person to message.
+3. **Staff screens are one or two buttons.** Anything more complex will not be used in practice.
+4. **The human middle stays human.** Direct factory relationships are the business's core
+   value; the app automates the bookkeeping around them, never the relationship itself.
 
-Повідомлення (dedup-outbox + DM), планувальник (щоденний tick: ДН, свята,
-near-reward), AI-агент адміна з propose→apply, тести, спостережуваність,
-security-гейт.
+## License
+
+Proprietary — all rights reserved. Published for portfolio and review purposes.
+
+---
+
+Built by **Sergiy Mirochnyk** · [smiro.dev](https://smiro.dev)
