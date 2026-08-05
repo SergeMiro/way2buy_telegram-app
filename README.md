@@ -12,7 +12,7 @@ in one zero-build Node application on Postgres.
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
-[![Tests](https://img.shields.io/badge/tests-81_node%3Atest-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-102_node%3Atest-brightgreen)](#testing)
 [![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
 🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
@@ -32,6 +32,7 @@ the header.
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
 - [Telegram wiring](#telegram-wiring)
+- [Filling the catalogues](#filling-the-catalogues)
 - [The scheduler](#the-scheduler)
 - [Testing](#testing)
 - [Deployment](#deployment)
@@ -113,6 +114,9 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 - **App → channel:** publishing from the admin office posts to the real channels
 - **Channel → app:** the `channel_post` webhook fills the feed, so content posted the old way
   still appears in the Mini App
+- **History:** the Bot API cannot read a channel's past — a bot only receives posts published
+  after it became an admin. `scripts/import-tme.mjs` fills the catalogues backwards from the
+  channels' own public web pages (see [Filling the catalogues](#filling-the-catalogues))
 - **Long-polling fallback** (`polling.js`) for local development, where no public webhook URL
   exists
 - **Direct messages** (`notify.js`) for birthday nudges, inquiries and reward notifications
@@ -122,8 +126,8 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | Area | Technology | Why |
 | --- | --- | --- |
 | Runtime | **Node.js 20+**, ES modules | — |
-| HTTP | **Express 4.21** | One process, one router, 51 endpoints |
-| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 20 tables, 40 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
+| HTTP | **Express 4.21** | One process, one router, 52 endpoints |
+| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 20 tables, 79 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
 | Schema | `server/sql/schema.sql`, idempotent | DDL as a reviewable data file — the same file is applied to Supabase and loaded by the tests |
 | Statement layer | `server/sql.js` | Translates the original `?` / `@named` statements to `$n`, so the port added `await` instead of rewriting 200 queries |
 | Frontend | **Vanilla JavaScript**, no framework, no bundler | Zero build step (ADR-001) |
@@ -132,7 +136,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
 | Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
 | Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
-| Tests | **`node:test`** — 81 tests across 6 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
+| Tests | **`node:test`** — 102 tests across 8 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
 | Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
 | Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
 
@@ -152,7 +156,7 @@ Three runtime dependencies in total: `express`, `pg`, `dotenv`. That is the poin
         │  fetch /api/*         channel_post webhook · DMs · publish
         ▼                                     ▼
    ┌──────────────────────────────────────────────────────┐
-   │  server/index.js — Express router (51 endpoints)     │
+   │  server/index.js — Express router (52 endpoints)     │
    │                                                      │
    │   loyalty.js     cashback · tiers · badges · streaks │
    │   birthday.js    claim windows, one claim per year   │
@@ -198,7 +202,7 @@ Decisions worth naming:
 
 ## Data model
 
-20 tables with 40 indexes, created by `server/sql/schema.sql`:
+20 tables with 79 indexes, created by `server/sql/schema.sql`:
 
 - **Customers & loyalty** — `customers`, `purchases`, `redemptions`
 - **Discounts** — `discount_rules`, `campaigns`, `holidays`, `birthday_claims`, `promo_codes`
@@ -214,14 +218,15 @@ Supabase table editor — the business logic stays in the server modules, where 
 
 ## API
 
-51 endpoints. The client-facing set:
+52 endpoints. The client-facing set:
 
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/config` | Feature flags, demo mode, cashback rule |
 | `GET` | `/api/me` | Profile, cashback, tier, badges, streak |
 | `POST` | `/api/register` | First-run registration from Telegram init data |
-| `GET` | `/api/feed` | Both channels' posts, filterable |
+| `GET` | `/api/feed` | The vitrine: chip, search, brand, category, keyset page |
+| `GET` | `/api/facets` | Which brands and categories are worth offering here |
 | `POST` | `/api/interest` | "I want this" → inquiry + DM |
 | `GET` `POST` | `/api/cart`, `/api/cart/{add,remove,send}` | Fitting room |
 | `GET` | `/api/purchases` | History in order currency and USD |
@@ -296,6 +301,34 @@ becomes real, and the admin office is visible only to the listed Telegram ids. L
 there is no public URL, `polling.js` long-polls instead of using a webhook. See
 [`docs/SETUP-TELEGRAM.md`](docs/SETUP-TELEGRAM.md).
 
+## Filling the catalogues
+
+A catalogue is a Telegram channel, and the app has to show what is already in it. The Bot API
+cannot help: a bot receives `channel_post` only for messages published **after** it was made an
+administrator, and there is no history call at all. So there are two paths, and the first one
+covers the normal case.
+
+**A public channel** — read straight off its own web page (`t.me/s/<name>`), no token, no
+membership, no manual export:
+
+```bash
+npm run import:tme -- --all                      # catch up on what was published since last run
+npm run import:tme -- --deepen --pages 40        # walk further back; repeat until "історію пройдено"
+npm run import:tme -- --channel @w2b_luxury_bags # a new catalogue: registers it and imports it
+npm run import:tme -- --reparse                  # re-label stored cards after the parser improves
+```
+
+Adding a catalogue needs **no code change**: the channel becomes a row in `channels`, and the
+CATALOG tab grows its chip, its counts and its filter values from the data. A catalogue whose
+name is a category («Сумки жіночі») also labels its own posts, because the captions rarely do.
+
+**A private channel** has no such page. Export it from Telegram Desktop (JSON + photos) and use
+`npm run import -- <path/to/export> --channel <key>`.
+
+Neither importer is a substitute for making the bot an administrator: without that, nothing new
+posted in the channel reaches the app on its own, and `--all` has to be run on a schedule to
+keep up.
+
 ## The scheduler
 
 Three idempotent jobs, every 15 minutes:
@@ -316,7 +349,7 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-81 tests across six suites, on the Node built-in test runner — no test framework dependency,
+102 tests across eight suites, on the Node built-in test runner — no test framework dependency,
 and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
@@ -362,11 +395,13 @@ on quiet days.
 
 ```
 server/
-  index.js        Express router — 51 endpoints
+  index.js        Express router — 52 endpoints
   db.js           drivers (pg / PGlite), statements, transactions, seed
   sql.js          statement translation, value normalisation, jsonb helper
-  sql/schema.sql  the schema: 20 tables, 40 indexes, views, RLS posture
+  sql/schema.sql  the schema: 20 tables, 79 indexes, views, RLS posture
   env.js          validated configuration
+  catalog.js      the vitrine query: selection, facets, keyset paging
+  media.js        a stored photo reference → a URL the browser can load
   loyalty.js      cashback, tiers, milestones, badges, streaks
   birthday.js     claim windows and one-claim-per-year enforcement
   campaigns.js    scheduled campaigns and materialisation
@@ -374,6 +409,7 @@ server/
   cart.js         fitting room, cart events, popularity
   profit.js       sale vs factory cost, margin, pending-cost reminders
   telegram.js     Bot API — publish, channel_post webhook, DM, photo proxy
+  tme.js          a public channel's own web page — the only path to its history
   polling.js      long-polling fallback for local development
   notify.js       customer notifications
   scheduler.js    idempotent 15-minute tick
@@ -387,10 +423,12 @@ public/
   css/app.css     components
   css/views.css   screen-level layout
 api/index.js      Vercel serverless entry point
-scripts/          telegram.mjs (bot setup) · import-history.mjs
+scripts/          telegram.mjs (bot setup)
+                  import-tme.mjs (catalogues ← public channel pages)
+                  import-history.mjs (catalogues ← Telegram Desktop export)
                   migrate-sqlite-to-postgres.mjs (one-off data import)
                   sql/keepalive.sql (anti-pause heartbeat for the Free plan)
-tests/            6 node:test suites, 81 tests
+tests/            8 node:test suites, 102 tests
 docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
 
