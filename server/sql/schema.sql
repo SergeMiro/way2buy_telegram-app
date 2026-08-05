@@ -337,9 +337,27 @@ create index if not exists idx_purchases_cost_missing  on purchases (created_at)
 
 create index if not exists idx_redemptions_customer    on redemptions (customer_id);
 
--- feed: one channel, newest first; and the merged feed across channels
-create index if not exists idx_posts_channel_created   on posts (channel, created_at desc);
-create index if not exists idx_posts_created           on posts (created_at desc);
+-- feed: one channel, newest first; and the merged feed across channels.
+--
+-- `id desc` is part of the key, not decoration. The vitrine pages by keyset on
+-- (created_at, id) — created_at alone is not unique, because an album of eight
+-- photos is posted in one second — and a cursor can only be resolved by an index
+-- that carries both columns in the ORDER BY's own order.
+--
+-- Dropping the two-column versions is deliberate: these indexes shipped before
+-- paging existed, and CREATE ... IF NOT EXISTS cannot widen an index that is
+-- already there. Leaving both would pay for two copies of the same thing.
+drop index if exists idx_posts_channel_created;
+drop index if exists idx_posts_created;
+create index if not exists idx_posts_channel_created   on posts (channel, created_at desc, id desc);
+create index if not exists idx_posts_created           on posts (created_at desc, id desc);
+-- the content filters: brand and category are whatever the parser found, so
+-- these are the columns /api/facets groups by. Partial, because most of a
+-- catalogue's prose yields neither.
+create index if not exists idx_posts_brand             on posts (brand, created_at desc)
+  where brand is not null and status = 'published';
+create index if not exists idx_posts_category          on posts (category, created_at desc)
+  where category is not null and status = 'published';
 -- channel_post webhook: find the row a Telegram edit refers to
 create unique index if not exists uq_posts_channel_msg on posts (channel, tg_message_id)
   where tg_message_id is not null;
@@ -347,6 +365,46 @@ create unique index if not exists uq_posts_channel_msg on posts (channel, tg_mes
 create index if not exists idx_posts_media_group       on posts (channel, media_group_id)
   where media_group_id is not null;
 create index if not exists idx_posts_article           on posts (article) where article is not null;
+
+-- search: ?q= is an ILIKE '%…%', which no b-tree can serve. Trigram GIN turns it
+-- into an index scan — irrelevant while a catalogue holds dozens of cards,
+-- decisive once it holds tens of thousands.
+--
+-- ONE index over the three columns concatenated, matching the expression in
+-- catalog.js (SEARCH_EXPR). Per-column indexes were the obvious thing and they
+-- were useless: the query ORs title/body/article together, and Postgres can only
+-- use indexes for an OR when every branch has one — so it scanned the table
+-- anyway. Concatenating makes it a single indexable condition. Change either
+-- side and this index stops being used, silently.
+--
+-- Guarded, and the only guarded index in this file: pg_trgm ships with Postgres
+-- and with Supabase but not with the PGlite build the tests run on. The
+-- condition is what lets one schema file stay the single truth for both. The
+-- operator class is schema-qualified because Supabase keeps extensions out of
+-- `public`, and an unqualified gin_trgm_ops would then not resolve.
+do $$
+declare ext_schema text;
+begin
+  if not exists (select 1 from pg_available_extensions where name = 'pg_trgm') then return; end if;
+
+  if exists (select 1 from pg_namespace where nspname = 'extensions')
+    then create extension if not exists pg_trgm with schema extensions;
+    else create extension if not exists pg_trgm;
+  end if;
+
+  select n.nspname into ext_schema
+    from pg_extension e join pg_namespace n on n.oid = e.extnamespace
+   where e.extname = 'pg_trgm';
+
+  -- The per-column pair shipped before the OR problem was understood.
+  drop index if exists idx_posts_title_trgm;
+  drop index if exists idx_posts_body_trgm;
+
+  execute format($fmt$
+    create index if not exists idx_posts_search_trgm on posts using gin (
+      (coalesce(title,'') || ' ' || coalesce(body,'') || ' ' || coalesce(article,'')) %I.gin_trgm_ops
+    )$fmt$, ext_schema);
+end $$;
 
 create index if not exists idx_events_customer         on events (customer_id, created_at desc);
 create index if not exists idx_events_post             on events (post_id);

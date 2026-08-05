@@ -9,15 +9,17 @@ import { dirname, join } from 'node:path';
 import { db, init } from './db.js';
 import { loyaltyFor, snapshotBatch, cashbackRule, TIERS } from './loyalty.js';
 import {
-  listChannels, getChannel, liveMode, publishPost, ingestChannelPost, fetchPhoto,
+  listChannels, getChannel, channelMap, liveMode, publishPost, ingestChannelPost, fetchPhoto,
   handleMessage, botInfo, webhookInfo, checkChannelAccess,
 } from './telegram.js';
+import { mediaUrl } from './media.js';
 import { buildReport, sendReport } from './ai.js';
 import * as campaigns from './campaigns.js';
 import * as rules from './rules.js';
 import * as birthday from './birthday.js';
 import * as profit from './profit.js';
 import * as cart from './cart.js';
+import * as catalog from './catalog.js';
 import * as scheduler from './scheduler.js';
 import * as polling from './polling.js';
 import { adminAlerts } from './notify.js';
@@ -187,51 +189,32 @@ app.post('/api/birthday/claim', async (req, res) => {
 });
 
 // ── feed (all channels) ────────────────────────────────────────────────────
-const shapePost = async (p) => ({
+//
+// `channels` is the key → channel map, fetched ONCE per request. Resolving it
+// per post costs one query per card, which is invisible on a seeded demo and
+// six seconds for sixty cards once the database is a hundred milliseconds away.
+const shapePost = (p, channels = {}) => ({
   ...p,
   photos: safeJson(p.photos_json) || [],
-  photoUrls: (safeJson(p.photos_json) || []).map((fid) => `/api/photo/${encodeURIComponent(fid)}`),
-  channelMeta: await getChannel(p.channel),
+  photoUrls: (safeJson(p.photos_json) || []).map(mediaUrl).filter(Boolean),
+  channelMeta: channels[p.channel] || null,
 });
 
+const shapeOnePost = async (p) => (p ? shapePost(p, await channelMap()) : null);
+
 // Two surfaces over one table:
-//   ?kind=catalog → the ~15 catalogues the client browses and filters by
+//   ?kind=catalog → the catalogues the client browses and filters by
 //   ?kind=main    → the main channel's posts, i.e. "стрічка каналу"
 //   ?channel=key  → one specific catalogue
+//   ?brand= &category= → the content filters, offered by /api/facets
+//   ?cursor=      → the next page of the same selection
 // The client also gets `inCart` per post so «Хочу» renders in the right state
 // without a second request.
 app.get('/api/feed', async (req, res) => {
-  const ch = req.query.channel;
-  const kind = req.query.kind;
-  const limit = Math.min(Math.max(Number(req.query.limit) || 60, 1), 200);
-  // Search runs across ALL catalogues, not just the selected one: a client who
-  // types "kelly" wants the bag, not "the bag inside the chip I happened to tap".
-  const q = String(req.query.q || '').trim().slice(0, 60);
-
-  const where = ["status='published'"];
-  const params = [];
-
-  if (ch && ch !== 'all') {
-    where.push('channel = ?');
-    params.push(ch);
-  } else if (kind === 'main' || kind === 'catalog') {
-    const keys = (await listChannels()).filter((c) => c.kind === kind).map((c) => c.key);
-    if (!keys.length) return res.json({ posts: [] });
-    where.push(`channel IN (${keys.map(() => '?').join(',')})`);
-    params.push(...keys);
-  }
-
-  if (q) {
-    // Title, body and article — an article number is how the catalogues label
-    // a position, so it must be searchable verbatim.
-    where.push('(title LIKE ? OR body LIKE ? OR article LIKE ?)');
-    const like = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
-    params.push(like, like, like);
-  }
-
-  const rows = await db.prepare(
-    `SELECT * FROM posts WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
-  ).all(...params, limit);
+  const { rows, nextCursor } = await catalog.listPosts(catalog.selectionFrom(req.query), {
+    limit: catalog.clampLimit(req.query.limit),
+    cursor: req.query.cursor,
+  });
 
   const customer = await findCustomer(tgid(req));
   const inCart = new Set(
@@ -240,13 +223,18 @@ app.get('/api/feed', async (req, res) => {
           .all(customer.id)).map((r) => r.post_id)
       : []
   );
-  // shapePost resolves the channel title from the database. Spreading it without
-  // awaiting yields {} — the response keeps its shape and loses every field.
+
+  const channels = await channelMap();
   res.json({
-    posts: await Promise.all(
-      rows.map(async (p) => ({ ...(await shapePost(p)), inCart: inCart.has(p.id) }))
-    ),
+    posts: rows.map((p) => ({ ...shapePost(p, channels), inCart: inCart.has(p.id) })),
+    nextCursor,
   });
+});
+
+// What is worth offering as a filter inside the current selection — see
+// catalog.js for why this and /api/feed must build their WHERE the same way.
+app.get('/api/facets', async (req, res) => {
+  res.json(await catalog.facetsFor(catalog.selectionFrom(req.query)));
 });
 
 // The catalogue chips: every catalogue with how much is in it right now, so a
@@ -537,7 +525,8 @@ app.get('/api/admin/posts', requireAdmin, async (req, res) => {
   const rows = req.query.channel && req.query.channel !== 'all'
     ? await db.prepare('SELECT * FROM posts WHERE channel=? ORDER BY created_at DESC LIMIT ?').all(req.query.channel, limit)
     : await db.prepare('SELECT * FROM posts ORDER BY created_at DESC LIMIT ?').all(limit);
-  res.json({ posts: await Promise.all(rows.map(shapePost)) });
+  const channels = await channelMap();
+  res.json({ posts: rows.map((p) => shapePost(p, channels)) });
 });
 
 app.patch('/api/admin/posts/:id', requireAdmin, async (req, res) => {
@@ -565,7 +554,7 @@ app.patch('/api/admin/posts/:id', requireAdmin, async (req, res) => {
       price === undefined || price === '' || price === null ? null : Number(price),
       clean(currency, 4), status || null, now(), id);
 
-  res.json({ ok: true, post: await shapePost(await db.prepare('SELECT * FROM posts WHERE id=?').get(id)) });
+  res.json({ ok: true, post: await shapeOnePost(await db.prepare('SELECT * FROM posts WHERE id=?').get(id)) });
 });
 
 // ── ADMIN: channels ──────────────────────────────────────────────────────
