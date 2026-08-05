@@ -269,8 +269,13 @@
 .field__input,
 .field__select,
 .field__textarea {
+  /* The box is stated as arithmetic rather than as a magic height, because the
+     date field below has to reproduce it exactly. */
+  --field-line: 1.3;
+  --field-pad-y: 12px;
   width: 100%;
-  padding: 12px 14px;
+  padding: var(--field-pad-y) 14px;
+  line-height: var(--field-line);
   border-radius: var(--w2b-radius-md);
   border: 1px solid var(--w2b-line);
   background: var(--w2b-surface-2);
@@ -278,12 +283,63 @@
   font-family: var(--w2b-font-body);
   font-size: var(--w2b-fs-base);
 }
+/* One height for every single-line control, computed from the values above:
+   text + padding + border. Without it each control is as tall as its own
+   default line box, which differs per type. */
+.field__input,
+.field__select {
+  min-height: calc(1em * var(--field-line) + 2 * var(--field-pad-y) + 2px);
+}
 .field__textarea { min-height: 84px; resize: vertical; }
+
+/* input[type=date] is the one control a browser refuses to size like the rest.
+   WebKit renders the value inside a shadow-DOM box that carries its own margins
+   and its own metrics, and on iOS the control also claims an intrinsic
+   min-width it will not shrink below — so «Дата народження» came out both
+   shorter and narrower than the text fields above it. Dropping the native
+   appearance, releasing the min-width and flattening the inner box make it the
+   same rectangle as every other field. */
+.field__input[type="date"],
+.field__input[type="time"],
+.field__input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  /* A fixed height, not min-height: the shadow-DOM value box and the calendar
+     icon each contribute a pixel of their own, so the control came out 47.5px
+     against the 45.5px of the phone field next to it. Stating the same
+     arithmetic as those fields is what makes the two rectangles identical. */
+  height: calc(1em * var(--field-line) + 2 * var(--field-pad-y) + 2px);
+}
+.field__input::-webkit-datetime-edit,
+.field__input::-webkit-date-and-time-value {
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  line-height: var(--field-line);
+  min-height: calc(1em * var(--field-line));
+}
+.field__input::-webkit-calendar-picker-indicator {
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+  /* Its default padding is what made the control taller than its own text. */
+  padding: 0;
+  height: 1em;
+  opacity: 0.55;
+  cursor: pointer;
+}
 .field__input::placeholder, .field__textarea::placeholder { color: var(--w2b-text-subtle); }
 .field__input.is-error, .field__select.is-error { border-color: var(--w2b-danger); }
 .field__hint { color: var(--w2b-text-subtle); font-size: var(--w2b-fs-xs); margin-top: var(--w2b-space-2); }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--w2b-space-3); }
-.form-grid--full { grid-template-columns: 1fr; }
+/* minmax(0, 1fr), not 1fr: a bare `1fr` is minmax(auto, 1fr), so a control that
+   refuses to shrink below its content — input[type=date] with its dd.mm.yyyy and
+   its picker icon — widens its own column and the two halves stop matching. */
+.form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--w2b-space-3);
+}
+.form-grid--full { grid-template-columns: minmax(0, 1fr); }
 
 /* ── admin panel ─────────────────────────────────────────────────────────── */
 .panel {
