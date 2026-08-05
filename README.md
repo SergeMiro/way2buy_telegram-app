@@ -3,11 +3,12 @@
 **A loyalty, cashback and discount system for a Telegram-native buyers' club:** cashback
 wallet, tiered membership, automated birthday and holiday discounts, a fitting-room cart, a
 two-channel content feed, margin tracking, and an admin office with an AI reporting agent —
-in one zero-build Node application.
+in one zero-build Node application on Postgres.
 
 [![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Express](https://img.shields.io/badge/Express-4.21-000000?logo=express&logoColor=white)](https://expressjs.com/)
-[![SQLite](https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite&logoColor=white)](https://github.com/WiseLibs/better-sqlite3)
+[![Postgres](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Supabase](https://img.shields.io/badge/Supabase-hosted-3FCF8E?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
@@ -122,19 +123,20 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | --- | --- | --- |
 | Runtime | **Node.js 20+**, ES modules | — |
 | HTTP | **Express 4.21** | One process, one router, 51 endpoints |
-| Database | **SQLite** via **better-sqlite3 11** | Synchronous, in-process, no server to run — 19 tables, 15 indexes |
-| Migrations | Additive schema in `db.js` | The schema maps 1:1 onto PocketBase/Postgres for production |
+| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 20 tables, 40 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
+| Schema | `server/sql/schema.sql`, idempotent | DDL as a reviewable data file — the same file is applied to Supabase and loaded by the tests |
+| Statement layer | `server/sql.js` | Translates the original `?` / `@named` statements to `$n`, so the port added `await` instead of rewriting 200 queries |
 | Frontend | **Vanilla JavaScript**, no framework, no bundler | Zero build step (ADR-001) |
 | Styling | Three CSS layers — `tokens.css` (design tokens), `app.css` (components), `views.css` (screens) | Custom properties instead of a utility framework |
 | Telegram | **Mini App SDK** on the client, **Bot API** on the server — publishing, `channel_post` webhook, DMs, photo proxy, long-polling fallback | — |
 | AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
 | Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
 | Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
-| Tests | **`node:test`** — 81 tests across 6 suites | No test framework dependency |
+| Tests | **`node:test`** — 81 tests across 6 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
 | Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
 | Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
 
-Three runtime dependencies in total: `express`, `better-sqlite3`, `dotenv`. That is the point.
+Three runtime dependencies in total: `express`, `pg`, `dotenv`. That is the point.
 
 ## Architecture
 
@@ -162,11 +164,13 @@ Three runtime dependencies in total: `express`, `better-sqlite3`, `dotenv`. That
    │   notify.js      customer notifications              │
    │   scheduler.js   idempotent tick (15 min)            │
    │   ai.js          Gemini reports + proposal loop      │
-   │   db.js          schema, indexes, seed (19 tables)   │
+   │   db.js          drivers, statements, transactions   │
+   │   sql.js         ?/@named to $n, value normalisation   │
    │   env.js         validated configuration             │
    └──────────────────────┬───────────────────────────────┘
                           ▼
-                 SQLite (better-sqlite3)
+              PostgreSQL 17 (Supabase) — or PGlite
+                 in-process when DATABASE_URL is unset
 ```
 
 Decisions worth naming:
@@ -179,15 +183,22 @@ Decisions worth naming:
 - **Demo mode is a first-class path,** not a mock. Without `TELEGRAM_BOT_TOKEN` the app runs
   fully: publishing is simulated, the admin office is open, and a profile switcher lets you
   view the app as different clients. That is what the public demo is.
-- **The schema is portable on purpose.** SQLite is the development and demo store; the same
-  tables move to PocketBase or Postgres for production by pointing `W2B_DB_PATH` elsewhere or
-  replacing the `db.js` layer.
+- **One dialect everywhere.** Production is Postgres on Supabase; with no `DATABASE_URL` the
+  app starts PGlite — Postgres 17 compiled to WASM, in-process — so the demo and the whole test
+  suite run against the same SQL, with no server to install. There is no second dialect to
+  keep honest.
+- **The types are the schema's job.** Money is `numeric`, not float. Dates are `timestamptz`.
+  Flags are `boolean`, documents are `jsonb`. Three columns stay `text` for stated reasons —
+  a birthday may legitimately have no year, and the month buckets the popularity reports group
+  by cannot be indexed as an expression over a timestamp.
+- **The app cannot change its own schema.** It connects with a role that has full DML and no
+  DDL; migrations are a separate, deliberate step (`npm run migrate`).
 - **Margin is tracked in two steps** because that is how the business works: the sale is known
   now, the factory cost arrives later, so the system chases it instead of pretending it has it.
 
 ## Data model
 
-19 SQLite tables with 15 indexes, created and seeded by `server/db.js`:
+20 tables with 40 indexes, created by `server/sql/schema.sql`:
 
 - **Customers & loyalty** — `customers`, `purchases`, `redemptions`
 - **Discounts** — `discount_rules`, `campaigns`, `holidays`, `birthday_claims`, `promo_codes`
@@ -197,7 +208,9 @@ Decisions worth naming:
 - **Infrastructure** — `scheduler_lock`
 
 `npm run seed` produces a realistic demo set: 7 clients, 25 purchases, a holiday campaign, a
-birthday campaign and 9 holidays.
+birthday campaign and 9 holidays. Beyond the tables there are three read-only views
+(`v_customer_overview`, `v_purchase_margin`, `v_item_popularity`) for browsing the data in the
+Supabase table editor — the business logic stays in the server modules, where the tests reach it.
 
 ## API
 
@@ -231,7 +244,8 @@ The admin set is mounted under `/api/admin/*`: `customers`, `posts`, `post`, `pu
 git clone https://github.com/SergeMiro/way2buy_telegram-app.git
 cd way2buy_telegram-app
 npm install
-cp .env.example .env      # can stay empty — the demo runs with no config
+cp .env.example .env      # can stay empty — with no DATABASE_URL the app runs on PGlite
+npm run migrate           # apply server/sql/schema.sql (skip it when running on PGlite)
 npm run seed              # demo data: 7 clients, 25 purchases, 3 discount rules
 npm start                 # http://localhost:4010
 ```
@@ -240,7 +254,9 @@ npm start                 # http://localhost:4010
 | --- | --- |
 | `npm start` | Run the server |
 | `npm run dev` | Run with `node --watch` |
+| `npm run migrate` | Apply `server/sql/schema.sql` (idempotent) |
 | `npm run seed` | Recreate and seed the database |
+| `npm run migrate:from-sqlite` | One-off import of a pre-Postgres `way2buy.db` |
 | `npm test` | Run the `node:test` suites |
 | `npm run tg` | Bot and webhook setup helper |
 | `npm run import` | Import existing purchase history |
@@ -262,7 +278,9 @@ Everything is optional — the app runs in demo mode with an empty `.env`.
 | `CASHBACK_REWARD_USD` | `100` | Reward per step |
 | `GEMINI_API_KEY` | — | AI reports; empty falls back to the template narrative |
 | `SCHEDULER_INTERVAL_MIN` | `15` | Tick interval, in minutes |
-| `W2B_DB_PATH` | — | Move the SQLite file (used on serverless hosts) |
+| `DATABASE_URL` | — | Postgres connection string. **Empty runs an in-process PGlite** — that is what makes the zero-config demo work. |
+| `W2B_AUTO_MIGRATE` | — | `1` applies the schema on boot. Off by default: DDL does not belong on a request path. |
+| `W2B_DB_POOL_MAX` | `10` (`1` on Vercel) | Connection pool size |
 
 ## Telegram wiring
 
@@ -298,7 +316,8 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-81 tests across six suites, on the Node built-in test runner — no test framework dependency:
+81 tests across six suites, on the Node built-in test runner — no test framework dependency,
+and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
 | --- | --- |
@@ -308,6 +327,10 @@ npm test
 | `rules.test.js` | Discount rule resolution and precedence |
 | `profit.test.js` | Sale/cost pairing and margin calculation |
 | `telegram.test.js` | Publishing, webhook parsing, DM delivery |
+
+Each file runs in its own process against a private in-memory PGlite, so the suites are
+independent and there is nothing to tear down. `tests/helpers/tmpdb.js` clears `DATABASE_URL`
+first: if the machine happens to export one, the tests would otherwise write to a real project.
 
 ## Deployment
 
@@ -321,18 +344,28 @@ single serverless function (`api/index.js`):
 ]
 ```
 
-⚠️ On Vercel the SQLite file lives in `/tmp` and is **recreated on every cold start** — that
-deployment is a demo stand for browsing, not a production store. Production needs a durable
-database: set `W2B_DB_PATH` to a persistent volume, or swap the `db.js` layer for
-PocketBase/Postgres on a VPS. The scheduler also needs an external cron calling
-`POST /api/admin/tick`, since serverless has no long-lived process.
+Set `DATABASE_URL` to the **Supavisor transaction pooler** (port 6543) for serverless: a
+function instance is short-lived, and transaction mode is what pooling many of them requires.
+The app never names its prepared statements, so nothing else needs changing — a named statement
+would become a server-side prepared statement, which the transaction pooler cannot carry across
+pooled connections.
+
+With no `DATABASE_URL` the deployment falls back to an in-process PGlite that is **recreated on
+every cold start** — a demo stand for browsing, not a store.
+
+Two more things serverless does not give you: there is no long-lived process, so the scheduler
+must be driven by an external cron calling `POST /api/admin/tick`; and on the Supabase Free plan
+a project with no database activity for ~7 days is **paused**, so something has to touch it even
+on quiet days.
 
 ## Project structure
 
 ```
 server/
   index.js        Express router — 51 endpoints
-  db.js           schema (19 tables, 15 indexes), additive migration, seed
+  db.js           drivers (pg / PGlite), statements, transactions, seed
+  sql.js          statement translation, value normalisation, jsonb helper
+  sql/schema.sql  the schema: 20 tables, 40 indexes, views, RLS posture
   env.js          validated configuration
   loyalty.js      cashback, tiers, milestones, badges, streaks
   birthday.js     claim windows and one-claim-per-year enforcement
@@ -355,6 +388,8 @@ public/
   css/views.css   screen-level layout
 api/index.js      Vercel serverless entry point
 scripts/          telegram.mjs (bot setup) · import-history.mjs
+                  migrate-sqlite-to-postgres.mjs (one-off data import)
+                  sql/keepalive.sql (anti-pause heartbeat for the Free plan)
 tests/            6 node:test suites, 81 tests
 docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
