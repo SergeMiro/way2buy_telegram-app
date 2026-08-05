@@ -36,6 +36,13 @@
     catalogTotal: 0,
     inStockKey: 'available',
     search: '',
+    // The vitrine's selection and what the server says can be filtered inside
+    // it. Nothing here is a hardcoded list: a new catalogue full of a brand
+    // nobody has posted before grows its own chip.
+    filters: { brand: null, category: null },
+    facets: { total: 0, brands: [], categories: [] },
+    nextCursor: null,
+    loadingMore: false,
     admin: {
       customers: [], campaigns: [], report: null, reportPeriod: 'day',
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
@@ -530,26 +537,78 @@
     '</div>';
   }
 
-  function renderCatalog() {
+  // The content filters. Two rows at most, and each one appears only when it
+  // has something to say: a single brand is not a choice, and «Сумки жіночі»
+  // has no use for a category filter where every card is a bag. That is what
+  // keeps the screen from silting up as catalogues are added.
+  function facetRowHtml(kind, label, values, active) {
+    if (!values || values.length < 2) return '';
+    var chip = function (v) {
+      return '<button class="fchip' + (active === v.value ? ' is-active' : '') +
+        '" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '">' +
+        esc(v.value) + '<span class="fchip__count">' + v.count + '</span></button>';
+    };
+    return '<div class="facets">' +
+      '<span class="facets__label">' + esc(label) + '</span>' +
+      '<button class="fchip' + (active ? '' : ' is-active') +
+        '" data-facet="' + esc(kind) + '" data-value="">Усі</button>' +
+      values.map(chip).join('') +
+    '</div>';
+  }
+
+  function facetsHtml() {
+    var f = state.facets || {};
+    return facetRowHtml('brand', 'Бренд', f.brands, state.filters.brand) +
+      facetRowHtml('category', 'Категорія', f.categories, state.filters.category);
+  }
+
+  // Everything that changes when the selection changes lives in one container.
+  // Typing in the search box repaints only this, so the input keeps its focus
+  // and its caret — retyping a word because the field blurred mid-letter is the
+  // kind of thing that makes an app feel broken.
+  function vitrineBodyHtml() {
     var current = (state.catalogs || []).filter(function (c) { return c.key === state.feedChannel; })[0];
     var title = state.search
       ? 'Пошук'
-      : (current ? current.title : 'Усі каталоги');
+      : (state.filters.brand || (current ? current.title : 'Усі каталоги'));
 
-    var html = topbarHtml() + '<div class="stack">' + searchHtml() + chipsHtml();
+    // The count is the size of the whole selection, not of the page in hand:
+    // «60 позицій» under a filter holding 900 of them is a number the client
+    // would act on.
+    var total = state.facets && state.facets.total ? state.facets.total : state.feed.length;
 
-    html += '<div class="vitrine-head">' +
-      '<span class="vitrine-head__title">' + esc(title) + '</span>' +
-      '<span class="vitrine-head__count">' + state.feed.length + ' позицій</span>' +
-    '</div>';
+    var html = facetsHtml() +
+      '<div class="vitrine-head">' +
+        '<span class="vitrine-head__title">' + esc(title) + '</span>' +
+        '<span class="vitrine-head__count">' + total + ' ' +
+          plural(total, ['позиція', 'позиції', 'позицій']) + '</span>' +
+      '</div>';
 
     html += state.feed.length
       ? '<div class="tiles">' + state.feed.map(tileHtml).join('') + '</div>'
       : '<div class="empty">' + (state.search
           ? 'За запитом «' + esc(state.search) + '» нічого не знайшли'
-          : 'У цьому каталозі ще немає позицій') + '</div>';
+          : (state.filters.brand || state.filters.category
+              ? 'За цим фільтром нічого немає'
+              : 'У цьому каталозі ще немає позицій')) + '</div>';
 
-    return html + '</div>';
+    if (state.nextCursor) {
+      html += '<button class="btn btn--ghost more" type="button" data-more="1"' +
+        (state.loadingMore ? ' disabled' : '') + '>' +
+        (state.loadingMore ? 'Завантажую…' : 'Показати ще') + '</button>';
+    }
+    return html;
+  }
+
+  function renderCatalog() {
+    return topbarHtml() + '<div class="stack">' + searchHtml() + chipsHtml() +
+      '<div id="vitrine">' + vitrineBodyHtml() + '</div>' +
+    '</div>';
+  }
+
+  function repaintVitrine() {
+    var host = document.getElementById('vitrine');
+    if (host) host.innerHTML = vitrineBodyHtml();
   }
 
   // ── Канал: the main channel's posts, read like a feed ────────────────────
@@ -1380,11 +1439,18 @@
       state.purchases = r[3];
       state.birthday = r[1].birthday || (r[0].birthday || null);
     } else if (tab === 'catalog') {
-      var both = await Promise.all([loadVitrine(), state.catalogs.length ? null : api.catalogs()]);
-      if (both[1]) {
-        state.catalogs = both[1].catalogs || [];
-        state.catalogTotal = both[1].total || 0;
-        state.inStockKey = both[1].inStockKey || 'available';
+      var loaded = await Promise.all([
+        loadVitrine(),
+        api.facets(selection()),
+        // The chips carry per-catalogue totals, which do not depend on the
+        // selection — fetched once per session.
+        state.catalogs.length ? null : api.catalogs(),
+      ]);
+      state.facets = loaded[1] || state.facets;
+      if (loaded[2]) {
+        state.catalogs = loaded[2].catalogs || [];
+        state.catalogTotal = loaded[2].total || 0;
+        state.inStockKey = loaded[2].inStockKey || 'available';
       }
     } else if (tab === 'feed') {
       var f = await api.feedKind('main');
@@ -1414,35 +1480,56 @@
     }
   }
 
-  // Search wins over the chip: a query looks across every catalogue.
-  async function loadVitrine() {
-    var r = state.search
-      ? await api.feedSearch(state.search)
-      : (state.feedChannel && state.feedChannel !== 'all'
-          ? await api.feed(state.feedChannel)
-          : await api.feedKind('catalog'));
-    state.feed = r.posts || [];
+  // What the client is currently looking at — the one description of the
+  // selection, shared by the vitrine and by its filters. api.js turns it into
+  // query params (and drops the chip while a search is running, because a
+  // search spans every catalogue).
+  function selection(extra) {
+    var sel = {
+      channel: state.feedChannel,
+      q: state.search,
+      brand: state.filters.brand,
+      category: state.filters.category,
+    };
+    if (extra && extra.cursor) sel.cursor = extra.cursor;
+    return sel;
+  }
+
+  async function loadVitrine(opts) {
+    var append = Boolean(opts && opts.append);
+    var r = await api.vitrine(selection(append ? { cursor: state.nextCursor } : null));
+    state.feed = append ? state.feed.concat(r.posts || []) : (r.posts || []);
+    state.nextCursor = r.nextCursor || null;
     return r;
   }
 
-  // Typing re-queries the server without repainting the whole screen, so the
-  // input never loses focus mid-word.
-  var searchTimer = null;
+  // Changing the selection re-queries the vitrine AND its filters: the values
+  // worth offering inside «Chanel» are not the ones worth offering across every
+  // catalogue. Both are refreshed together so the row never advertises a filter
+  // that yields nothing.
   async function refreshVitrine() {
     try {
-      await loadVitrine();
-      var grid = $app.querySelector('.tiles');
-      var head = $app.querySelector('.vitrine-head__count');
-      var empty = $app.querySelector('.empty');
-      if (head) head.textContent = state.feed.length + ' позицій';
-      var tiles = state.feed.map(tileHtml).join('');
-      if (grid) {
-        if (state.feed.length) grid.innerHTML = tiles;
-        else grid.outerHTML = '<div class="empty">За запитом «' + esc(state.search) + '» нічого не знайшли</div>';
-      } else if (empty && state.feed.length) {
-        empty.outerHTML = '<div class="tiles">' + tiles + '</div>';
-      }
+      state.nextCursor = null;
+      var r = await Promise.all([loadVitrine(), api.facets(selection())]);
+      state.facets = r[1] || state.facets;
+      repaintVitrine();
     } catch (e) { toast(e.message, 'error'); }
+  }
+
+  var searchTimer = null;
+
+  async function loadMore() {
+    if (!state.nextCursor || state.loadingMore) return;
+    state.loadingMore = true;
+    repaintVitrine();
+    try {
+      await loadVitrine({ append: true });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      state.loadingMore = false;
+      repaintVitrine();
+    }
   }
 
   async function loadPopular() {
@@ -1517,7 +1604,27 @@
       state.feedChannel = chip.getAttribute('data-channel');
       // Tapping a catalogue is an explicit choice — it clears an active search.
       state.search = '';
+      // …and the content filters, which belonged to the previous catalogue: a
+      // brand carried over into a catalogue that has none leaves the client
+      // staring at «нічого немає» with no idea why.
+      state.filters = { brand: null, category: null };
       go('catalog');
+      return;
+    }
+
+    var facet = t.closest('[data-facet]');
+    if (facet) {
+      var kind = facet.getAttribute('data-facet');
+      var value = facet.getAttribute('data-value') || null;
+      // Tapping the active value clears it, so a filter is never a trap.
+      state.filters[kind] = state.filters[kind] === value ? null : value;
+      tg.haptic('light');
+      await refreshVitrine();
+      return;
+    }
+
+    if (t.closest('[data-more]')) {
+      await loadMore();
       return;
     }
 
@@ -1681,7 +1788,7 @@
     }
   });
 
-  // Dynamic search: 220 ms after the last keystroke, only the grid repaints.
+  // Dynamic search: 220 ms after the last keystroke, only the vitrine repaints.
   document.addEventListener('input', function (e) {
     if (e.target.id !== 'searchInput') return;
     state.search = e.target.value.trim();

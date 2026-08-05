@@ -545,6 +545,59 @@
 }
 .chip--stock.is-active::before { background: #fff; }
 
+/* ── content filters: brand and category, one level below the catalogues ────
+   Deliberately a different shape from .chip. The catalogue row is uppercase
+   text with an underline; these are sentence-case hairline pills, so the eye
+   reads two levels of filter instead of two rows of the same thing. The accent
+   colour is not used here — it belongs to «Товари в наявності» alone. */
+.facets {
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-top: var(--w2b-space-3);
+}
+.facets::-webkit-scrollbar { display: none; }
+.facets__label {
+  flex: none;
+  margin-right: var(--w2b-space-1);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: var(--w2b-fs-2xs);
+  color: var(--w2b-text-subtle);
+}
+.fchip {
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid var(--w2b-line);
+  /* Square, like every other control in this design — the pill radius exists
+     for the one counter badge and nothing else. */
+  border-radius: 0;
+  background: none;
+  color: var(--w2b-text-muted);
+  font-size: var(--w2b-fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--w2b-dur-fast) var(--w2b-ease-out),
+              border-color var(--w2b-dur-fast) var(--w2b-ease-out),
+              background-color var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.fchip__count { margin-left: 6px; opacity: 0.5; }
+.fchip.is-active {
+  background: var(--w2b-primary);
+  border-color: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+}
+.fchip.is-active .fchip__count { opacity: 0.65; }
+
+/* «Показати ще» — the next page of the same selection. Full width, because it
+   is the one thing to do at the bottom of a vitrine. */
+.more {
+  width: 100%;
+  margin-top: var(--w2b-space-5);
+}
+
 /* ── the vitrine: photographs first ───────────────────────────────────────── */
 .vitrine-head {
   display: flex;

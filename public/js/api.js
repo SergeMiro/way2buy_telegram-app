@@ -20,6 +20,24 @@
     return p.toString();
   }
 
+  // The vitrine's selection → query params. Empty values are dropped rather
+  // than sent as "", because the server reads an empty channel as "everything"
+  // and an empty brand as "no brand filter" — sending both would be ambiguous.
+  function selection(sel) {
+    var s = sel || {};
+    var out = {};
+    // A search spans every catalogue: the chip is deliberately not applied,
+    // because someone typing "kelly" wants the bag wherever it lives.
+    if (s.q) out.q = s.q;
+    else if (s.channel && s.channel !== 'all') out.channel = s.channel;
+    if (!out.channel) out.kind = 'catalog';
+    if (s.brand) out.brand = s.brand;
+    if (s.category) out.category = s.category;
+    if (s.cursor) out.cursor = s.cursor;
+    if (s.limit) out.limit = s.limit;
+    return out;
+  }
+
   async function request(method, path, body, query) {
     var url = path + (path.indexOf('?') === -1 ? '?' : '&') + qs(query);
     var init = { method: method, headers: {} };
@@ -61,11 +79,15 @@
     // ── read models ──
     config: function () { return request('GET', '/api/config'); },
     me: function () { return request('GET', '/api/me'); },
-    feed: function (channel) { return request('GET', '/api/feed', undefined, channel && channel !== 'all' ? { channel: channel } : {}); },
     // kind='catalog' → all catalogues at once; kind='main' → the channel feed.
     feedKind: function (kind) { return request('GET', '/api/feed', undefined, { kind: kind }); },
-    // Search spans every catalogue, whatever chip is selected.
-    feedSearch: function (q) { return request('GET', '/api/feed', undefined, { kind: 'catalog', q: q }); },
+    // The vitrine: one call for every combination of chip, search, brand,
+    // category and page. `cursor` comes back as `nextCursor` from the previous
+    // page — keyset paging, so a post published mid-scroll cannot shift the
+    // window and show the same card twice.
+    vitrine: function (sel) { return request('GET', '/api/feed', undefined, selection(sel)); },
+    // What is worth offering as a filter for that same selection.
+    facets: function (sel) { return request('GET', '/api/facets', undefined, selection(sel)); },
     catalogs: function () { return request('GET', '/api/catalogs'); },
     purchases: function () { return request('GET', '/api/purchases'); },
     discounts: function () { return request('GET', '/api/discounts'); },
