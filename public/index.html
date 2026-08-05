@@ -22,28 +22,57 @@
 
   <main id="app" class="app"><div class="loader">Завантаження…</div></main>
 
-  <!-- Bottom navigation -->
+  <!-- Bottom navigation.
+       One line weight, one 24-grid, and — the part that was actually broken —
+       five glyphs that cannot be mistaken for each other. «Каталоги» and
+       «Примірочна» both used to be a shopping bag, so two adjacent tabs looked
+       identical and the icon carried no information at all.
+         Каталоги    grid of tiles  — the vitrine is a grid; "browse everything"
+         Канал       megaphone      — a channel broadcasts; the handle is what
+                                      separates it from a volume slider
+         Примірочна  clothes hanger — trying things on, not carrying them home
+         Знижки      price tag      — a discount, not a star (stars read as
+                                      "favourite" or "rating" to everyone)
+         Кабінет     sliders        — the panel is knobs and rules; a shield
+                                      read as "security", which it is not -->
   <nav id="nav" class="nav" hidden>
     <button class="nav__btn" data-tab="catalog">
-      <svg viewBox="0 0 24 24"><path d="M6 8h12l1 12H5z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/>
+        <rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>
+      </svg>
       <span>Каталоги</span>
     </button>
     <button class="nav__btn" data-tab="feed">
-      <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 10.5v3l10 4V6.5z"/><path d="M7.5 15.4V19"/><path d="M17.5 9.4a4 4 0 0 1 0 5.2"/>
+      </svg>
       <span>Канал</span>
     </button>
     <!-- Примірочна: the badge is the only counter a client has to understand -->
     <button class="nav__btn nav__btn--cart" data-tab="cart">
-      <svg viewBox="0 0 24 24"><path d="M5 7h14l-1.2 12H6.2z"/><path d="M9 7V5.5a3 3 0 0 1 6 0V7"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <!-- The hook is the only thing that separates a hanger from a triangle,
+             so it gets a wider arc than the shape would otherwise need: at 20px
+             a 1.2px stroke has very little room to say "hanger". -->
+        <path d="M12 10.2V8.4a2.3 2.3 0 1 1 2.3-2.3"/>
+        <path d="M12 10.2 4.3 16.1a1 1 0 0 0 .6 1.8h14.2a1 1 0 0 0 .6-1.8z"/>
+      </svg>
       <span>Примірочна</span>
       <span class="nav__badge" id="cartBadge" hidden>0</span>
     </button>
     <button class="nav__btn" data-tab="home">
-      <svg viewBox="0 0 24 24"><path d="M12 4l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4L7.5 17.8l.9-5L4.8 9.3l5-.7z"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/>
+        <circle cx="7.4" cy="7.4" r="1.3"/>
+      </svg>
       <span>Знижки</span>
     </button>
     <button class="nav__btn nav__btn--admin" data-tab="admin" hidden>
-      <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h5M13 7h7M4 12h11M19 12h1M4 17h3M11 17h9"/>
+        <circle cx="11" cy="7" r="2"/><circle cx="17" cy="12" r="2"/><circle cx="9" cy="17" r="2"/>
+      </svg>
       <span>Кабінет</span>
     </button>
   </nav>
