@@ -81,14 +81,14 @@ export function totalsOf(purchases) {
 
 // ── reads ─────────────────────────────────────────────────────────────────
 
-export function stats({ from = null, to = null, limit = 200 } = {}) {
+export async function stats({ from = null, to = null, limit = 200 } = {}) {
   const lim = Math.min(Math.max(Number(limit) || 200, 1), 500);
   const where = ["status = 'confirmed'"];
   const params = [];
   if (from) { where.push('created_at >= ?'); params.push(from); }
   if (to) { where.push('created_at <= ?'); params.push(to); }
 
-  const rows = db.prepare(
+  const rows = await db.prepare(
     `SELECT p.*, c.name AS customer_name
        FROM purchases p JOIN customers c ON c.id = p.customer_id
       WHERE ${where.join(' AND ')}
@@ -112,10 +112,10 @@ export function stats({ from = null, to = null, limit = 200 } = {}) {
 
 // Sales that still have no cost entered and are older than `graceHours`
 // (default 24h — "на след день после продажи").
-export function pendingCosts(now = Date.now(), { graceHours = 24, limit = 100 } = {}) {
+export async function pendingCosts(now = Date.now(), { graceHours = 24, limit = 100 } = {}) {
   const cutoff = iso(now - graceHours * 3600000);
   const lim = Math.min(Math.max(Number(limit) || 100, 1), 200);
-  return db.prepare(
+  return await db.prepare(
     `SELECT p.id, p.title, p.amount_usd, p.created_at, p.cost_reminded_at, c.name AS customer_name
        FROM purchases p JOIN customers c ON c.id = p.customer_id
       WHERE p.status='confirmed' AND p.cost_usd IS NULL AND p.created_at <= ?
@@ -125,39 +125,40 @@ export function pendingCosts(now = Date.now(), { graceHours = 24, limit = 100 } 
 
 // ── writes ────────────────────────────────────────────────────────────────
 
-export function setCost(purchaseId, { costUsd, note = null } = {}) {
+export async function setCost(purchaseId, { costUsd, note = null } = {}) {
   const n = Number(costUsd);
   if (!Number.isFinite(n) || n < 0) throw new Error('costUsd must be >= 0');
-  const info = db.prepare(
+  const info = await db.prepare(
     'UPDATE purchases SET cost_usd=?, cost_note=?, cost_entered_at=? WHERE id=?'
   ).run(round2(n), note, iso(Date.now()), purchaseId);
   if (info.changes === 0) return null;
-  const row = db.prepare('SELECT * FROM purchases WHERE id=?').get(purchaseId);
+  const row = await db.prepare('SELECT * FROM purchases WHERE id=?').get(purchaseId);
   return { id: row.id, ...marginOf(row) };
 }
 
 // Called by the scheduler. One reminder per sale per day, deduped both by the
 // notification key and by `cost_reminded_at`, so a restart cannot spam.
-export function remindPendingCosts(now = Date.now()) {
-  const pending = pendingCosts(now);
+export async function remindPendingCosts(now = Date.now()) {
+  const pending = await pendingCosts(now);
   const today = iso(now).slice(0, 10);
   let sent = 0;
 
   for (const p of pending) {
-    if (p.cost_reminded_at && p.cost_reminded_at.slice(0, 10) === today) continue;
-    const id = notifyAdmins({
+    // cost_reminded_at is a Date now, not an ISO string — slice it via iso().
+    if (p.cost_reminded_at && iso(p.cost_reminded_at).slice(0, 10) === today) continue;
+    const id = await notifyAdmins({
       kind: 'cost_missing',
       title: '📊 Введіть собівартість',
       body: `${p.title || 'Покупка'} · ${p.customer_name} · клієнт заплатив $${p.amount_usd}. Без цієї цифри замовлення не потрапляє у прибуток.`,
       dedupeKey: `cost:${p.id}:${today}`,
     });
-    db.prepare('UPDATE purchases SET cost_reminded_at=? WHERE id=?').run(iso(now), p.id);
+    await db.prepare('UPDATE purchases SET cost_reminded_at=? WHERE id=?').run(iso(now), p.id);
     if (id) sent += 1;
   }
 
   // One rolled-up nudge when the backlog is getting long.
   if (pending.length >= 5) {
-    notifyAdmins({
+    await notifyAdmins({
       kind: 'cost_missing_digest',
       title: `📊 ${pending.length} замовлень без собівартості`,
       body: 'Статистика прибутку рахується лише по замовленнях, де введена закупівельна ціна.',

@@ -30,12 +30,12 @@ const round2 = (n) => Math.round(n * 100) / 100;
 
 // ── read ──────────────────────────────────────────────────────────────────
 
-export function getRule(key) {
-  return db.prepare('SELECT * FROM discount_rules WHERE key=?').get(key) || null;
+export async function getRule(key) {
+  return await db.prepare('SELECT * FROM discount_rules WHERE key=?').get(key) || null;
 }
 
-export function listRules() {
-  return db.prepare('SELECT * FROM discount_rules ORDER BY id').all().map(shapeRule);
+export async function listRules() {
+  return (await db.prepare('SELECT * FROM discount_rules ORDER BY id').all()).map(shapeRule);
 }
 
 export function shapeRule(r) {
@@ -119,7 +119,7 @@ export function computeDiscount(rule, orderUsd = null) {
 // ── write ─────────────────────────────────────────────────────────────────
 
 const RULE_FIELDS = {
-  enabled: (v) => (v ? 1 : 0),
+  enabled: (v) => Boolean(v),
   mode: (v) => {
     if (!MODES.includes(v)) bad(`mode must be one of ${MODES.join('|')}`);
     return v;
@@ -153,8 +153,8 @@ const PATCH_ALIASES = {
   validDays: 'valid_days',
 };
 
-export function updateRule(key, patch = {}, updatedBy = null) {
-  const current = getRule(key);
+export async function updateRule(key, patch = {}, updatedBy = null) {
+  const current = await getRule(key);
   if (!current) return null;
 
   const sets = {};
@@ -174,16 +174,16 @@ export function updateRule(key, patch = {}, updatedBy = null) {
   if (Object.keys(sets).length === 0) return shapeRule(current);
 
   const assignments = Object.keys(sets).map((c) => `${c}=@${c}`).join(', ');
-  db.prepare(`UPDATE discount_rules SET ${assignments}, updated_at=@updated_at, updated_by=@updated_by WHERE key=@key`)
+  await db.prepare(`UPDATE discount_rules SET ${assignments}, updated_at=@updated_at, updated_by=@updated_by WHERE key=@key`)
     .run({ ...sets, key, updated_at: new Date().toISOString(), updated_by: updatedBy });
 
-  return shapeRule(getRule(key));
+  return shapeRule(await getRule(key));
 }
 
 // ── holidays: same shape, same $/% switch ─────────────────────────────────
 
-export function listHolidays() {
-  return db.prepare('SELECT * FROM holidays ORDER BY month, day').all().map(shapeHoliday);
+export async function listHolidays() {
+  return (await db.prepare('SELECT * FROM holidays ORDER BY month, day').all()).map(shapeHoliday);
 }
 
 export function shapeHoliday(h) {
@@ -226,8 +226,8 @@ function intInRange(v, lo, hi, label) {
   return n;
 }
 
-export function updateHoliday(id, patch = {}, updatedBy = null) {
-  const current = db.prepare('SELECT * FROM holidays WHERE id=?').get(id);
+export async function updateHoliday(id, patch = {}, updatedBy = null) {
+  const current = await db.prepare('SELECT * FROM holidays WHERE id=?').get(id);
   if (!current) return null;
 
   const sets = {};
@@ -243,12 +243,12 @@ export function updateHoliday(id, patch = {}, updatedBy = null) {
   if (Object.keys(sets).length === 0) return shapeHoliday(current);
 
   const assignments = Object.keys(sets).map((c) => `${c}=@${c}`).join(', ');
-  db.prepare(`UPDATE holidays SET ${assignments} WHERE id=@id`).run({ ...sets, id });
+  await db.prepare(`UPDATE holidays SET ${assignments} WHERE id=@id`).run({ ...sets, id });
   void updatedBy; // holidays carry no audit column yet; kept for signature parity
-  return shapeHoliday(db.prepare('SELECT * FROM holidays WHERE id=?').get(id));
+  return shapeHoliday(await db.prepare('SELECT * FROM holidays WHERE id=?').get(id));
 }
 
-export function createHoliday(input = {}) {
+export async function createHoliday(input = {}) {
   const name = String(input.name || '').trim();
   if (!name) bad('name required');
   const month = intInRange(input.month, 1, 12, 'month');
@@ -257,22 +257,22 @@ export function createHoliday(input = {}) {
   const value = RULE_FIELDS.value(input.value);
   if (mode === 'percent' && value > 90) bad('percent value must be <= 90');
 
-  const info = db.prepare(`INSERT INTO holidays
+  const info = await db.prepare(`INSERT INTO holidays
     (name,month,day,emoji,default_percent,enabled,mode,value,min_order_usd,valid_days,created_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     name, month, day, input.emoji || '🎉',
     mode === 'percent' ? Math.round(value) : 0,
-    input.enabled === false ? 0 : 1,
+    input.enabled !== false,
     mode, value, Number(input.minOrderUsd || 0), Number(input.validDays || 14),
     new Date().toISOString(),
   );
-  return shapeHoliday(db.prepare('SELECT * FROM holidays WHERE id=?').get(info.lastInsertRowid));
+  return shapeHoliday(await db.prepare('SELECT * FROM holidays WHERE id=?').get(info.lastInsertRowid));
 }
 
 // Holidays whose day is within [today, today + validDays] — i.e. currently
 // giving a discount. Used by the client "which discounts can I use" view.
-export function activeHolidays(now = Date.now()) {
-  const rows = db.prepare('SELECT * FROM holidays WHERE enabled=1').all();
+export async function activeHolidays(now = Date.now()) {
+  const rows = await db.prepare('SELECT * FROM holidays WHERE enabled').all();
   const d = new Date(now);
   const out = [];
   for (const h of rows) {

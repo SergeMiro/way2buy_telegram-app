@@ -7,9 +7,10 @@
 //  resolution, idempotent promo materialization and the customer-facing discount
 //  card shaping.
 //
-//  Idempotency (R-02, THE critical property): `materialize()` uses
-//  `INSERT OR IGNORE` against the DB's UNIQUE index
-//    uq_promo_campaign_customer_year (campaign_id, customer_id, substr(created_at,1,4))
+//  Idempotency (R-02, THE critical property): materialize() relies on
+//  `ON CONFLICT DO NOTHING` against the UNIQUE index
+//    uq_promo_campaign_customer_year
+//      (campaign_id, customer_id, extract(year from created_at at time zone 'UTC'))
 //  so re-running it for the same campaign in the same calendar year is a silent
 //  per-customer no-op — exactly one promo per matching customer per year.
 //
@@ -17,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { TIERS, tierFor } from './loyalty.js';
+import { asJson } from './sql.js';
 
 // ── constants ──────────────────────────────────────────────────────────────
 export const CAMPAIGN_TYPES = ['birthday', 'holiday', 'vip', 'generic'];
@@ -127,7 +129,7 @@ function shapeCampaign(row) {
   if (!row) return row;
   let audience = null;
   if (row.audience_json) {
-    try { audience = JSON.parse(row.audience_json); } catch { audience = null; }
+    audience = asJson(row.audience_json);
   }
   return { ...row, audience };
 }
@@ -140,7 +142,7 @@ function shapeCampaign(row) {
 // (We never create a 'draft' here — create() means "make this campaign real".
 //  draft/archived are manual holds reachable via update(), and the reconciler
 //  leaves them alone.)
-export function create(input = {}, opts = {}) {
+export async function create(input = {}, opts = {}) {
   const {
     name, type, percent, audience, holidayId,
     startsAt, endsAt, recurring, windowDays, promoValidDays,
@@ -160,7 +162,7 @@ export function create(input = {}, opts = {}) {
   const nowIso = toIso(opts.now);
   const status = desiredStatus({ starts_at: startsIso, ends_at: endsIso }, nowMs);
 
-  const info = db.prepare(`INSERT INTO campaigns
+  const info = await db.prepare(`INSERT INTO campaigns
     (name,type,percent,audience_json,holiday_id,starts_at,ends_at,recurring,window_days,promo_valid_days,status,source,created_by,created_at,updated_at)
     VALUES (@name,@type,@percent,@audience_json,@holiday_id,@starts_at,@ends_at,@recurring,@window_days,@promo_valid_days,@status,@source,@created_by,@created_at,@updated_at)`)
     .run({
@@ -171,7 +173,7 @@ export function create(input = {}, opts = {}) {
       holiday_id: holidayId != null ? Number(holidayId) : null,
       starts_at: startsIso,
       ends_at: endsIso,
-      recurring: recurring ? 1 : 0,
+      recurring: Boolean(recurring),
       window_days: Number.isInteger(windowDays) ? windowDays : 0,
       promo_valid_days: Number.isInteger(promoValidDays) ? promoValidDays : 14,
       status,
@@ -180,7 +182,7 @@ export function create(input = {}, opts = {}) {
       created_at: nowIso,
       updated_at: nowIso,
     });
-  return getById(Number(info.lastInsertRowid));
+  return await getById(Number(info.lastInsertRowid));
 }
 
 // ── update ───────────────────────────────────────────────────────────────
@@ -188,8 +190,8 @@ export function create(input = {}, opts = {}) {
 // changed and the caller did not explicitly set `status`, the "live" status is
 // recomputed from the new window (unless the campaign is on a manual hold —
 // draft/archived — which we never auto-flip).
-export function update(id, patch = {}, opts = {}) {
-  const current = getRawById(id);
+export async function update(id, patch = {}, opts = {}) {
+  const current = await getRawById(id);
   if (!current) return null;
 
   const sets = {};
@@ -206,7 +208,7 @@ export function update(id, patch = {}, opts = {}) {
   if (patch.holidayId !== undefined) sets.holiday_id = patch.holidayId != null ? Number(patch.holidayId) : null;
   if (patch.startsAt !== undefined) sets.starts_at = patch.startsAt != null ? toIso(patch.startsAt) : null;
   if (patch.endsAt !== undefined) sets.ends_at = patch.endsAt != null ? toIso(patch.endsAt) : null;
-  if (patch.recurring !== undefined) sets.recurring = patch.recurring ? 1 : 0;
+  if (patch.recurring !== undefined) sets.recurring = Boolean(patch.recurring);
   if (patch.windowDays !== undefined) {
     if (!Number.isInteger(patch.windowDays) || patch.windowDays < 0) bad('windowDays must be a non-negative integer');
     sets.window_days = patch.windowDays;
@@ -237,8 +239,8 @@ export function update(id, patch = {}, opts = {}) {
 
   const cols = Object.keys(sets);
   const assign = cols.map((c) => `${c}=@${c}`).join(', ');
-  db.prepare(`UPDATE campaigns SET ${assign} WHERE id=@id`).run({ ...sets, id });
-  return getById(id);
+  await db.prepare(`UPDATE campaigns SET ${assign} WHERE id=@id`).run({ ...sets, id });
+  return await getById(id);
 }
 
 // ── reconcileStatus ─────────────────────────────────────────────────────────
@@ -247,24 +249,26 @@ export function update(id, patch = {}, opts = {}) {
 // vs `now` and apply a DB update ONLY where the status actually changes. Calling
 // it twice with the same `now` performs zero writes the second time. draft &
 // archived are manual holds and are never auto-transitioned.
-export function reconcileStatus(now) {
+export async function reconcileStatus(now) {
   const nowMs = toMs(now) ?? Date.now();
   const nowIso = toIso(now);
-  const rows = db.prepare(
+  const rows = await db.prepare(
     "SELECT id, starts_at, ends_at, status FROM campaigns WHERE status IN ('scheduled','active','ended')",
   ).all();
-  const upd = db.prepare('UPDATE campaigns SET status=?, updated_at=? WHERE id=?');
   const transitions = [];
-  const tx = db.transaction(() => {
+  // The statement is prepared from `tx`, not from the module-level db: on a
+  // connection pool anything prepared elsewhere would execute on a different
+  // connection and land outside this transaction.
+  await db.transaction(async (tx) => {
+    const upd = tx.prepare('UPDATE campaigns SET status=?, updated_at=? WHERE id=?');
     for (const r of rows) {
       const desired = desiredStatus(r, nowMs);
       if (desired !== r.status) {
-        upd.run(desired, nowIso, r.id);
+        await upd.run(desired, nowIso, r.id);
         transitions.push({ id: r.id, from: r.status, to: desired });
       }
     }
   });
-  tx();
   return { scanned: rows.length, changed: transitions.length, transitions };
 }
 
@@ -277,9 +281,9 @@ export function reconcileStatus(now) {
 //   city          → customers.city exact match
 //   sourceChannel → has ≥1 purchase with that source_channel
 //   tgIds         → direct tg_user_id list
-export function resolveAudience(audience) {
+export async function resolveAudience(audience) {
   const a = validateAudience(audience);
-  const customers = db.prepare('SELECT id, tg_user_id, city FROM customers').all();
+  const customers = await db.prepare('SELECT id, tg_user_id, city FROM customers').all();
   if (!a) return customers.map((c) => c.id);
 
   let result = customers;
@@ -292,14 +296,14 @@ export function resolveAudience(audience) {
   }
 
   if (a.sourceChannel) {
-    const chRows = db.prepare('SELECT DISTINCT customer_id FROM purchases WHERE source_channel=?').all(a.sourceChannel);
+    const chRows = await db.prepare('SELECT DISTINCT customer_id FROM purchases WHERE source_channel=?').all(a.sourceChannel);
     const chSet = new Set(chRows.map((r) => r.customer_id));
     result = result.filter((c) => chSet.has(c.id));
   }
 
   if (a.tier || a.minSpentUsd != null) {
     // One aggregate over purchases → spend map (customers with none default 0).
-    const spendRows = db.prepare(
+    const spendRows = await db.prepare(
       "SELECT customer_id, COALESCE(SUM(amount_usd),0) total FROM purchases WHERE status='confirmed' GROUP BY customer_id",
     ).all();
     const spend = new Map(spendRows.map((r) => [r.customer_id, r.total]));
@@ -316,10 +320,10 @@ export function resolveAudience(audience) {
 
 // ── preview ─────────────────────────────────────────────────────────────────
 // Audience size for a campaign, without materializing any promos.
-export function preview(campaignId) {
-  const c = shapeCampaign(getRawById(campaignId));
+export async function preview(campaignId) {
+  const c = shapeCampaign(await getRawById(campaignId));
   if (!c) return null;
-  const ids = resolveAudience(c.audience);
+  const ids = await resolveAudience(c.audience);
   return { campaignId: c.id, count: ids.length };
 }
 
@@ -328,38 +332,40 @@ const genCode = () => `W2B-${Math.random().toString(36).slice(2, 7).toUpperCase(
 
 // ── materialize ─────────────────────────────────────────────────────────────
 // For a campaign, mint one promo per matching customer. Idempotent per
-// (campaign, customer, calendar-year) via the DB UNIQUE index +
-// `INSERT OR IGNORE`: a re-run in the same year is a silent per-customer no-op,
-// so calling twice yields exactly ONE promo per customer (R-02). `created_at` is
-// set to an ISO string (leading YYYY) so the year bucket of the unique index is
-// well-defined. Returns { created, alreadyExisted, total }.
-export function materialize(campaignId, now) {
-  const campaign = getRawById(campaignId);
+// (campaign, customer, calendar-year) via the UNIQUE index +
+// `ON CONFLICT DO NOTHING`: a re-run in the same year is a silent per-customer
+// no-op, so calling twice yields exactly ONE promo per customer (R-02). The
+// index buckets the year with `extract(year from created_at at time zone 'UTC')`
+// — UTC because that is the clock the app writes in, and a literal zone keeps
+// the expression immutable, which is what lets it carry an index at all.
+// Returns { created, alreadyExisted, total }.
+export async function materialize(campaignId, now) {
+  const campaign = await getRawById(campaignId);
   if (!campaign) return null;
 
   const shaped = shapeCampaign(campaign);
-  const ids = resolveAudience(shaped.audience);
+  const ids = await resolveAudience(shaped.audience);
 
   const nowMs = toMs(now) ?? Date.now();
   const createdAt = toIso(now);
   const validDays = campaign.promo_valid_days || 14;
   const expiresAt = new Date(nowMs + validDays * 86400000).toISOString();
 
-  const ins = db.prepare(
-    `INSERT OR IGNORE INTO promo_codes
-       (customer_id, code, percent, reason, status, created_at, expires_at, campaign_id)
-     VALUES (?,?,?,?,'active',?,?,?)`,
-  );
-
   let created = 0;
   let alreadyExisted = 0;
-  const tx = db.transaction((custIds) => {
-    for (const cid of custIds) {
-      const info = ins.run(cid, genCode(), campaign.percent, campaign.name, createdAt, expiresAt, campaign.id);
+  // Prepared from `tx` so every insert runs on the transaction's own connection.
+  await db.transaction(async (tx) => {
+    const ins = tx.prepare(
+      `INSERT INTO promo_codes
+         (customer_id, code, percent, reason, status, created_at, expires_at, campaign_id)
+       VALUES (?,?,?,?,'active',?,?,?)
+       ON CONFLICT DO NOTHING`,
+    );
+    for (const cid of ids) {
+      const info = await ins.run(cid, genCode(), campaign.percent, campaign.name, createdAt, expiresAt, campaign.id);
       if (info.changes === 1) created += 1; else alreadyExisted += 1;
     }
   });
-  tx(ids);
 
   return { campaignId: campaign.id, created, alreadyExisted, total: ids.length };
 }
@@ -369,9 +375,9 @@ export function materialize(campaignId, now) {
 // card variant) plus the app-wide public campaigns (holiday|generic only — vip &
 // birthday are personal and never surface here). `customerId` may be null for an
 // unregistered caller (they still see public campaigns).
-export function discountsFor(customerId) {
+export async function discountsFor(customerId) {
   const promos = customerId
-    ? db.prepare(
+    ? await db.prepare(
         `SELECT p.id, p.code, p.percent, p.mode, p.amount_usd, p.min_order_usd, p.rule_key,
                 p.reason, p.expires_at, p.created_at, p.campaign_id,
                 c.type AS campaign_type, c.name AS campaign_name
@@ -383,7 +389,7 @@ export function discountsFor(customerId) {
       ).all(customerId)
     : [];
 
-  const publicRows = db.prepare(
+  const publicRows = await db.prepare(
     `SELECT id, type, name, percent, ends_at
        FROM campaigns
       WHERE status = 'active' AND type IN ('holiday','generic')
@@ -430,25 +436,25 @@ export function discountsFor(customerId) {
 }
 
 // ── list / lookup helpers ────────────────────────────────────────────────
-export function getRawById(id) {
-  return db.prepare('SELECT * FROM campaigns WHERE id=?').get(id);
+export async function getRawById(id) {
+  return await db.prepare('SELECT * FROM campaigns WHERE id=?').get(id);
 }
-export function getById(id) {
-  return shapeCampaign(getRawById(id));
+export async function getById(id) {
+  return shapeCampaign(await getRawById(id));
 }
 
 // Paginated, optionally status-filtered campaign list. Never unbounded (GA-8).
-export function list({ status, limit = 50, offset = 0 } = {}) {
+export async function list({ status, limit = 50, offset = 0 } = {}) {
   const lim = clampLimit(limit);
   const off = Math.max(0, Number(offset) || 0);
   let rows;
   let total;
   if (status) {
-    rows = db.prepare('SELECT * FROM campaigns WHERE status=? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(status, lim, off);
-    total = db.prepare('SELECT COUNT(*) c FROM campaigns WHERE status=?').get(status).c;
+    rows = await db.prepare('SELECT * FROM campaigns WHERE status=? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(status, lim, off);
+    total = (await db.prepare('SELECT COUNT(*) c FROM campaigns WHERE status=?').get(status)).c;
   } else {
-    rows = db.prepare('SELECT * FROM campaigns ORDER BY created_at DESC LIMIT ? OFFSET ?').all(lim, off);
-    total = db.prepare('SELECT COUNT(*) c FROM campaigns').get().c;
+    rows = await db.prepare('SELECT * FROM campaigns ORDER BY created_at DESC LIMIT ? OFFSET ?').all(lim, off);
+    total = (await db.prepare('SELECT COUNT(*) c FROM campaigns').get()).c;
   }
   return { campaigns: rows.map(shapeCampaign), total, limit: lim, offset: off };
 }
@@ -460,23 +466,23 @@ export function clampLimit(limit, def = 50, max = 100) {
 }
 
 // ── holidays ─────────────────────────────────────────────────────────────
-export function listHolidays({ limit = 100, offset = 0 } = {}) {
+export async function listHolidays({ limit = 100, offset = 0 } = {}) {
   const lim = clampLimit(limit, 100, 200);
   const off = Math.max(0, Number(offset) || 0);
-  const rows = db.prepare('SELECT * FROM holidays ORDER BY month, day LIMIT ? OFFSET ?').all(lim, off);
-  const total = db.prepare('SELECT COUNT(*) c FROM holidays').get().c;
+  const rows = await db.prepare('SELECT * FROM holidays ORDER BY month, day LIMIT ? OFFSET ?').all(lim, off);
+  const total = (await db.prepare('SELECT COUNT(*) c FROM holidays').get()).c;
   return { holidays: rows, total, limit: lim, offset: off };
 }
 
-export function createHoliday(input = {}, opts = {}) {
+export async function createHoliday(input = {}, opts = {}) {
   const { name, month, day, emoji, defaultPercent, enabled } = input;
   if (typeof name !== 'string' || !name.trim()) bad('name is required');
   if (!Number.isInteger(month) || month < 1 || month > 12) bad('month must be an integer 1..12');
   if (!Number.isInteger(day) || day < 1 || day > 31) bad('day must be an integer 1..31');
   const pct = defaultPercent == null ? 15 : validatePercent(defaultPercent);
-  const info = db.prepare(
+  const info = await db.prepare(
     `INSERT INTO holidays (name,month,day,emoji,default_percent,enabled,created_at)
      VALUES (?,?,?,?,?,?,?)`,
-  ).run(name.trim(), month, day, emoji || null, pct, enabled === 0 ? 0 : 1, toIso(opts.now));
-  return db.prepare('SELECT * FROM holidays WHERE id=?').get(Number(info.lastInsertRowid));
+  ).run(name.trim(), month, day, emoji || null, pct, enabled !== 0 && enabled !== false, toIso(opts.now));
+  return await db.prepare('SELECT * FROM holidays WHERE id=?').get(Number(info.lastInsertRowid));
 }

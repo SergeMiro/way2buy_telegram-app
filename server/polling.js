@@ -5,7 +5,7 @@
 //  mode to develop and demo in: run the app on a laptop, post in the channel,
 //  watch the card appear. Production still uses the webhook (one request per
 //  update instead of an open connection) — the two are mutually exclusive, and
-//  start() deletes any webhook first, because Telegram refuses getUpdates
+//  await start() deletes any webhook first, because Telegram refuses getUpdates
 //  while one is set.
 //
 //  Enable with W2B_TELEGRAM_POLLING=1.
@@ -39,13 +39,15 @@ async function call(method, params = {}, timeoutMs = 65000) {
   }
 }
 
-function apply(update) {
+async function apply(update) {
   received += 1;
   try {
-    ingestChannelPost(update);
+    await ingestChannelPost(update);
   } catch (e) {
     console.error('[polling] ingest failed:', e.message);
   }
+  // No await, and no await inside: the reply is deliberately fire-and-forget,
+  // and awaiting before .catch() would let a rejection escape the handler.
   void Promise.resolve(handleMessage(update)).catch(() => {});
 }
 
@@ -57,7 +59,7 @@ async function loop() {
       const updates = await call('getUpdates', { offset, timeout: 50, allowed_updates: ALLOWED });
       for (const u of updates) {
         offset = Math.max(offset, u.update_id + 1);
-        apply(u);
+        await apply(u);
       }
       lastError = null;
     } catch (e) {
@@ -80,6 +82,8 @@ export async function start() {
   } catch (e) {
     console.error('[polling] deleteWebhook:', e.message);
   }
+  // .catch must stay attached to the promise: `(await call(...)).catch(...)`
+  // awaits first, so a rejection throws here instead of yielding null.
   const me = await call('getMe', {}, 10000).catch(() => null);
   console.log(`  Telegram polling → @${me?.username || '?'} (channel posts arrive live)`);
   void loop();

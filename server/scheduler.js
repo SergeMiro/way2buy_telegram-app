@@ -26,17 +26,17 @@ let lastRun = null;
 
 // Announce to clients whose birthday window opens today that they can claim.
 // The claim itself still goes through birthday.js — this is only the nudge.
-function announceBirthdays(now) {
-  const people = birthdaysOpeningToday(now);
+async function announceBirthdays(now) {
+  const people = await birthdaysOpeningToday(now);
   const year = new Date(now).getUTCFullYear();
   let sent = 0;
 
   for (const customer of people) {
-    const status = birthdayStatus(customer, now);
+    const status = await birthdayStatus(customer, now);
     if (!status.enabled || status.claimedThisYear || status.state !== 'available') continue;
     const label = status.mode === 'percent' ? `${status.value}%` : `$${status.value}`;
     const min = status.minOrderUsd ? ` від замовлення $${status.minOrderUsd}` : '';
-    const id = notifyCustomer({
+    const id = await notifyCustomer({
       customerId: customer.id,
       kind: 'birthday_available',
       title: 'З днем народження! 🎂',
@@ -48,25 +48,25 @@ function announceBirthdays(now) {
   return { candidates: people.length, notified: sent };
 }
 
-export function tick(now = Date.now()) {
+export async function tick(now = Date.now()) {
   const result = { at: new Date(now).toISOString() };
   try {
-    result.birthdays = announceBirthdays(now);
+    result.birthdays = await announceBirthdays(now);
   } catch (e) {
     result.birthdays = { error: String(e.message || e) };
   }
   try {
-    result.costs = remindPendingCosts(now);
+    result.costs = await remindPendingCosts(now);
   } catch (e) {
     result.costs = { error: String(e.message || e) };
   }
   try {
-    result.campaigns = campaigns.reconcileStatus ? campaigns.reconcileStatus(now) : { skipped: true };
+    result.campaigns = campaigns.reconcileStatus ? await campaigns.reconcileStatus(now) : { skipped: true };
   } catch (e) {
     result.campaigns = { error: String(e.message || e) };
   }
   lastRun = result;
-  db.prepare(`INSERT INTO scheduler_lock (id, holder, heartbeat_at) VALUES (1, ?, ?)
+  await db.prepare(`INSERT INTO scheduler_lock (id, holder, heartbeat_at) VALUES (1, ?, ?)
               ON CONFLICT(id) DO UPDATE SET holder=excluded.holder, heartbeat_at=excluded.heartbeat_at`)
     .run(String(process.pid), result.at);
   return result;
@@ -76,8 +76,8 @@ export function start() {
   if (timer || process.env.VERCEL || process.env.W2B_DISABLE_SCHEDULER) return null;
   // A first pass shortly after boot, then on the interval. Deferred so it never
   // slows the server's startup path.
-  setTimeout(() => { try { tick(); } catch { /* logged inside */ } }, 10_000).unref?.();
-  timer = setInterval(() => { try { tick(); } catch { /* logged inside */ } }, INTERVAL_MS);
+  setTimeout(async () => { try { await tick(); } catch { /* logged inside */ } }, 10_000).unref?.();
+  timer = setInterval(async () => { try { await tick(); } catch { /* logged inside */ } }, INTERVAL_MS);
   timer.unref?.();
   return timer;
 }

@@ -10,11 +10,17 @@
     "seed": "node server/db.js --reseed",
     "test": "node --test tests/*.test.js",
     "tg": "node scripts/telegram.mjs",
-    "import": "node scripts/import-history.mjs"
+    "import": "node scripts/import-history.mjs",
+    "migrate": "node server/db.js",
+    "migrate:from-sqlite": "node scripts/migrate-sqlite-to-postgres.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.7",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.4.6",
+    "better-sqlite3": "^11.8.1"
   }
 }
