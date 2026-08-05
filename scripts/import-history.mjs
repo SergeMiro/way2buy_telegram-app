@@ -7,6 +7,10 @@
 //  would show up empty. Telegram Desktop can export that history, and this
 //  script turns the export into catalogue positions.
 //
+//  For a PUBLIC channel prefer scripts/import-tme.mjs — it reads the same
+//  history straight off the web and needs no manual export. This one is the
+//  path for a PRIVATE channel, where that page does not exist.
+//
 //  How to export (Telegram Desktop, not the phone):
 //    channel → ⋮ → Export chat history
 //      • format: JSON (Machine-readable JSON)
@@ -42,12 +46,12 @@ if (!dir || !channelKey) {
   process.exit(1);
 }
 
-init();
+await init();
 
-const channel = db.prepare('SELECT * FROM channels WHERE key=?').get(channelKey);
+const channel = await db.prepare('SELECT * FROM channels WHERE key=?').get(channelKey);
 if (!channel) {
   console.error(`unknown channel "${channelKey}". Known: ` +
-    db.prepare('SELECT key FROM channels ORDER BY key').all().map((r) => r.key).join(', '));
+    (await db.prepare('SELECT key FROM channels ORDER BY key').all()).map((r) => r.key).join(', '));
   process.exit(1);
 }
 
@@ -84,7 +88,7 @@ for (const m of messages) {
   if (added + updated >= limit) break;
 
   const text = plainText(m.text);
-  const parsed = parsePostText(text);
+  const parsed = parsePostText(text, { channelTitle: channel.title });
   // A card with neither text nor a photo carries nothing — service messages,
   // polls, stickers all land here.
   const photoSrc = m.photo || (m.mime_type && String(m.mime_type).startsWith('image/') ? m.file : null);
@@ -113,12 +117,12 @@ for (const m of messages) {
     created_at: new Date(m.date_unixtime ? Number(m.date_unixtime) * 1000 : m.date).toISOString(),
   };
 
-  const hit = existing.get(channel.key, m.id);
+  const hit = await existing.get(channel.key, m.id);
   if (hit) {
-    if (!dryRun) update.run({ ...row, id: hit.id });
+    if (!dryRun) await update.run({ ...row, id: hit.id });
     updated += 1;
   } else {
-    if (!dryRun) insert.run(row);
+    if (!dryRun) await insert.run(row);
     added += 1;
   }
 }
@@ -128,3 +132,5 @@ console.log(`  повідомлень у експорті: ${messages.length}`);
 console.log(`  додано: ${added} · оновлено: ${updated} · пропущено (без тексту й фото): ${skipped}`);
 console.log(`  з фотографіями: ${withPhoto}${dryRun ? '' : ` → public/${uploadsRel}/`}`);
 if (dryRun) console.log('  нічого не записано — приберіть --dry, щоб імпортувати');
+
+await db.close();
