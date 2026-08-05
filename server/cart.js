@@ -28,6 +28,7 @@ import { db } from './db.js';
 import { notifyCustomer, notifyAdmins, adminIds } from './notify.js';
 import { sendToUser } from './telegram.js';
 import { asJson } from './sql.js';
+import { mediaUrl, isEmojiRef } from './media.js';
 
 const iso = (ms) => new Date(ms).toISOString();
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -72,10 +73,10 @@ export async function shapeItem(r) {
     channelKey: r.channel,
     price: r.price,
     currency: r.currency,
-    // A Telegram file_id is served through the photo proxy; an emoji is shown
-    // as-is. The client never sees a bot token.
-    photo: r.photo && r.photo.length > 8 ? `/api/photo/${encodeURIComponent(r.photo)}` : null,
-    emoji: r.photo && r.photo.length <= 8 ? r.photo : '🛍️',
+    // A file_id goes through the photo proxy, an imported URL is used as it is,
+    // an emoji is shown as-is. The client never sees a bot token.
+    photo: mediaUrl(r.photo),
+    emoji: isEmojiRef(r.photo) ? r.photo : '🛍️',
     createdAt: r.created_at,
   };
 }
