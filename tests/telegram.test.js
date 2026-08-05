@@ -126,7 +126,40 @@ test('an album arrives as several updates but becomes one card', async () => {
   const row = await db.prepare('SELECT * FROM posts WHERE id=?').get(a);
   // photos_json is jsonb: it arrives as an array, already parsed.
   assert.deepEqual(row.photos_json, ['ph-1', 'ph-2', 'ph-3']);
-  assert.equal(row.title, 'Hermes');
+  // The caption says "Hermes"; the card says «Hermès». One house is one filter
+  // value however the post spelled it.
+  assert.equal(row.title, 'Hermès');
+  assert.equal(row.brand, 'Hermès');
+});
+
+test('one house is one brand, however the catalogue spelled it', () => {
+  // Both spellings run in the real channels, sometimes in neighbouring posts.
+  assert.equal(parsePostText('Hermes Kelly 28').brand, 'Hermès');
+  assert.equal(parsePostText('Hermès Kelly 28').brand, 'Hermès');
+  assert.equal(parsePostText('YSL Loulou').brand, 'Saint Laurent');
+  assert.equal(parsePostText('Saint Laurent Loulou').brand, 'Saint Laurent');
+  assert.equal(parsePostText('Bottega Jodie').brand, 'Bottega Veneta');
+  assert.equal(parsePostText('Louboutin So Kate').brand, 'Christian Louboutin');
+  // A brand name inside another word is not a brand.
+  assert.equal(parsePostText('LVMH звіт').brand, null);
+});
+
+test('a catalogue named after a category labels the posts it holds', () => {
+  // The real case: nine cards in ten read like this — a house and a size, no
+  // category word anywhere. The channel's own name is what supplies it.
+  const inBags = parsePostText('Balenciaga\nSize 33-12-12cm', { channelTitle: 'Сумки жіночі' });
+  assert.equal(inBags.category, 'сумка');
+  assert.equal(inBags.title, 'Balenciaga · сумка');
+
+  const inShoes = parsePostText('Chanel\nSize 38', { channelTitle: 'Взуття жіноче' });
+  assert.equal(inShoes.category, 'взуття');
+
+  // A catalogue named after a house says nothing about the category, and
+  // nothing is invented.
+  assert.equal(parsePostText('Classic Flap', { channelTitle: 'Chanel' }).category, null);
+  // The text still wins over the channel: a wallet posted in «Сумки жіночі» is
+  // a wallet.
+  assert.equal(parsePostText('Chanel гаманець', { channelTitle: 'Сумки жіночі' }).category, 'гаманець');
 });
 
 test('the largest photo size is the one stored', async () => {

@@ -157,16 +157,62 @@ export function parsePrice(text = '') {
 // відправка в будь-яку точку…". Using the first line as a title fills the
 // vitrine with paragraphs. So the title is derived — brand first (that is what
 // the client scans for), then category, and only then a trimmed first phrase.
+// One entry per house: [the name a card shows, ...the ways it gets written].
+// The catalogues are not consistent — "Hermes" and "Hermès" in neighbouring
+// posts, "YSL" one day and "Saint Laurent" the next — and detectBrand returns
+// the FIRST element whichever spelling matched. Without that the brand filter
+// offers two chips for one house and splits its own counts between them.
+//
+// Within an entry the longer spelling comes first, so "Bottega Veneta" is not
+// matched as "Bottega".
 const BRANDS = [
-  'Chanel', 'Dior', 'Hermès', 'Hermes', 'Louis Vuitton', 'Gucci', 'Prada',
-  'Saint Laurent', 'YSL', 'Bottega Veneta', 'Bottega', 'Balenciaga', 'Celine',
-  'Céline', 'Fendi', 'Miu Miu', 'Loewe', 'Chloé', 'Chloe', 'Valentino',
-  'Givenchy', 'Burberry', 'Versace', 'Dolce & Gabbana', 'Dolce&Gabbana',
-  'Michael Kors', 'Marc Jacobs', 'Coach', 'Tory Burch', 'Furla', 'Moncler',
-  'Max Mara', 'Brunello Cucinelli', 'Loro Piana', 'Stone Island', 'Canada Goose',
-  'Cartier', 'Rolex', 'Tiffany', 'Van Cleef', 'Bvlgari', 'Bulgari', 'Swarovski',
-  'Christian Louboutin', 'Louboutin', 'Jimmy Choo', 'Manolo Blahnik',
-  'Nike', 'Adidas', 'New Balance', 'Golden Goose', 'Zara', 'Massimo Dutti',
+  ['Chanel'],
+  ['Dior', 'Christian Dior'],
+  ['Hermès', 'Hermes'],
+  ['Louis Vuitton', 'LV'],
+  ['Gucci'],
+  ['Prada'],
+  ['Saint Laurent', 'Yves Saint Laurent', 'YSL'],
+  ['Bottega Veneta', 'Bottega'],
+  ['Balenciaga'],
+  ['Céline', 'Celine'],
+  ['Fendi'],
+  ['Miu Miu'],
+  ['Loewe'],
+  ['Chloé', 'Chloe'],
+  ['Valentino'],
+  ['Givenchy'],
+  ['Burberry'],
+  ['Versace'],
+  ['Dolce & Gabbana', 'Dolce&Gabbana', 'D&G'],
+  ['Michael Kors'],
+  ['Marc Jacobs'],
+  ['Coach'],
+  ['Tory Burch'],
+  ['Furla'],
+  ['Moncler'],
+  ['Max Mara'],
+  ['Brunello Cucinelli'],
+  ['Loro Piana'],
+  ['Stone Island'],
+  ['Canada Goose'],
+  ['Cartier'],
+  ['Rolex'],
+  ['Tiffany', 'Tiffany & Co'],
+  ['Van Cleef', 'Van Cleef & Arpels'],
+  ['Bvlgari', 'Bulgari'],
+  ['Swarovski'],
+  ['Christian Louboutin', 'Louboutin'],
+  ['Jimmy Choo'],
+  ['Manolo Blahnik'],
+  ['Goyard'],
+  ['Delvaux'],
+  ['Nike'],
+  ['Adidas'],
+  ['New Balance'],
+  ['Golden Goose'],
+  ['Zara'],
+  ['Massimo Dutti'],
 ];
 
 // Ukrainian/Russian category words as they appear in the catalogues.
@@ -189,10 +235,14 @@ const CATEGORIES = [
 
 export function detectBrand(text = '') {
   const s = String(text);
-  for (const brand of BRANDS) {
-    // Word-boundary match so "Dior" does not fire inside another word.
-    const re = new RegExp(`(^|[^\\p{L}])${brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'iu');
-    if (re.test(s)) return brand;
+  for (const spellings of BRANDS) {
+    for (const spelling of spellings) {
+      // Word-boundary match so "Dior" does not fire inside another word, and
+      // "LV" does not fire inside "LVMH".
+      const re = new RegExp(`(^|[^\\p{L}])${spelling.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'iu');
+      // The canonical name, not the spelling that matched.
+      if (re.test(s)) return spellings[0];
+    }
   }
   return null;
 }
@@ -203,10 +253,14 @@ export function detectCategory(text = '') {
 }
 
 // A short, scannable name. Never a paragraph.
-export function buildTitle(text = '') {
+//
+// `hints` lets the caller supply a brand or category it has already worked out —
+// including a category that came from the CHANNEL rather than from the text, so
+// a bag posted with nothing but "Balenciaga" still reads «Balenciaga · сумка».
+export function buildTitle(text = '', hints = {}) {
   const clean = String(text).replace(/\s+/g, ' ').trim();
-  const brand = detectBrand(clean);
-  const category = detectCategory(clean);
+  const brand = 'brand' in hints ? hints.brand : detectBrand(clean);
+  const category = 'category' in hints ? hints.category : detectCategory(clean);
 
   if (brand && category) return `${brand} · ${category}`;
   if (brand) return brand;
@@ -226,18 +280,30 @@ export function buildTitle(text = '') {
 
 const capitalise = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-export function parsePostText(text = '') {
+/**
+ * @param text  the post's caption, as written
+ * @param channelTitle  the catalogue's own name — see below
+ */
+export function parsePostText(text = '', { channelTitle = '' } = {}) {
   const clean = String(text || '').trim();
   const { price, currency } = parsePrice(clean);
+  const brand = detectBrand(clean);
+  // A catalogue whose NAME is the category answers what the caption left out.
+  // Most cards read "Balenciaga / Size 33-12-12cm" and nothing else, so category
+  // was known for one post in four — while «Сумки жіночі» knew the answer all
+  // along. The channel's own title is the source, which means a catalogue added
+  // later and called «Гаманці» starts labelling wallets with no configuration:
+  // the same rule that makes the filter row grow by itself.
+  const category = detectCategory(clean) || detectCategory(channelTitle);
   return {
-    title: buildTitle(clean),
+    title: buildTitle(clean, { brand, category }),
     // The whole post stays as the body — nothing the client wrote is lost.
     body: clean.slice(0, 1000),
     price,
     currency,
     article: parseArticle(clean),
-    brand: detectBrand(clean),
-    category: detectCategory(clean),
+    brand,
+    category,
   };
 }
 
@@ -264,7 +330,7 @@ export async function ingestChannelPost(update) {
   const channel = await resolveChannel(post.chat);
   if (!channel || !channel.enabled) return null;
 
-  const parsed = parsePostText(post.text || post.caption || '');
+  const parsed = parsePostText(post.text || post.caption || '', { channelTitle: channel.title });
   const photos = photoIds(post);
   const createdAt = new Date((post.date || Math.floor(Date.now() / 1000)) * 1000).toISOString();
 
