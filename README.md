@@ -12,7 +12,7 @@ in one zero-build Node application on Postgres.
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
-[![Tests](https://img.shields.io/badge/tests-102_node%3Atest-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-112_node%3Atest-brightgreen)](#testing)
 [![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
 🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
@@ -103,6 +103,9 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 - Issue a promo code to a specific client
 - **Margin tracking** (`profit.js`) — the sale price is known immediately, the factory cost is
   entered later, so the app chases the missing entry and only then reports real profit
+- **«Синхронізувати»** — pick a catalogue, press once, and it is made to match its Telegram
+  channel: new posts in, changed ones updated, retired ones out of the vitrine. The channel is
+  only read, never written to (see [Filling the catalogues](#filling-the-catalogues))
 - **Pending-cost and alert views**, popular-item ranking, scheduler status
 - **Reports** — a built-in template narrative, or a generated one through **Gemini 1.5 Flash**
   when a key is present; reports can be sent to Telegram
@@ -126,7 +129,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | Area | Technology | Why |
 | --- | --- | --- |
 | Runtime | **Node.js 20+**, ES modules | — |
-| HTTP | **Express 4.21** | One process, one router, 52 endpoints |
+| HTTP | **Express 4.21** | One process, one router, 53 endpoints |
 | Database | **PostgreSQL 17** on **Supabase**, via `pg` | 20 tables, 79 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
 | Schema | `server/sql/schema.sql`, idempotent | DDL as a reviewable data file — the same file is applied to Supabase and loaded by the tests |
 | Statement layer | `server/sql.js` | Translates the original `?` / `@named` statements to `$n`, so the port added `await` instead of rewriting 200 queries |
@@ -136,7 +139,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
 | Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
 | Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
-| Tests | **`node:test`** — 102 tests across 8 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
+| Tests | **`node:test`** — 112 tests across 9 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
 | Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
 | Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
 
@@ -156,7 +159,7 @@ Three runtime dependencies in total: `express`, `pg`, `dotenv`. That is the poin
         │  fetch /api/*         channel_post webhook · DMs · publish
         ▼                                     ▼
    ┌──────────────────────────────────────────────────────┐
-   │  server/index.js — Express router (52 endpoints)     │
+   │  server/index.js — Express router (53 endpoints)     │
    │                                                      │
    │   loyalty.js     cashback · tiers · badges · streaks │
    │   birthday.js    claim windows, one claim per year   │
@@ -218,7 +221,7 @@ Supabase table editor — the business logic stays in the server modules, where 
 
 ## API
 
-52 endpoints. The client-facing set:
+53 endpoints. The client-facing set:
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -239,7 +242,8 @@ Supabase table editor — the business logic stays in the server modules, where 
 The admin set is mounted under `/api/admin/*`: `customers`, `posts`, `post`, `purchase`,
 `purchases/:id/cost`, `pending-costs`, `profit`, `popular`, `rules`, `campaigns`,
 `campaigns/:id/materialize`, `holidays`, `birthday-claims`, `promo`, `inquiries`, `channels`,
-`telegram`, `alerts`, `scheduler`, `tick`, `report`, `report/send`.
+`telegram`, `alerts`, `scheduler`, `tick`, `report`, `report/send`, and
+`POST channels/:key/sync` — one bounded, resumable pass of «Синхронізувати».
 
 `POST /telegram/webhook` receives channel posts and bot updates.
 
@@ -305,11 +309,36 @@ there is no public URL, `polling.js` long-polls instead of using a webhook. See
 
 A catalogue is a Telegram channel, and the app has to show what is already in it. The Bot API
 cannot help: a bot receives `channel_post` only for messages published **after** it was made an
-administrator, and there is no history call at all. So there are two paths, and the first one
-covers the normal case.
+administrator, and there is no history call at all.
 
-**A public channel** — read straight off its own web page (`t.me/s/<name>`), no token, no
-membership, no manual export:
+### «Синхронізувати» — the button in the admin office
+
+Pick a channel, press it, and the catalogue is made to match the channel. Nothing is written to
+Telegram; the app only reads the channel's own public page.
+
+It **reconciles** rather than emptying the catalogue and refilling it, and that is not a
+preference. `cart_items.post_id`, `cart_events.post_id` and `events.post_id` are all
+`ON DELETE SET NULL`, so deleting the posts would not clear a client's fitting room — it would
+silently unhook it, and the popular-items ranking (which groups by `post_id`) would lose its
+history. New posts are inserted, changed ones updated, and posts the channel no longer has are
+marked `gone`.
+
+Two human decisions outrank the channel: a card **hidden** in the admin office stays hidden, and
+on a **curated** card — one whose title, brand or category a person corrected — those three
+fields are kept while the channel keeps supplying the text, the price and the photos.
+
+A deletion can only be inferred from absence, and absence only means something inside the range
+of message ids a pass actually read. Each pass therefore records that range and retires only
+unseen posts inside it. Posts older than the range are not missing, merely unvisited.
+
+One press does a few pages and reports where it stopped; the browser keeps calling while there
+is more. That loop lives on the client because the app runs serverless: a full channel is
+thousands of pages and a function has seconds. The cursor is stored on the channel row, so
+«Уся історія» resumes after a closed browser instead of starting over.
+
+### From the command line
+
+The same reconcile logic, for bulk work and for cron:
 
 ```bash
 npm run import:tme -- --all                      # catch up on what was published since last run
@@ -349,7 +378,7 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-102 tests across eight suites, on the Node built-in test runner — no test framework dependency,
+112 tests across nine suites, on the Node built-in test runner — no test framework dependency,
 and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
@@ -395,12 +424,13 @@ on quiet days.
 
 ```
 server/
-  index.js        Express router — 52 endpoints
+  index.js        Express router — 53 endpoints
   db.js           drivers (pg / PGlite), statements, transactions, seed
   sql.js          statement translation, value normalisation, jsonb helper
   sql/schema.sql  the schema: 20 tables, 79 indexes, views, RLS posture
   env.js          validated configuration
   catalog.js      the vitrine query: selection, facets, keyset paging
+  sync.js         «Синхронізувати»: reconcile a catalogue with its channel
   media.js        a stored photo reference → a URL the browser can load
   loyalty.js      cashback, tiers, milestones, badges, streaks
   birthday.js     claim windows and one-claim-per-year enforcement
@@ -428,7 +458,7 @@ scripts/          telegram.mjs (bot setup)
                   import-history.mjs (catalogues ← Telegram Desktop export)
                   migrate-sqlite-to-postgres.mjs (one-off data import)
                   sql/keepalive.sql (anti-pause heartbeat for the Free plan)
-tests/            8 node:test suites, 102 tests
+tests/            9 node:test suites, 112 tests
 docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
 
