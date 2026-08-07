@@ -20,6 +20,7 @@ import * as birthday from './birthday.js';
 import * as profit from './profit.js';
 import * as cart from './cart.js';
 import * as catalog from './catalog.js';
+import * as sync from './sync.js';
 import * as scheduler from './scheduler.js';
 import * as polling from './polling.js';
 import { adminAlerts } from './notify.js';
@@ -538,6 +539,10 @@ app.patch('/api/admin/posts/:id', requireAdmin, async (req, res) => {
   if (status && !['published', 'hidden'].includes(status)) {
     return res.status(400).json({ error: 'status must be published|hidden' });
   }
+  // Correcting a card marks it curated, and a sync then stops overwriting the
+  // three fields that are somebody's judgement rather than the channel's facts.
+  // Without this, «Синхронізувати» would undo every correction ever made here.
+  const curated = [title, brand, category].some((v) => v !== undefined && v !== null && String(v).trim() !== '');
   const clean = (v, max = 120) => (v === undefined || v === null ? null : String(v).trim().slice(0, max) || null);
 
   await db.prepare(`UPDATE posts SET
@@ -548,18 +553,61 @@ app.patch('/api/admin/posts/:id', requireAdmin, async (req, res) => {
       price    = COALESCE(?, price),
       currency = COALESCE(?, currency),
       status   = COALESCE(?, status),
+      curated  = curated OR ?,
       edited_at = ?
     WHERE id=?`)
     .run(clean(title), clean(brand, 40), clean(category, 40), clean(article, 40),
       price === undefined || price === '' || price === null ? null : Number(price),
-      clean(currency, 4), status || null, now(), id);
+      clean(currency, 4), status || null, curated, now(), id);
 
   res.json({ ok: true, post: await shapeOnePost(await db.prepare('SELECT * FROM posts WHERE id=?').get(id)) });
 });
 
 // ── ADMIN: channels ──────────────────────────────────────────────────────
 app.get('/api/admin/channels', requireAdmin, async (req, res) => {
-  res.json({ channels: await listChannels({ includeDisabled: true }) });
+  const counts = new Map(
+    (await db.prepare(`SELECT channel,
+        count(*) FILTER (WHERE status = 'published') published,
+        count(*) FILTER (WHERE status = 'hidden')    hidden,
+        count(*) FILTER (WHERE status = 'gone')      gone
+      FROM posts GROUP BY channel`).all())
+      .map((r) => [r.channel, {
+        published: Number(r.published), hidden: Number(r.hidden), gone: Number(r.gone),
+      }])
+  );
+  const channels = (await listChannels({ includeDisabled: true }))
+    .map((c) => ({ ...c, posts: counts.get(c.key) || { published: 0, hidden: 0, gone: 0 } }));
+  res.json({ channels });
+});
+
+// «Синхронізувати»: make this catalogue match its channel. The channel itself is
+// only read — see server/sync.js for why this reconciles instead of emptying the
+// catalogue and refilling it.
+//
+// One call does a few pages and returns where it stopped, because a full channel
+// is thousands of pages and this runs inside an HTTP request with a seconds-long
+// budget on a serverless host. The client repeats the call while `done` is false;
+// the cursor is also stored on the channel, so closing the browser mid-backfill
+// loses nothing.
+app.post('/api/admin/channels/:key/sync', requireAdmin, async (req, res) => {
+  const row = await db.prepare('SELECT * FROM channels WHERE key=?').get(req.params.key);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  if (!row.username) {
+    return res.status(400).json({ error: 'у цього каналу немає @username — читати нічого' });
+  }
+
+  const deep = Boolean(req.body?.deep);
+  // Bounded per call, and bounded from the client too: a caller cannot ask for a
+  // page count that would time the function out.
+  const pages = Math.min(Math.max(Number(req.body?.pages) || 4, 1), 12);
+
+  try {
+    res.json({ ok: true, ...await sync.syncChannel(row, { deep, pages }) });
+  } catch (e) {
+    // A channel that has gone private, or Telegram refusing to serve the page,
+    // is an answer the admin office should show, not a 500.
+    res.status(502).json({ error: String(e.message || e) });
+  }
 });
 
 app.patch('/api/admin/channels/:key', requireAdmin, async (req, res) => {

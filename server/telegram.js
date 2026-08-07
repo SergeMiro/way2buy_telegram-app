@@ -44,6 +44,11 @@ export function shapeChannel(c) {
   return {
     key: c.key, title: c.title, username: c.username, emoji: c.emoji,
     kind: c.kind, enabled: Boolean(c.enabled), chatId: c.chat_id,
+    // Sync state — what the admin office needs to say "оновлено 5 хв тому" and
+    // whether «вся історія» still has anything left to walk.
+    syncedAt: c.synced_at || null,
+    syncCursor: c.sync_cursor == null ? null : Number(c.sync_cursor),
+    historyDone: Boolean(c.history_done),
   };
 }
 
