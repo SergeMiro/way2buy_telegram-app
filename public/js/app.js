@@ -47,6 +47,10 @@
       customers: [], campaigns: [], report: null, reportPeriod: 'day',
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
       inquiries: [], popular: null, popularPeriod: 'month', posts: [],
+      channels: [],
+      // Per-channel sync progress, keyed by channel: { running, note, error }.
+      // A deep backfill is many calls, so the admin needs to see it moving.
+      sync: {},
       adminTab: 'bonuses',
     },
   };
@@ -1012,18 +1016,52 @@
 
   function adminContentHtml(a) {
     var html = '<div class="section-title">Канали</div>' +
-      '<div class="panel"><p class="panel__note">Все, що адмін публікує в каналі, автоматично ' +
-        'зʼявляється у стрічці застосунку; публікація звідси йде в канал. Новий канал реєструється ' +
-        'сам, коли бот-адмін бачить перший пост.</p></div>';
+      '<div class="panel"><p class="panel__note">«Синхронізувати» зчитує канал і вирівнює каталог ' +
+        'під нього: нові пости додаються, змінені оновлюються, знятих більше не видно. ' +
+        'Сам канал не змінюється — застосунок його лише читає. Виправлені вручну назви та ' +
+        'приховані картки синхронізація не перезаписує.</p></div>';
 
-    html += (state.config.channels || []).map(function (c) {
-      return '<div class="row">' +
+    // The channel list carries its own sync state, so it comes from the admin
+    // endpoint (with counts) rather than from the client config. `.length` and not
+    // just `a.channels`: an empty array is truthy, so the fallback would never
+    // fire and the section would render as a heading with nothing under it.
+    var channels = (a.channels && a.channels.length) ? a.channels : (state.config.channels || []);
+    // Thirty-one rows, of which a dozen are empty placeholders for brands nobody
+    // has a channel for yet. The ones that can actually be synced go first, then
+    // the fullest — the same ordering rule the client's chips use.
+    channels = channels.slice().sort(function (x, y) {
+      var sx = (x.username ? 2 : 0) + (x.enabled ? 1 : 0);
+      var sy = (y.username ? 2 : 0) + (y.enabled ? 1 : 0);
+      if (sx !== sy) return sy - sx;
+      return ((y.posts && y.posts.published) || 0) - ((x.posts && x.posts.published) || 0);
+    });
+    html += channels.map(function (c) {
+      var counts = c.posts || null;
+      var job = a.sync[c.key];
+      var sub = esc(c.username ? '@' + c.username : c.key) +
+        (counts ? ' · ' + counts.published + ' поз.' : '') +
+        (counts && counts.gone ? ' · ' + counts.gone + ' знято' : '') +
+        (counts && counts.hidden ? ' · ' + counts.hidden + ' прихов.' : '') +
+        (c.syncedAt ? ' · ' + esc(timeAgo(c.syncedAt)) : ' · ще не синхронізовано');
+
+      return '<div class="row row--sync">' +
         '<div class="row__icon">' + esc(c.emoji || '🛍️') + '</div>' +
         '<div class="row__body">' +
           '<div class="row__title">' + esc(c.title) + '</div>' +
-          '<div class="row__sub">' + esc(c.username ? '@' + c.username : c.key) +
-            ' · ' + (c.kind === 'main' ? 'головний' : 'каталог') + '</div>' +
+          '<div class="row__sub">' + sub + '</div>' +
+          (job ? '<div class="row__sync' + (job.error ? ' is-error' : '') + '">' +
+            esc(job.error || job.note) + '</div>' : '') +
         '</div>' +
+        (c.username
+          ? '<div class="row__actions">' +
+              '<button class="btn btn--primary btn--sm" data-sync="' + esc(c.key) + '"' +
+                (job && job.running ? ' disabled' : '') + '>' +
+                (job && job.running ? '…' : 'Синхронізувати') + '</button>' +
+              (c.historyDone ? '' :
+                '<button class="btn btn--ghost btn--sm" data-sync-deep="' + esc(c.key) + '"' +
+                  (job && job.running ? ' disabled' : '') + '>Уся історія</button>') +
+            '</div>'
+          : '<span class="pill pill--warn">без @username</span>') +
       '</div>';
     }).join('');
 
@@ -1473,7 +1511,11 @@
       state.admin.pendingCosts = a[4].pending || [];
       state.admin.claims = a[5].claims || [];
       if (state.admin.adminTab === 'popular') await loadPopular();
-      if (state.admin.adminTab === 'content') state.admin.posts = (await api.admin.posts()).posts || [];
+      if (state.admin.adminTab === 'content') {
+        var content = await Promise.all([api.admin.posts(), api.admin.channels()]);
+        state.admin.posts = content[0].posts || [];
+        state.admin.channels = content[1].channels || [];
+      }
       if (state.admin.adminTab === 'inquiries') {
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
       }
@@ -1530,6 +1572,64 @@
       state.loadingMore = false;
       repaintVitrine();
     }
+  }
+
+  // «Синхронізувати». One request reads a few pages of the channel; the server
+  // reports where it stopped and this keeps calling while there is more. That
+  // structure exists because the app runs on a serverless host: a whole channel
+  // is thousands of pages and a function has seconds, so the loop has to live on
+  // this side. The admin sees each round land instead of watching a frozen button.
+  async function runSync(key, deep) {
+    if (state.admin.sync[key] && state.admin.sync[key].running) return;
+
+    var totals = { added: 0, updated: 0, gone: 0, pages: 0 };
+    state.admin.sync[key] = { running: true, note: 'читаю канал…', error: null };
+    repaintAdmin();
+
+    try {
+      // A hard stop, so a mis-parsed cursor can never turn into an endless loop
+      // hammering Telegram. 400 rounds is far more history than any catalogue has.
+      for (var round = 0; round < 400; round += 1) {
+        var r = await api.admin.syncChannel(key, { deep: deep, pages: 4 });
+        totals.added += r.added;
+        totals.updated += r.updated;
+        totals.gone += r.gone;
+        totals.pages += r.pages;
+
+        state.admin.sync[key] = {
+          running: !r.done,
+          note: '+' + totals.added + ' нових · ' + totals.updated + ' оновлено' +
+            (totals.gone ? ' · ' + totals.gone + ' знято' : '') +
+            ' · ' + totals.pages + ' стор.' + (r.done ? '' : ' …'),
+          error: null,
+        };
+        repaintAdmin();
+        if (r.done) break;
+      }
+    } catch (e) {
+      state.admin.sync[key] = { running: false, note: '', error: e.message };
+      repaintAdmin();
+      toast(e.message, 'error');
+      return;
+    }
+
+    // The counts on the rows and the cards below them are both stale now.
+    try {
+      var fresh = await Promise.all([api.admin.channels(), api.admin.posts()]);
+      state.admin.channels = fresh[0].channels || [];
+      state.admin.posts = fresh[1].posts || [];
+    } catch (e) { /* the sync itself succeeded; a stale count is not worth a toast */ }
+
+    // The vitrine the client sees was just rewritten underneath it.
+    state.catalogs = [];
+    state.admin.sync[key].running = false;
+    repaintAdmin();
+    toast('Синхронізовано: +' + totals.added + ' нових, ' + totals.updated + ' оновлено' +
+      (totals.gone ? ', ' + totals.gone + ' знято' : ''));
+  }
+
+  function repaintAdmin() {
+    if (state.tab === 'admin') $app.innerHTML = renderAdmin();
   }
 
   async function loadPopular() {
@@ -1634,6 +1734,20 @@
       return;
     }
 
+    var syncBtn = t.closest('[data-sync]');
+    if (syncBtn) {
+      tg.haptic('light');
+      await runSync(syncBtn.getAttribute('data-sync'), false);
+      return;
+    }
+
+    var syncDeep = t.closest('[data-sync-deep]');
+    if (syncDeep) {
+      tg.haptic('light');
+      await runSync(syncDeep.getAttribute('data-sync-deep'), true);
+      return;
+    }
+
     var popPeriod = t.closest('[data-pop-period]');
     if (popPeriod) {
       state.admin.popularPeriod = popPeriod.getAttribute('data-pop-period');
@@ -1715,7 +1829,11 @@
           $app.innerHTML = renderAdmin();
         }
         if (key === 'content') {
-          state.admin.posts = (await api.admin.posts()).posts || [];
+          // Channels come from the admin endpoint, not from the client config:
+          // only it carries the post counts and the sync state the rows show.
+          var content = await Promise.all([api.admin.posts(), api.admin.channels()]);
+          state.admin.posts = content[0].posts || [];
+          state.admin.channels = content[1].channels || [];
           $app.innerHTML = renderAdmin();
         }
       } catch (err) { toast(err.message, 'error'); }

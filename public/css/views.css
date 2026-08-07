@@ -545,6 +545,22 @@
 }
 .chip--stock.is-active::before { background: #fff; }
 
+/* ── a channel row in the admin office, with its sync controls ─────────────── */
+.row--sync { align-items: flex-start; flex-wrap: wrap; }
+.row--sync .row__body { min-width: 55%; }
+.row__actions { display: flex; gap: var(--w2b-space-2); flex: none; margin-left: auto; }
+.btn--sm { padding: 6px 10px; font-size: var(--w2b-fs-2xs); }
+/* The running commentary of a sync: how many rounds have landed so far. It sits
+   under the channel's own line because a deep backfill is many requests and a
+   button that just looks stuck is indistinguishable from one that is. */
+.row__sync {
+  margin-top: var(--w2b-space-1);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.row__sync.is-error { color: var(--w2b-danger); }
+
 /* ── content filters: brand and category, one level below the catalogues ────
    Deliberately a different shape from .chip. The catalogue row is uppercase
    text with an underline; these are sentence-case hairline pills, so the eye

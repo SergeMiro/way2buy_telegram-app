@@ -165,6 +165,12 @@
       // ── channels + the scheduler tick ──
       channels: function () { return request('GET', '/api/admin/channels'); },
       updateChannel: function (key, patch) { return request('PATCH', '/api/admin/channels/' + encodeURIComponent(key), patch); },
+      // One call reads a few pages of the channel and reconciles them, then says
+      // where it stopped. The caller repeats it while `done` is false — a whole
+      // channel is thousands of pages and a serverless function has seconds.
+      syncChannel: function (key, opts) {
+        return request('POST', '/api/admin/channels/' + encodeURIComponent(key) + '/sync', opts || {});
+      },
       tick: function () { return request('POST', '/api/admin/tick', {}); },
     },
   };
