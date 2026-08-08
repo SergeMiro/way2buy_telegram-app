@@ -12,8 +12,8 @@
 //    # register a new catalogue (once per channel)
 //    npm run import:tme -- --add @w2b_luxury_bags --title "Сумки жіночі" --emoji 👜
 //
-//    # walk further back into history — repeat until it reports "історію пройдено"
-//    npm run import:tme -- --deepen --pages 40
+//    # walk further back into history, to the channel's very first post
+//    npm run import:tme -- --deepen --until-done
 //
 //    # catch up on what was published since the last run (all catalogues)
 //    npm run import:tme -- --all
@@ -25,11 +25,9 @@
 //  Flags:
 //    --channel @name   restrict to one catalogue (repeatable); auto-registers
 //    --all             every enabled catalogue that has a @username
-//    --deepen          start at the OLDEST post already stored and go back
+//    --deepen          continue the backfill from where the last pass stopped
+//    --until-done      with --deepen: keep going until the channel's first post
 //    --pages N         stop after N pages per channel (default 8, ~25 posts each)
-//    --limit N         stop after N new positions per channel
-//    --since DATE      stop at posts older than DATE (YYYY-MM-DD)
-//    --refresh         also update captions/photos of posts already stored
 //    --reparse         re-derive brand/category/title from stored text, no network
 //    --dry             parse and report, write nothing
 // ─────────────────────────────────────────────────────────────────────────
@@ -37,6 +35,7 @@ import '../server/env.js';
 import { init, db, driverKind } from '../server/db.js';
 import { parsePostText } from '../server/telegram.js';
 import { fetchChannelPage, normalizeUsername, keyFor, sleep, TmeError } from '../server/tme.js';
+import { syncChannel } from '../server/sync.js';
 
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(`--${name}`);
@@ -57,10 +56,8 @@ const OPT = {
   everything: has('all'),
   deepen: has('deepen'),
   pages: Number(val('pages', 8)) || 8,
-  limit: Number(val('limit', 0)) || Infinity,
-  since: val('since'),
-  refresh: has('refresh'),
   reparse: has('reparse'),
+  untilDone: has('until-done'),
   dry: has('dry'),
 };
 
@@ -69,10 +66,18 @@ const OPT = {
 const PAGE_DELAY_MS = Number(process.env.W2B_TME_DELAY_MS || 700);
 const BATCH = 40; // rows per INSERT — one round-trip instead of forty
 
-const sinceTs = OPT.since ? Date.parse(OPT.since) : null;
-if (OPT.since && !Number.isFinite(sinceTs)) {
-  console.error(`--since: не зрозумів дату "${OPT.since}" (потрібен формат YYYY-MM-DD)`);
-  process.exit(1);
+// Flags that belonged to the old writer and have no meaning for the sync engine.
+// Rejected rather than ignored: a flag that is typed and silently dropped is
+// worse than one that does not exist.
+for (const [flag, why] of [
+  ['since',   'синхронізація йде від найновішого назад — обмежте --pages'],
+  ['limit',   'синхронізація не рахує позиції, рахує сторінки — використайте --pages'],
+  ['refresh', 'оновлення вже вбудоване: існуючі картки оновлюються завжди'],
+]) {
+  if (has(flag)) {
+    console.error(`--${flag} більше не підтримується: ${why}`);
+    process.exit(1);
+  }
 }
 
 await init();
@@ -145,59 +150,6 @@ async function targetChannels() {
   process.exit(1);
 }
 
-// ── writing posts ─────────────────────────────────────────────────────────
-
-const COLUMNS = [
-  'channel', 'tg_message_id', 'title', 'body', 'price', 'currency', 'image_url',
-  'article', 'brand', 'category', 'photos_json', 'source', 'status', 'created_at',
-];
-
-function rowFor(channel, post) {
-  const parsed = parsePostText(post.text, { channelTitle: channel.title });
-  return [
-    channel.key,
-    post.messageId,
-    parsed.title,
-    parsed.body,
-    parsed.price,
-    parsed.currency || 'USD',
-    // A post with no photo keeps the emoji stand-in, exactly like the live path.
-    post.photos[0] || '🛍️',
-    parsed.article,
-    parsed.brand,
-    parsed.category,
-    post.photos.length ? JSON.stringify(post.photos) : null,
-    'channel',
-    'published',
-    post.date || new Date().toISOString(),
-  ];
-}
-
-// One INSERT per batch: at ~100 ms to us-east-2, forty separate statements cost
-// four seconds and one costs a tenth of that.
-async function insertBatch(rows) {
-  if (!rows.length) return 0;
-  const placeholders = rows.map(() => `(${COLUMNS.map(() => '?').join(',')})`).join(',');
-  const sql = `INSERT INTO posts (${COLUMNS.join(',')}) VALUES ${placeholders}
-    ON CONFLICT (channel, tg_message_id) WHERE tg_message_id IS NOT NULL DO NOTHING`;
-  const info = await db.prepare(sql).run(...rows.flat());
-  return info.changes;
-}
-
-async function refreshPost(channel, post) {
-  const parsed = parsePostText(post.text, { channelTitle: channel.title });
-  const info = await db.prepare(`UPDATE posts SET title=?, body=?,
-      price=COALESCE(?,price), currency=COALESCE(?,currency), article=COALESCE(?,article),
-      brand=COALESCE(?,brand), category=COALESCE(?,category),
-      image_url=COALESCE(?,image_url), photos_json=COALESCE(?,photos_json), edited_at=?
-    WHERE channel=? AND tg_message_id=?`)
-    .run(parsed.title, parsed.body, parsed.price, parsed.currency, parsed.article,
-      parsed.brand, parsed.category, post.photos[0] || null,
-      post.photos.length ? JSON.stringify(post.photos) : null,
-      new Date().toISOString(), channel.key, post.messageId);
-  return info.changes;
-}
-
 // ── reparse: re-derive the labels from text already stored ────────────────
 //
 // The parser improves — a house is added to the brand list, a category word is
@@ -234,74 +186,63 @@ async function reparseChannel(channel) {
 }
 
 // ── one channel ───────────────────────────────────────────────────────────
-
+//
+// The reading and reconciling live in server/sync.js — the same engine the
+// «Синхронізувати» button runs. This used to be a second implementation of it,
+// and the two had already drifted: --deepen resumed from the OLDEST message id
+// stored, which sounds right and is not. Seeded demo cards carry ids in the
+// 2000s, so for a catalogue whose real posts start at 69181 the resume point was
+// 2001 and a backfill skipped sixty-seven thousand messages in one jump. The
+// button never had that bug because it resumes from a cursor it persisted.
+//
+// One engine, one cursor, one set of rules about hidden and curated cards.
 async function importChannel(channel) {
-  const username = channel.username;
-  const known = new Set(
-    (await db.prepare('SELECT tg_message_id FROM posts WHERE channel=? AND tg_message_id IS NOT NULL').all(channel.key))
-      .map((r) => Number(r.tg_message_id))
-  );
+  // A fresh row each pass: syncChannel resumes from channel.sync_cursor, and the
+  // previous pass has just moved it.
+  const fresh = await db.prepare('SELECT * FROM channels WHERE key=?').get(channel.key);
+  const r = await syncChannel(fresh, { deep: OPT.deepen, pages: OPT.pages });
+  return {
+    ...r,
+    skipped: r.skipped,
+    oldest: r.range ? r.range.from : null,
+    stopped: r.done
+      ? (r.historyDone ? 'історію пройдено до кінця' : 'готово')
+      : `зупинились на ${r.cursor}`,
+  };
+}
 
-  // --deepen resumes where the last backfill stopped instead of re-reading the
-  // newest pages, which is what makes a long history importable in sittings.
-  let cursor = null;
-  if (OPT.deepen && known.size) {
-    cursor = Math.min(...known);
-  }
+// --until-done: keep going until the channel's first post is reached. A full
+// catalogue is thousands of pages, far more than one invocation should hold, so
+// the loop is here rather than in the engine — and every round persists its
+// cursor, so killing this at any moment loses nothing but the current page.
+async function importChannelFully(channel) {
+  const totals = { added: 0, updated: 0, gone: 0, pages: 0, rounds: 0 };
+  let last = null;
 
-  const stats = { pages: 0, seen: 0, added: 0, updated: 0, skipped: 0, noMedia: 0, stopped: 'ліміт сторінок' };
-  let batch = [];
+  for (let round = 0; round < 5000; round += 1) {
+    const fresh = await db.prepare('SELECT * FROM channels WHERE key=?').get(channel.key);
+    if (fresh.history_done) break;
 
-  for (let page = 0; page < OPT.pages; page += 1) {
-    let result;
-    try {
-      result = await fetchChannelPage(username, { before: cursor });
-    } catch (e) {
-      stats.stopped = `помилка: ${e.message}`;
-      break;
+    last = await syncChannel(fresh, { deep: true, pages: OPT.pages });
+    totals.added += last.added;
+    totals.updated += last.updated;
+    totals.gone += last.gone;
+    totals.pages += last.pages;
+    totals.rounds += 1;
+
+    if (round % 5 === 0) {
+      process.stdout.write(`\n    ${totals.pages} стор. · +${totals.added} нових · курсор ${last.cursor ?? '—'}`);
     }
-    stats.pages += 1;
-
-    // Newest first, so --limit and --since cut off the oldest end.
-    const posts = [...result.posts].reverse();
-    let stop = null;
-
-    for (const post of posts) {
-      stats.seen += 1;
-
-      if (sinceTs && post.date && Date.parse(post.date) < sinceTs) { stop = `дата < ${OPT.since}`; break; }
-      if (!post.photos.length && !post.text) { stats.noMedia += 1; continue; }
-
-      if (known.has(post.messageId)) {
-        stats.skipped += 1;
-        if (OPT.refresh && !OPT.dry) stats.updated += await refreshPost(channel, post);
-        // Catching up: the first already-stored post means everything older is
-        // stored too, so there is nothing left to do on this channel. During a
-        // --deepen run the opposite is true — known ids are what we walk past.
-        if (!OPT.deepen && !OPT.refresh) { stop = 'дійшли до вже імпортованого'; break; }
-        continue;
-      }
-
-      known.add(post.messageId);
-      batch.push(rowFor(channel, post));
-      if (!OPT.dry && batch.length >= BATCH) { stats.added += await insertBatch(batch); batch = []; }
-      else if (OPT.dry) stats.added += 1;
-
-      if (stats.added + batch.length >= OPT.limit) { stop = `ліміт ${OPT.limit} позицій`; break; }
-    }
-
-    if (!OPT.dry && batch.length) { stats.added += await insertBatch(batch); batch = []; }
-    if (stop) { stats.stopped = stop; break; }
-    if (!result.before) { stats.stopped = 'історію пройдено до кінця'; break; }
-    cursor = result.before;
+    if (last.done || last.historyDone) break;
     await sleep(PAGE_DELAY_MS);
   }
 
-  if (!OPT.dry && batch.length) stats.added += await insertBatch(batch);
-
-  const total = (await db.prepare("SELECT COUNT(*) c FROM posts WHERE channel=? AND status='published'").get(channel.key)).c;
-  const oldest = (await db.prepare('SELECT MIN(tg_message_id) m FROM posts WHERE channel=?').get(channel.key)).m;
-  return { ...stats, total, oldest };
+  return {
+    ...(last || { total: 0, range: null }),
+    ...totals,
+    oldest: last?.range ? last.range.from : null,
+    stopped: last?.historyDone ? 'історію пройдено до кінця' : `зупинились на ${last?.cursor ?? '—'}`,
+  };
 }
 
 // ── run ───────────────────────────────────────────────────────────────────
@@ -309,8 +250,8 @@ async function importChannel(channel) {
 if (has('help')) {
   console.log(`
   npm run import:tme -- --add @channel [--title "Назва"] [--emoji 👜] [--key ключ]
-  npm run import:tme -- --all [--pages N] [--limit N] [--since YYYY-MM-DD] [--refresh]
-  npm run import:tme -- --deepen [--pages N]
+  npm run import:tme -- --all [--pages N]
+  npm run import:tme -- --deepen [--pages N] [--until-done]
   npm run import:tme -- --channel @channel [--dry]
 `);
   process.exit(0);
@@ -332,11 +273,14 @@ console.log(OPT.reparse
 const report = [];
 for (const channel of channels) {
   process.stdout.write(`@${channel.username} … `);
-  const r = OPT.reparse ? await reparseChannel(channel) : await importChannel(channel);
+  const r = OPT.reparse ? await reparseChannel(channel)
+    : (OPT.untilDone ? await importChannelFully(channel) : await importChannel(channel));
   console.log(OPT.reparse
     ? `перерозібрано ${r.updated} з ${r.seen}`
-    : `+${r.added} нових, ${r.skipped} вже було, ${r.pages} стор. — ${r.stopped}`);
-  report.push({ channel, ...r });
+    : `+${r.added} нових, ${r.updated} оновлено, ${r.gone} знято, ${r.pages} стор. — ${r.stopped}`);
+  // The channel object last: syncChannel also returns a `channel` field, and it
+  // is the key string — spreading it after would replace the row with a slug.
+  report.push({ ...r, channel });
 }
 
 console.log(`\n${'канал'.padEnd(24)}${(OPT.reparse ? 'змінено' : 'нових').padStart(8)}${'усього'.padStart(8)}${'найстаріший id'.padStart(16)}`);
