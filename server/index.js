@@ -715,13 +715,30 @@ app.post('/api/admin/report/send', requireAdmin, async (req, res) => {
 app.post('/telegram/webhook', async (req, res) => {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (secret && req.get('x-telegram-bot-api-secret-token') !== secret) return res.sendStatus(401);
-  // Telegram retries anything that is not a fast 200, so the ack goes first and
-  // the work is best-effort: a bad update must never stall the channel bridge.
+
+  // The work happens BEFORE the acknowledgement — the opposite of what a
+  // long-lived server would do, and deliberately so.
+  //
+  // Acknowledging first is the standard trick: Telegram retries anything that is
+  // not a fast 200, so you answer immediately and finish the work afterwards. On
+  // a serverless host that is a way to lose data. The invocation can be frozen
+  // the moment the response is written, so work started after res.send() may
+  // simply never run — and Telegram, having received its 200, never redelivers.
+  // A channel post could be delivered, acknowledged and silently dropped, which
+  // is exactly what happened the first time this was pointed at Vercel.
+  //
+  // Ingest is one or two statements; there is no latency budget worth risking a
+  // post for.
+  try {
+    await ingestChannelPost(req.body);
+    await handleMessage(req.body);
+  } catch (e) {
+    // Still a 200. Telegram redelivers anything else, so a malformed update
+    // would come back forever — but it is LOGGED now. Swallowing it in silence
+    // is how a broken bridge stays broken without anyone noticing.
+    console.error('[telegram] update failed:', e.message);
+  }
   res.sendStatus(200);
-  try { await ingestChannelPost(req.body); } catch { /* swallow — never break TG */ }
-  // Telegram must get its 200 immediately; the reply is fire-and-forget, so the
-  // promise is not awaited and .catch() stays on the promise itself.
-  void Promise.resolve(handleMessage(req.body)).catch(() => {});
 });
 
 // Bot / webhook diagnostics for the owner: "is the bot really an admin of this
