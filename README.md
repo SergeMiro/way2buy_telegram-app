@@ -12,7 +12,7 @@ in one zero-build Node application on Postgres.
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
-[![Tests](https://img.shields.io/badge/tests-112_node%3Atest-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-125_node%3Atest-brightgreen)](#testing)
 [![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
 🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
@@ -139,7 +139,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
 | Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
 | Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
-| Tests | **`node:test`** — 112 tests across 9 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
+| Tests | **`node:test`** — 125 tests across 11 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
 | Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
 | Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
 
@@ -327,6 +327,13 @@ Two human decisions outrank the channel: a card **hidden** in the admin office s
 on a **curated** card — one whose title, brand or category a person corrected — those three
 fields are kept while the channel keeps supplying the text, the price and the photos.
 
+**The catalogue keeps six months** (`W2B_CATALOG_MONTHS`, 0 for everything). Posts older
+than that are never written, and any that are already stored are retired after each pass —
+deleted when nothing points at them, moved out of the vitrine when a fitting room or the
+demand journal still does. The reason is commercial rather than technical: a bag posted a year
+ago is almost certainly sold, and a vitrine full of positions nobody can buy costs a client a
+message to Dasha and an answer of "це вже продано".
+
 A deletion can only be inferred from absence, and absence only means something inside the range
 of message ids a pass actually read. Each pass therefore records that range and retires only
 unseen posts inside it. Posts older than the range are not missing, merely unvisited.
@@ -378,7 +385,7 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-112 tests across nine suites, on the Node built-in test runner — no test framework dependency,
+125 tests across eleven suites, on the Node built-in test runner — no test framework dependency,
 and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
@@ -430,7 +437,8 @@ server/
   sql/schema.sql  the schema: 20 tables, 79 indexes, views, RLS posture
   env.js          validated configuration
   catalog.js      the vitrine query: selection, facets, keyset paging
-  sync.js         «Синхронізувати»: reconcile a catalogue with its channel
+  sync.js         «Синхронізувати»: reconcile a catalogue with its channel,
+                  and keep only the window it is meant to hold
   media.js        a stored photo reference → a URL the browser can load
   loyalty.js      cashback, tiers, milestones, badges, streaks
   birthday.js     claim windows and one-claim-per-year enforcement
@@ -458,7 +466,7 @@ scripts/          telegram.mjs (bot setup)
                   import-history.mjs (catalogues ← Telegram Desktop export)
                   migrate-sqlite-to-postgres.mjs (one-off data import)
                   sql/keepalive.sql (anti-pause heartbeat for the Free plan)
-tests/            9 node:test suites, 112 tests
+tests/            11 node:test suites, 125 tests
 docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
 
