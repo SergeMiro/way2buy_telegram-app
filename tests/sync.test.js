@@ -12,7 +12,7 @@ import './helpers/tmpdb.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
-import { syncChannel } from '../server/sync.js';
+import { syncChannel, windowStart } from '../server/sync.js';
 
 await migrate();
 
@@ -201,4 +201,83 @@ test('a page of stickers and service messages syncs to nothing, not to an error'
     assert.equal(r.added, 0);
     assert.equal(r.gone, 0, 'an empty page must not wipe the catalogue');
   }
+});
+
+// ── the six-month window ──────────────────────────────────────────────────
+//
+// The catalogue keeps a recent slice, not an archive. A bag posted a year ago is
+// almost certainly sold, and a vitrine full of positions nobody can buy costs a
+// client a message to Dasha and an answer of "це вже продано".
+
+const MONTH = 30 * 24 * 3600 * 1000;
+const NOW = Date.parse('2026-08-08T12:00:00Z');
+const ago = (months) => new Date(NOW - months * MONTH).toISOString();
+const since = NOW - 6 * MONTH;
+
+test('a post older than the window is never written at all', async () => {
+  const served = serve([page([
+    post(300, 'Chanel свіжа', ['https://cdn/a.jpg'], ago(1)),
+    post(301, 'Dior торішня', ['https://cdn/b.jpg'], ago(9)),
+  ], 299)]);
+  const r = await syncChannel(await channel(), { pages: 1, since, fetchPage: served.fetchPage });
+
+  assert.equal(r.added, 1, 'only the fresh one');
+  assert.equal(r.tooOld, 1);
+  assert.ok(await byMsg(300));
+  assert.equal(await byMsg(301), undefined, 'the old one is not stored, not even hidden');
+});
+
+test('a page entirely outside the window ends the walk', async () => {
+  const served = serve([
+    page([post(310, 'Свіжа', ['https://cdn/c.jpg'], ago(2))], 309),
+    page([post(305, 'Стара', ['https://cdn/d.jpg'], ago(8)),
+          post(306, 'Теж стара', ['https://cdn/e.jpg'], ago(10))], 304),
+    // A third page exists, and must never be asked for.
+  ]);
+  const r = await syncChannel(await channel(), { deep: true, pages: 5, since, fetchPage: served.fetchPage });
+
+  assert.deepEqual(served.calls.length, 2, 'stopped at the window edge, did not read on');
+  assert.equal(r.reachedWindowEdge, true);
+  assert.equal(r.historyDone, true, 'under a window there is nothing left to fetch');
+  assert.equal(r.cursor, null);
+});
+
+test('the window is a setting, and turning it off keeps everything', async () => {
+  const served = serve([page([post(320, 'Дуже стара', ['https://cdn/f.jpg'], ago(24))], null)]);
+  const r = await syncChannel(await channel(), { pages: 1, since: null, fetchPage: served.fetchPage });
+  assert.equal(r.added, 1, 'since=null reads the lot');
+  assert.equal(r.tooOld, 0);
+});
+
+test('windowStart counts calendar months back, and 0 means no window', () => {
+  const at = Date.parse('2026-08-08T00:00:00Z');
+  assert.equal(new Date(windowStart(at, 6)).toISOString().slice(0, 10), '2026-02-08');
+  assert.equal(windowStart(at, 0), null);
+});
+
+test('what falls out of the window is retired — and deleted only when nothing points at it', async () => {
+  // Two old cards. One is in a client's fitting room, one is not.
+  await db.prepare(`INSERT INTO posts (channel,tg_message_id,title,body,source,status,created_at)
+    VALUES ('bags',400,'Стара без посилань','','channel','published',?),
+           ('bags',401,'Стара в примірочній','','channel','published',?)`)
+    .run(ago(10), ago(10));
+  const wanted = await byMsg(401);
+  const customer = await db.prepare("SELECT id FROM customers LIMIT 1").get();
+  await db.prepare(`INSERT INTO cart_events (customer_id,post_id,action,title,channel,created_at,ym,y)
+    VALUES (?,?,'added','Стара','bags',now(),'2026-02','2026')`).run(customer.id, wanted.id);
+
+  const served = serve([page([post(410, 'Свіжа', ['https://cdn/g.jpg'], ago(1))], null)]);
+  const r = await syncChannel(await channel(), { pages: 1, since, fetchPage: served.fetchPage });
+
+  // The count also covers post 320 from the case above, which is two years old
+  // and equally outside the window — the rule is about age, not about this test.
+  assert.ok(r.deleted >= 1, 'unreferenced old cards are gone from the table');
+  assert.equal(await byMsg(400), undefined, 'this one had nothing pointing at it');
+  assert.equal(await byMsg(320), undefined, 'and neither did the two-year-old one');
+
+  const kept = await byMsg(401);
+  assert.ok(kept, 'the referenced one keeps its row');
+  assert.equal(kept.status, 'gone', 'but leaves the vitrine');
+  const link = await db.prepare('SELECT * FROM cart_events WHERE post_id=?').get(wanted.id);
+  assert.ok(link, 'and the client’s selection still points at something');
 });

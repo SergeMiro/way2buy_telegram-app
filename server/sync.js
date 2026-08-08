@@ -40,6 +40,24 @@ import { fetchChannelPage, sleep } from './tme.js';
 const PAGES_PER_CALL = Number(process.env.W2B_SYNC_PAGES || 4);
 const PAGE_DELAY_MS = Number(process.env.W2B_TME_DELAY_MS || 700);
 
+// WINDOW. The catalogue keeps the last N months and no more, and that is a
+// commercial rule before it is a technical one: a bag posted a year ago is
+// almost certainly sold, and a vitrine full of positions nobody can buy is worse
+// than a short one — the client picks something, writes to Dasha, and hears "це
+// вже продано". Depth is also what the backfill costs: six months of five
+// catalogues is a couple of thousand pages, the whole history is six thousand.
+//
+// 0 disables the window and keeps everything.
+const WINDOW_MONTHS = Number(process.env.W2B_CATALOG_MONTHS ?? 6);
+
+/** The oldest post the catalogue will hold, as an epoch ms — or null for "all". */
+export function windowStart(now = Date.now(), months = WINDOW_MONTHS) {
+  if (!months || months <= 0) return null;
+  const d = new Date(now);
+  d.setUTCMonth(d.getUTCMonth() - months);
+  return d.getTime();
+}
+
 const COLUMNS = [
   'channel', 'tg_message_id', 'title', 'body', 'price', 'currency', 'image_url',
   'article', 'brand', 'category', 'photos_json', 'source', 'status', 'created_at',
@@ -105,6 +123,37 @@ async function upsertBatch(rows) {
 }
 
 /**
+ * Retires what has fallen out of the window.
+ *
+ * Two fates, and the split is the point. A card nothing points at is pure
+ * catalogue — it is deleted, because a year of sold stock has no reader. A card
+ * somebody's fitting room or the demand journal still references keeps its row
+ * and only leaves the vitrine: deleting it would set those references to NULL
+ * and quietly detach a client's selection from what she selected.
+ */
+export async function pruneOutsideWindow(channelKey, cutoff = windowStart()) {
+  if (!cutoff) return { retired: 0, deleted: 0 };
+  const at = new Date(cutoff).toISOString();
+
+  const retired = await db.prepare(`
+    UPDATE posts SET status = 'gone', edited_at = now()
+     WHERE channel = ? AND source = 'channel' AND status = 'published' AND created_at < ?`)
+    .run(channelKey, at);
+
+  // NOT EXISTS rather than NOT IN: a single NULL post_id makes NOT IN return no
+  // rows at all, which would silently turn this into a no-op.
+  const deleted = await db.prepare(`
+    DELETE FROM posts p
+     WHERE p.channel = ? AND p.source = 'channel' AND p.created_at < ?
+       AND NOT EXISTS (SELECT 1 FROM cart_items  WHERE post_id = p.id)
+       AND NOT EXISTS (SELECT 1 FROM cart_events WHERE post_id = p.id)
+       AND NOT EXISTS (SELECT 1 FROM events      WHERE post_id = p.id)`)
+    .run(channelKey, at);
+
+  return { retired: retired.changes, deleted: deleted.changes };
+}
+
+/**
  * Reads part of a channel and reconciles it into the app.
  *
  * @param channel    the row from `channels` (needs key, title, username)
@@ -114,11 +163,14 @@ async function upsertBatch(rows) {
  * @param fetchPage  the reader, injected so the tests can serve a channel
  *                   without a network — the reconcile SQL is the point here, and
  *                   an ESM export cannot be monkey-patched anyway.
+ * @param since      epoch ms of the oldest post to keep; defaults to the window
+ *                   above. Pass null to read everything.
  */
 export async function syncChannel(channel, {
   deep = false,
   pages = PAGES_PER_CALL,
   fetchPage = fetchChannelPage,
+  since = windowStart(),
 } = {}) {
   if (!channel?.username) {
     throw new Error(`канал «${channel?.title || channel?.key}» без @username — синхронізувати нічого`);
@@ -132,11 +184,13 @@ export async function syncChannel(channel, {
     updated: 0,
     gone: 0,
     skipped: 0,
+    tooOld: 0,
     cursor: null,
     done: false,
     historyDone: Boolean(channel.history_done),
   };
 
+  const cutoff = since ?? null;
   let cursor = deep ? (channel.sync_cursor ?? null) : null;
   // Where this pass started reading. It is the UPPER bound of what the pass can
   // speak about, and it is not the same as the highest id it saw: a post deleted
@@ -154,9 +208,13 @@ export async function syncChannel(channel, {
     stats.pages += 1;
 
     const posts = [];
+    let pageHadFresh = false;
     for (const post of result.posts) {
       // Nothing to sell and nothing to show: service messages, stickers, polls.
       if (!post.photos.length && !post.text) { stats.skipped += 1; continue; }
+      // Outside the window the catalogue keeps — see WINDOW at the top.
+      if (cutoff && post.date && Date.parse(post.date) < cutoff) { stats.tooOld += 1; continue; }
+      pageHadFresh = true;
       posts.push(post);
       seen.push(post.messageId);
       if (minId === null || post.messageId < minId) minId = post.messageId;
@@ -174,6 +232,14 @@ export async function syncChannel(channel, {
     if (!result.before) {
       // The first post of the channel. There is nothing older to read.
       stats.historyDone = true;
+      cursor = null;
+      break;
+    }
+    // A whole page older than the window: pages run newest to oldest, so
+    // everything beyond this one is older still. Nothing left to fetch.
+    if (cutoff && !pageHadFresh && result.posts.length) {
+      stats.historyDone = true;
+      stats.reachedWindowEdge = true;
       cursor = null;
       break;
     }
@@ -202,10 +268,20 @@ export async function syncChannel(channel, {
     stats.gone = gone.changes;
   }
 
+  // The window is a standing rule, so it is applied after every pass rather than
+  // by a separate command somebody has to remember to run.
+  const pruned = await pruneOutsideWindow(channel.key, cutoff);
+  stats.retired = pruned.retired;
+  stats.deleted = pruned.deleted;
+
   stats.cursor = cursor;
   // A shallow sync is one pass and it is finished; a deep one is finished when
   // it has walked back to the beginning.
   stats.done = deep ? (cursor === null || stats.historyDone) : true;
+  // `history_done` means "nothing left to FETCH", which under a window is not the
+  // same as "the channel's first post was reached". Widening W2B_CATALOG_MONTHS
+  // later therefore needs the flag cleared, or a deepen pass is a silent no-op:
+  //   update channels set history_done = false, sync_cursor = null;
   // What the pass can speak about: from the oldest post it saw up to where it
   // started reading (the newest end of the channel when it started at the top).
   stats.range = minId === null ? null : { from: minId, to: startedAt === null ? null : startedAt - 1, seenTo: maxId };
