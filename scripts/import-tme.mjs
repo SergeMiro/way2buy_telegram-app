@@ -35,7 +35,7 @@ import '../server/env.js';
 import { init, db, driverKind } from '../server/db.js';
 import { parsePostText } from '../server/telegram.js';
 import { fetchChannelPage, normalizeUsername, keyFor, sleep, TmeError } from '../server/tme.js';
-import { syncChannel } from '../server/sync.js';
+import { syncChannel, registerChannel } from '../server/sync.js';
 
 const argv = process.argv.slice(2);
 const has = (name) => argv.includes(`--${name}`);
@@ -82,30 +82,8 @@ for (const [flag, why] of [
 
 await init();
 
-// ── channel registry ──────────────────────────────────────────────────────
-
-async function registerChannel({ username, key, title, emoji }) {
-  const existing = await db.prepare('SELECT * FROM channels WHERE lower(username)=?').get(username.toLowerCase());
-  if (existing) {
-    // Title and emoji are the labels Maryna sees on the chips, so an explicit
-    // --title overwrites; everything else is left alone.
-    if (title || emoji) {
-      await db.prepare('UPDATE channels SET title=COALESCE(?,title), emoji=COALESCE(?,emoji) WHERE id=?')
-        .run(title || null, emoji || null, existing.id);
-    }
-    return { ...existing, title: title || existing.title, emoji: emoji || existing.emoji, created: false };
-  }
-
-  const finalKey = key || keyFor(username);
-  const clash = await db.prepare('SELECT 1 FROM channels WHERE key=?').get(finalKey);
-  if (clash) throw new Error(`ключ "${finalKey}" вже зайнятий іншим каналом — задайте --key`);
-
-  await db.prepare(`INSERT INTO channels (key,chat_id,username,title,emoji,kind,enabled,created_at)
-    VALUES (?,NULL,?,?,?, 'catalog',true,?)`)
-    .run(finalKey, username, title || username, emoji || '🛍️', new Date().toISOString());
-  const row = await db.prepare('SELECT * FROM channels WHERE key=?').get(finalKey);
-  return { ...row, created: true };
-}
+// ── channel registry: server/sync.js owns it, so the cabinet and the command
+// line create a catalogue by exactly the same rules.
 
 async function targetChannels() {
   if (OPT.add) {
@@ -273,8 +251,18 @@ console.log(OPT.reparse
 const report = [];
 for (const channel of channels) {
   process.stdout.write(`@${channel.username} … `);
-  const r = OPT.reparse ? await reparseChannel(channel)
-    : (OPT.untilDone ? await importChannelFully(channel) : await importChannel(channel));
+  // One unreachable channel must not end the run. Half the catalogue list is
+  // placeholders for brands that have no channel yet, and --all walks all of
+  // them; a 404 on one is a line in the report, not a dead batch job.
+  let r;
+  try {
+    r = OPT.reparse ? await reparseChannel(channel)
+      : (OPT.untilDone ? await importChannelFully(channel) : await importChannel(channel));
+  } catch (e) {
+    console.log(`✗ ${e.message}`);
+    report.push({ channel, added: 0, updated: 0, gone: 0, pages: 0, total: null, oldest: null, failed: e.message });
+    continue;
+  }
   console.log(OPT.reparse
     ? `перерозібрано ${r.updated} з ${r.seen}`
     : `+${r.added} нових, ${r.updated} оновлено, ${r.gone} знято, ${r.pages} стор. — ${r.stopped}`);
@@ -287,7 +275,7 @@ console.log(`\n${'канал'.padEnd(24)}${(OPT.reparse ? 'змінено' : 'н
 console.log('─'.repeat(56));
 for (const r of report) {
   console.log(
-    `${r.channel.title.slice(0, 23).padEnd(24)}${String(OPT.reparse ? r.updated : r.added).padStart(8)}${String(r.total).padStart(8)}${String(r.oldest ?? '—').padStart(16)}`
+    `${r.channel.title.slice(0, 23).padEnd(24)}${String(OPT.reparse ? r.updated : r.added).padStart(8)}${String(r.total ?? '—').padStart(8)}${String(r.failed ? 'недоступний' : (r.oldest ?? '—')).padStart(16)}`
   );
 }
 console.log('─'.repeat(56));

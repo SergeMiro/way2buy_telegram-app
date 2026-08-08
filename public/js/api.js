@@ -168,6 +168,8 @@
       // One call reads a few pages of the channel and reconciles them, then says
       // where it stopped. The caller repeats it while `done` is false — a whole
       // channel is thousands of pages and a serverless function has seconds.
+      // Adding a catalogue: one @username, no deploy.
+      addChannel: function (form) { return request('POST', '/api/admin/channels', form); },
       syncChannel: function (key, opts) {
         return request('POST', '/api/admin/channels/' + encodeURIComponent(key) + '/sync', opts || {});
       },

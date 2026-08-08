@@ -33,7 +33,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { parsePostText } from './telegram.js';
-import { fetchChannelPage, sleep } from './tme.js';
+import { fetchChannelPage, sleep, normalizeUsername, keyFor } from './tme.js';
 
 // One page is ~3 posts in an album-heavy catalogue and ~16 in a plain one, so
 // four pages is a few seconds of work — comfortably inside a serverless limit.
@@ -44,11 +44,13 @@ const PAGE_DELAY_MS = Number(process.env.W2B_TME_DELAY_MS || 700);
 // commercial rule before it is a technical one: a bag posted a year ago is
 // almost certainly sold, and a vitrine full of positions nobody can buy is worse
 // than a short one — the client picks something, writes to Dasha, and hears "це
-// вже продано". Depth is also what the backfill costs: six months of five
-// catalogues is a couple of thousand pages, the whole history is six thousand.
+// вже продано". Depth is also what the backfill costs: three months of five
+// catalogues is about a thousand pages, the whole history is six thousand.
 //
-// 0 disables the window and keeps everything.
-const WINDOW_MONTHS = Number(process.env.W2B_CATALOG_MONTHS ?? 6);
+// The default is the product decision, not a neutral guess — a fresh clone, the
+// cron and production should all keep the same slice, or the vitrine differs
+// between environments for no visible reason. 0 keeps everything.
+const WINDOW_MONTHS = Number(process.env.W2B_CATALOG_MONTHS ?? 3);
 
 /** The oldest post the catalogue will hold, as an epoch ms — or null for "all". */
 export function windowStart(now = Date.now(), months = WINDOW_MONTHS) {
@@ -120,6 +122,49 @@ async function upsertBatch(rows) {
     added: result.filter((r) => r.inserted).length,
     updated: result.filter((r) => !r.inserted).length,
   };
+}
+
+/**
+ * Registers a catalogue, or updates the labels of one already known.
+ *
+ * A catalogue is a row in `channels` and nothing else — no code, no deploy, no
+ * list to edit. That is what has to stay true as the shop grows from five
+ * channels to fifteen, so this lives next to the sync rather than inside a
+ * script: the admin office and the command line create a catalogue the same way.
+ *
+ * The channel is read once before it is stored. A typo'd or private @username
+ * would otherwise become a permanent row that every sync fails on, and the
+ * error would surface far from the person who typed it.
+ */
+export async function registerChannel({ username, key, title, emoji, fetchPage = fetchChannelPage }) {
+  const handle = normalizeUsername(username);
+
+  const existing = await db.prepare('SELECT * FROM channels WHERE lower(username)=?').get(handle.toLowerCase());
+  if (existing) {
+    // Title and emoji are the labels on the chips, so an explicit one wins;
+    // everything else about a known channel is left alone.
+    if (title || emoji) {
+      await db.prepare('UPDATE channels SET title=COALESCE(?,title), emoji=COALESCE(?,emoji) WHERE id=?')
+        .run(title || null, emoji || null, existing.id);
+    }
+    return { ...existing, title: title || existing.title, emoji: emoji || existing.emoji, created: false };
+  }
+
+  // Throws for a channel that does not exist, is private, or has web preview
+  // switched off — all of which are worth knowing now rather than later.
+  const page = await fetchPage(handle);
+
+  const finalKey = key || keyFor(handle);
+  if (await db.prepare('SELECT 1 FROM channels WHERE key=?').get(finalKey)) {
+    throw new Error(`ключ «${finalKey}» вже зайнятий іншим каналом`);
+  }
+
+  await db.prepare(`INSERT INTO channels (key,chat_id,username,title,emoji,kind,enabled,created_at)
+    VALUES (?,NULL,?,?,?, 'catalog',true,?)`)
+    .run(finalKey, handle, title || page.title || handle, emoji || '🛍️', new Date().toISOString());
+
+  const row = await db.prepare('SELECT * FROM channels WHERE key=?').get(finalKey);
+  return { ...row, created: true };
 }
 
 /**

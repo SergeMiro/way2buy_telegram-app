@@ -621,6 +621,25 @@ app.post('/api/admin/channels/:key/sync', requireAdmin, async (req, res) => {
   }
 });
 
+// Adding a catalogue is a row in `channels`, so it is a form and not a deploy.
+// That matters as the shop grows: ten more channels are coming, and none of them
+// should need a developer. The channel is read once here, so a typo or a private
+// channel is refused now rather than failing on every sync afterwards.
+app.post('/api/admin/channels', requireAdmin, async (req, res) => {
+  const { username, title, emoji } = req.body || {};
+  if (!username) return res.status(400).json({ error: 'потрібен @username каналу' });
+  try {
+    const channel = await sync.registerChannel({
+      username: String(username).trim(),
+      title: title ? String(title).trim().slice(0, 60) : null,
+      emoji: emoji ? String(emoji).trim().slice(0, 8) : null,
+    });
+    res.json({ ok: true, created: channel.created, channel: await getChannel(channel.key) });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+
 app.patch('/api/admin/channels/:key', requireAdmin, async (req, res) => {
   const { enabled, title, emoji, kind } = req.body || {};
   const existing = await getChannel(req.params.key);

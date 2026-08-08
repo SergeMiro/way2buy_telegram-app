@@ -1015,17 +1015,27 @@
   }
 
   function adminContentHtml(a) {
-    var html = '<div class="section-title">Канали</div>' +
-      '<div class="panel"><p class="panel__note">«Синхронізувати» зчитує канал і вирівнює каталог ' +
-        'під нього: нові пости додаються, змінені оновлюються, знятих більше не видно. ' +
-        'Сам канал не змінюється — застосунок його лише читає. Виправлені вручну назви та ' +
-        'приховані картки синхронізація не перезаписує.</p></div>';
-
     // The channel list carries its own sync state, so it comes from the admin
     // endpoint (with counts) rather than from the client config. `.length` and not
     // just `a.channels`: an empty array is truthy, so the fallback would never
     // fire and the section would render as a heading with nothing under it.
     var channels = (a.channels && a.channels.length) ? a.channels : (state.config.channels || []);
+    var syncable = channels.filter(function (c) { return c.username && c.enabled; });
+    var all = a.sync.__all || {};
+
+    var html = '<div class="section-title">Канали</div>' +
+      '<div class="panel"><p class="panel__note">«Синхронізувати» зчитує канал і вирівнює каталог ' +
+        'під нього: нові пости додаються, змінені оновлюються, знятих більше не видно. ' +
+        'Сам канал не змінюється — застосунок його лише читає. Виправлені вручну назви та ' +
+        'приховані картки синхронізація не перезаписує.</p>' +
+      // At fifteen catalogues, pressing the per-channel button fifteen times is
+      // not a workflow. Adding one is a form for the same reason: a new channel
+      // must never need a developer.
+      '<div class="inline">' +
+        '<button class="btn btn--primary btn--sm" data-sync-all="1"' + (all.running ? ' disabled' : '') + '>' +
+          (all.running ? esc(all.note) : 'Синхронізувати всі (' + syncable.length + ')') + '</button>' +
+        '<button class="btn btn--ghost btn--sm" data-action="add-channel">Додати каталог</button>' +
+      '</div></div>';
     // Thirty-one rows, of which a dozen are empty placeholders for brands nobody
     // has a channel for yet. The ones that can actually be synced go first, then
     // the fullest — the same ordering rule the client's chips use.
@@ -1154,6 +1164,27 @@
   }
 
   /* ── sheets (admin forms) ───────────────────────────────────────────────── */
+
+  // Adding a catalogue: the @username is the only thing that matters. The title
+  // and the emoji are the labels on the chip and default to what the channel
+  // calls itself, so the shortest possible path is one field.
+  function sheetAddChannel() {
+    openSheet('Додати каталог',
+      '<form class="stack" id="addChannelForm">' +
+        '<label class="field"><span class="field__label">Канал</span>' +
+          '<input class="field__input" name="username" required placeholder="@w2b_luxury_bags" ' +
+            'autocapitalize="off" autocorrect="off" spellcheck="false" /></label>' +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Назва (необовʼязково)</span>' +
+            '<input class="field__input" name="title" placeholder="Сумки жіночі" /></label>' +
+          '<label class="field"><span class="field__label">Емодзі</span>' +
+            '<input class="field__input" name="emoji" placeholder="👜" maxlength="4" /></label>' +
+        '</div>' +
+        '<p class="field__hint">Канал має бути публічним — застосунок читає його відкриту ' +
+          'сторінку. Після додавання натисніть «Синхронізувати», щоб підтягнути позиції.</p>' +
+        '<button class="btn btn--primary" type="submit">Додати</button>' +
+      '</form>');
+  }
 
   function sheetNewPost() {
     openSheet('Опублікувати товар',
@@ -1579,8 +1610,9 @@
   // structure exists because the app runs on a serverless host: a whole channel
   // is thousands of pages and a function has seconds, so the loop has to live on
   // this side. The admin sees each round land instead of watching a frozen button.
-  async function runSync(key, deep) {
+  async function runSync(key, deep, opts) {
     if (state.admin.sync[key] && state.admin.sync[key].running) return;
+    var silent = Boolean(opts && opts.silent);
 
     var totals = { added: 0, updated: 0, gone: 0, pages: 0 };
     state.admin.sync[key] = { running: true, note: 'читаю канал…', error: null };
@@ -1622,10 +1654,37 @@
 
     // The vitrine the client sees was just rewritten underneath it.
     state.catalogs = [];
-    state.admin.sync[key].running = false;
+    state.admin.sync[key] = Object.assign({}, state.admin.sync[key], { running: false }, totals);
     repaintAdmin();
-    toast('Синхронізовано: +' + totals.added + ' нових, ' + totals.updated + ' оновлено' +
-      (totals.gone ? ', ' + totals.gone + ' знято' : ''));
+    if (!silent) {
+      toast('Синхронізовано: +' + totals.added + ' нових, ' + totals.updated + ' оновлено' +
+        (totals.gone ? ', ' + totals.gone + ' знято' : ''));
+    }
+  }
+
+  // Sync every catalogue, one after another. Sequential on purpose: each channel
+  // is already a stream of requests to Telegram, and firing fifteen streams at
+  // once is how you collect a rate limit instead of a catalogue.
+  async function runSyncAll() {
+    if (state.admin.sync.__all && state.admin.sync.__all.running) return;
+    var list = (state.admin.channels || []).filter(function (c) { return c.username && c.enabled; });
+    var totals = { added: 0, updated: 0, gone: 0 };
+
+    for (var i = 0; i < list.length; i++) {
+      state.admin.sync.__all = { running: true, note: 'канал ' + (i + 1) + ' з ' + list.length + '…' };
+      repaintAdmin();
+      try {
+        await runSync(list[i].key, false, { silent: true });
+        var done = state.admin.sync[list[i].key] || {};
+        totals.added += done.added || 0;
+        totals.updated += done.updated || 0;
+        totals.gone += done.gone || 0;
+      } catch (e) { /* runSync already showed it on the row; keep going */ }
+    }
+
+    state.admin.sync.__all = { running: false, note: '' };
+    repaintAdmin();
+    toast('Усі канали синхронізовано: +' + totals.added + ' нових, ' + totals.updated + ' оновлено');
   }
 
   function repaintAdmin() {
@@ -1731,6 +1790,12 @@
     if (t.closest('[data-search-clear]')) {
       state.search = '';
       go('catalog');
+      return;
+    }
+
+    if (t.closest('[data-sync-all]')) {
+      tg.haptic('light');
+      await runSyncAll();
       return;
     }
 
@@ -1880,6 +1945,7 @@
 
     if (name === 'notifications') { sheetNotifications(); return; }
     if (name === 'new-post') { sheetNewPost(); return; }
+    if (name === 'add-channel') { sheetAddChannel(); return; }
     if (name === 'new-campaign') { sheetNewCampaign(); return; }
     if (name === 'new-holiday') { sheetNewHoliday(); return; }
     if (name === 'new-purchase') { sheetNewPurchase(action.getAttribute('data-customer')); return; }
@@ -1922,7 +1988,17 @@
     if (submit) submit.disabled = true;
 
     try {
-      if (form.id === 'joinForm') {
+      if (form.id === 'addChannelForm') {
+        var added = await api.admin.addChannel(data);
+        closeSheet();
+        var fresh = await api.admin.channels();
+        state.admin.channels = fresh.channels || [];
+        state.catalogs = [];           // the client's chips changed
+        repaintAdmin();
+        toast(added.created
+          ? 'Каталог «' + added.channel.title + '» додано — тепер синхронізуйте'
+          : 'Такий канал уже був: «' + added.channel.title + '»');
+      } else if (form.id === 'joinForm') {
         await api.register({
           name: data.name, phone: data.phone, address: data.address,
           birthday: data.birthday, consent: data.consent ? 1 : 0,

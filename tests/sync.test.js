@@ -12,7 +12,7 @@ import './helpers/tmpdb.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
-import { syncChannel, windowStart } from '../server/sync.js';
+import { syncChannel, windowStart, registerChannel } from '../server/sync.js';
 
 await migrate();
 
@@ -252,6 +252,7 @@ test('the window is a setting, and turning it off keeps everything', async () =>
 test('windowStart counts calendar months back, and 0 means no window', () => {
   const at = Date.parse('2026-08-08T00:00:00Z');
   assert.equal(new Date(windowStart(at, 6)).toISOString().slice(0, 10), '2026-02-08');
+  assert.equal(new Date(windowStart(at, 3)).toISOString().slice(0, 10), '2026-05-08');
   assert.equal(windowStart(at, 0), null);
 });
 
@@ -280,4 +281,31 @@ test('what falls out of the window is retired — and deleted only when nothing 
   assert.equal(kept.status, 'gone', 'but leaves the vitrine');
   const link = await db.prepare('SELECT * FROM cart_events WHERE post_id=?').get(wanted.id);
   assert.ok(link, 'and the client’s selection still points at something');
+});
+
+test('a catalogue is registered from its @username, and read once before it is stored', async () => {
+  const served = serve([page([post(500, 'Loewe Puzzle')], null)]);
+  const ch = await registerChannel({
+    username: 'https://t.me/w2b_luxury_loewe', emoji: '🟥', fetchPage: served.fetchPage,
+  });
+  assert.equal(ch.created, true);
+  assert.equal(ch.key, 'w2b-luxury-loewe', 'the key matches what a live post would derive');
+  assert.equal(ch.username, 'w2b_luxury_loewe', 'the URL is reduced to the handle');
+  assert.equal(ch.title, 'Сумки жіночі', 'the channel’s own name becomes the label');
+
+  // Registering it again is not an error and does not duplicate the row.
+  const again = await registerChannel({ username: '@w2b_luxury_loewe', title: 'Loewe' });
+  assert.equal(again.created, false);
+  assert.equal(again.title, 'Loewe', 'an explicit title still wins');
+  const rows = await db.prepare('SELECT count(*) c FROM channels WHERE username=?').get('w2b_luxury_loewe');
+  assert.equal(rows.c, 1);
+});
+
+test('a channel that cannot be read is refused instead of becoming a broken row', async () => {
+  const dead = { fetchPage: async () => { throw new Error('приватний або не існує'); } };
+  await assert.rejects(
+    () => registerChannel({ username: '@w2b_nope', fetchPage: dead.fetchPage }),
+    /приватний|не існує/,
+  );
+  assert.equal(await db.prepare('SELECT * FROM channels WHERE username=?').get('w2b_nope'), undefined);
 });

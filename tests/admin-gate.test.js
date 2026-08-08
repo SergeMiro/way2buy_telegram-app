@@ -55,3 +55,12 @@ test('the shop itself stays open — this closes the office, not the door', asyn
   const me = await (await fetch(`${base}/api/me?tgid=7`)).json();
   assert.equal(me.admin, false);
 });
+
+test('adding a catalogue is an admin action, and a bad handle is refused there', async () => {
+  const res = await fetch(`${base}/api/admin/channels?tgid=7&admin=1`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: '@whatever', admin: '1' }),
+  });
+  assert.equal(res.status, 403, 'no admins named — nobody adds channels either');
+});

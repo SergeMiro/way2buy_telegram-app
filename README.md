@@ -327,7 +327,7 @@ Two human decisions outrank the channel: a card **hidden** in the admin office s
 on a **curated** card — one whose title, brand or category a person corrected — those three
 fields are kept while the channel keeps supplying the text, the price and the photos.
 
-**The catalogue keeps six months** (`W2B_CATALOG_MONTHS`, 0 for everything). Posts older
+**The catalogue keeps three months** (`W2B_CATALOG_MONTHS`, 0 for everything). Posts older
 than that are never written, and any that are already stored are retired after each pass —
 deleted when nothing points at them, moved out of the vitrine when a fitting room or the
 demand journal still does. The reason is commercial rather than technical: a bag posted a year
