@@ -200,10 +200,15 @@ export async function fetchChannelPage(username, { before = null, attempts = 3, 
     if (!res.ok) throw new TmeError(`@${username}: HTTP ${res.status}`);
 
     const html = await res.text();
-    // A private channel answers 200 with a "join" page and no history at all —
-    // an empty result here means "not readable", not "no posts".
+    // Telegram answers 200 for a channel that does not exist, for a private one,
+    // and for one with preview switched off — the same "no history" page for all
+    // three. So an empty result here means "not readable", never "no posts", and
+    // the message has to name the likeliest cause first: a mistyped handle.
     if (!/tgme_channel_history/i.test(html)) {
-      throw new TmeError(`@${username}: сторінка без історії — канал приватний або веб-перегляд вимкнено`);
+      throw new TmeError(
+        `@${username}: не вдалося прочитати канал — перевірте @username, ` +
+        'або канал приватний чи має вимкнений веб-перегляд'
+      );
     }
     return { url, ...parseChannelPage(html) };
   }

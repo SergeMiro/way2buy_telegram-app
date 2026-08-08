@@ -116,7 +116,7 @@ test('a private channel is reported as such rather than read as empty', async ()
   const join = async () => ({ ok: true, status: 200, text: async () => '<div class="tgme_page_context">join</div>' });
   await assert.rejects(
     () => fetchChannelPage('w2b_private', { fetchImpl: join, attempts: 1 }),
-    /приватний/,
+    /перевірте @username/,
   );
 });
 
