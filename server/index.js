@@ -52,7 +52,18 @@ app.use(express.static(join(__dirname, '..', 'public')));
 
 const PORT = process.env.PORT || 4010;
 const ADMIN_IDS = (process.env.ADMIN_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
-const DEMO = ADMIN_IDS.length === 0; // no admins configured ⇒ open demo mode
+
+// An empty ADMIN_TG_IDS opens the cabinet to anyone who passes ?admin=1. That is
+// deliberate and it is what makes the zero-config demo demonstrable — there is
+// nothing in it but seeded data.
+//
+// On a production deployment the same rule would publish the client list: names,
+// phones, delivery addresses, purchase history. So there it fails CLOSED instead
+// — no admin ids configured means no admins, and the cabinet is reachable by
+// nobody until somebody is named. Forgetting to set a variable must not be the
+// thing that opens the door.
+const PRODUCTION = process.env.VERCEL_ENV === 'production' || process.env.W2B_ENV === 'production';
+const DEMO = ADMIN_IDS.length === 0 && !PRODUCTION;
 
 // «Товари в наявності» — the one catalogue that means "ready to ship". It is
 // pinned and highlighted in the UI; the key is overridable because the channel
