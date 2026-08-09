@@ -168,6 +168,40 @@ export async function registerChannel({ username, key, title, emoji, fetchPage =
 }
 
 /**
+ * Points the «Канал» tab at a channel.
+ *
+ * There is exactly one main channel: the tab is "стрічка каналу", singular. So
+ * this is a switch and not a flag — promoting one demotes whichever held the
+ * role, in a single transaction, because two rows marked `main` would make the
+ * tab show two channels interleaved and nothing would say which is wrong.
+ *
+ * The demoted channel keeps its posts and becomes an ordinary catalogue, unless
+ * it has none — an empty one would only add an empty chip to the client's filter
+ * row, so it is switched off instead. Re-enabling it is one toggle.
+ */
+export async function setMainChannel(key) {
+  const target = await db.prepare('SELECT * FROM channels WHERE key=?').get(key);
+  if (!target) throw new Error(`немає каналу «${key}»`);
+  if (!target.username && !target.chat_id) {
+    throw new Error(`канал «${target.title}» не має ні @username, ні chat_id — читати нічого`);
+  }
+
+  const demoted = [];
+  await db.transaction(async (tx) => {
+    const previous = await tx.prepare("SELECT * FROM channels WHERE kind='main' AND key <> ?").all(key);
+    for (const p of previous) {
+      const posts = (await tx.prepare("SELECT count(*) c FROM posts WHERE channel=? AND status='published'").get(p.key)).c;
+      await tx.prepare('UPDATE channels SET kind=?, enabled=? WHERE key=?')
+        .run('catalog', Number(posts) > 0, p.key);
+      demoted.push({ key: p.key, title: p.title, posts: Number(posts) });
+    }
+    await tx.prepare("UPDATE channels SET kind='main', enabled=true WHERE key=?").run(key);
+  });
+
+  return { main: await db.prepare('SELECT * FROM channels WHERE key=?').get(key), demoted };
+}
+
+/**
  * Retires what has fallen out of the window.
  *
  * Two fates, and the split is the point. A card nothing points at is pure

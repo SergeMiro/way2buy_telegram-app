@@ -12,7 +12,7 @@ import './helpers/tmpdb.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
-import { syncChannel, windowStart, registerChannel } from '../server/sync.js';
+import { syncChannel, windowStart, registerChannel, setMainChannel } from '../server/sync.js';
 
 await migrate();
 
@@ -308,4 +308,49 @@ test('a channel that cannot be read is refused instead of becoming a broken row'
     /приватний|не існує/,
   );
   assert.equal(await db.prepare('SELECT * FROM channels WHERE username=?').get('w2b_nope'), undefined);
+});
+
+// ── which channel the «Канал» tab shows ───────────────────────────────────
+
+test('promoting a channel demotes the previous one, in one step', async () => {
+  await db.exec(`
+    INSERT INTO channels (key,username,title,kind,enabled,created_at) VALUES
+      ('feed_old','w2b_old','Стара стрічка','main',true,now()),
+      ('feed_new','w2b_new','Тестовий канал','catalog',true,now())
+    ON CONFLICT (key) DO NOTHING;`);
+  await db.prepare(`INSERT INTO posts (channel,tg_message_id,title,body,source,status,created_at)
+    VALUES ('feed_old',900,'Новина','','channel','published',now())`).run();
+
+  const { main, demoted } = await setMainChannel('feed_new');
+  assert.equal(main.kind, 'main');
+  // The seeded database already carries a main channel, so this fixture had two
+  // — which is exactly the state the switch has to collapse.
+  assert.ok(demoted.some((d) => d.key === 'feed_old'), 'the previous feed was demoted');
+
+  const mains = await db.prepare("SELECT key FROM channels WHERE kind='main'").all();
+  assert.deepEqual(mains.map((m) => m.key), ['feed_new'], 'exactly one channel is the feed');
+
+  // The demoted one had a post, so it stays a readable catalogue rather than
+  // vanishing with its content.
+  const old = await db.prepare("SELECT * FROM channels WHERE key='feed_old'").get();
+  assert.equal(old.kind, 'catalog');
+  assert.equal(old.enabled, true);
+});
+
+test('a demoted channel with nothing in it is switched off, not left as an empty chip', async () => {
+  await db.exec(`INSERT INTO channels (key,username,title,kind,enabled,created_at)
+    VALUES ('feed_empty','w2b_empty','Порожня стрічка','catalog',true,now())
+    ON CONFLICT (key) DO NOTHING;`);
+  await setMainChannel('feed_empty');          // feed_new (no posts) is demoted
+  const demotedRow = await db.prepare("SELECT * FROM channels WHERE key='feed_new'").get();
+  assert.equal(demotedRow.kind, 'catalog');
+  assert.equal(demotedRow.enabled, false, 'an empty catalogue would only add an empty filter chip');
+});
+
+test('a channel nobody can read cannot become the feed', async () => {
+  await db.exec(`INSERT INTO channels (key,username,chat_id,title,kind,enabled,created_at)
+    VALUES ('feed_blind',NULL,NULL,'Без адреси','catalog',true,now())
+    ON CONFLICT (key) DO NOTHING;`);
+  await assert.rejects(() => setMainChannel('feed_blind'), /username/);
+  await assert.rejects(() => setMainChannel('немає-такого'), /немає каналу/);
 });

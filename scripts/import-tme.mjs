@@ -119,7 +119,9 @@ async function targetChannels() {
 
   if (OPT.everything || OPT.deepen || OPT.reparse) {
     return await db.prepare(
-      "SELECT * FROM channels WHERE enabled AND username IS NOT NULL AND kind='catalog' ORDER BY id"
+      // The main channel is a source of posts like any other — the «Канал» tab
+      // is filled by the same sync as the catalogues.
+      "SELECT * FROM channels WHERE enabled AND username IS NOT NULL ORDER BY kind DESC, id"
     ).all();
   }
 

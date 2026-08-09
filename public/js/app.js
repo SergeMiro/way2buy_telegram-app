@@ -1064,6 +1064,9 @@
         '</div>' +
         (c.username
           ? '<div class="row__actions">' +
+              (c.kind === 'main'
+                ? '<span class="pill pill--ok">канал</span>'
+                : '<button class="btn btn--ghost btn--sm" data-make-main="' + esc(c.key) + '">Зробити каналом</button>') +
               '<button class="btn btn--primary btn--sm" data-sync="' + esc(c.key) + '"' +
                 (job && job.running ? ' disabled' : '') + '>' +
                 (job && job.running ? '…' : 'Синхронізувати') + '</button>' +
@@ -1790,6 +1793,23 @@
     if (t.closest('[data-search-clear]')) {
       state.search = '';
       go('catalog');
+      return;
+    }
+
+    var mainBtn = t.closest('[data-make-main]');
+    if (mainBtn) {
+      var mkey = mainBtn.getAttribute('data-make-main');
+      tg.haptic('light');
+      try {
+        var r = await api.admin.setMainChannel(mkey);
+        var fresh = await api.admin.channels();
+        state.admin.channels = fresh.channels || [];
+        state.catalogs = [];          // one chip left the filter row
+        state.feed = [];
+        repaintAdmin();
+        toast('«' + r.channel.title + '» тепер показується у вкладці «Канал»' +
+          (r.demoted.length ? ' (замість «' + r.demoted[0].title + '»)' : ''));
+      } catch (e) { toast(e.message, 'error'); }
       return;
     }
 

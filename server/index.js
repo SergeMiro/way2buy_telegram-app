@@ -640,6 +640,18 @@ app.post('/api/admin/channels', requireAdmin, async (req, res) => {
   }
 });
 
+// Which channel the «Канал» tab shows. A switch rather than a setting, because
+// it is going to be flipped from the test channel to the real one and back, and
+// that must not be a deploy.
+app.post('/api/admin/channels/:key/main', requireAdmin, async (req, res) => {
+  try {
+    const { main, demoted } = await sync.setMainChannel(req.params.key);
+    res.json({ ok: true, channel: await getChannel(main.key), demoted });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+
 app.patch('/api/admin/channels/:key', requireAdmin, async (req, res) => {
   const { enabled, title, emoji, kind } = req.body || {};
   const existing = await getChannel(req.params.key);

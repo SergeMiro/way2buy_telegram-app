@@ -170,6 +170,10 @@
       // channel is thousands of pages and a serverless function has seconds.
       // Adding a catalogue: one @username, no deploy.
       addChannel: function (form) { return request('POST', '/api/admin/channels', form); },
+      // Which channel the «Канал» tab shows. One at a time.
+      setMainChannel: function (key) {
+        return request('POST', '/api/admin/channels/' + encodeURIComponent(key) + '/main', {});
+      },
       syncChannel: function (key, opts) {
         return request('POST', '/api/admin/channels/' + encodeURIComponent(key) + '/sync', opts || {});
       },
