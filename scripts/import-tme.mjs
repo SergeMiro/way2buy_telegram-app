@@ -215,11 +215,21 @@ async function importChannelFully(channel) {
     await sleep(PAGE_DELAY_MS);
   }
 
+  // A channel that was already complete does no rounds, so `last` is null and
+  // there are no totals to report from. Its size still has to be read, or the
+  // summary claims a full catalogue holds nothing — which is what it did.
+  const total = last
+    ? last.total
+    : (await db.prepare("SELECT count(*) c FROM posts WHERE channel=? AND status='published'").get(channel.key)).c;
+
   return {
-    ...(last || { total: 0, range: null }),
+    ...(last || { range: null }),
     ...totals,
+    total,
     oldest: last?.range ? last.range.from : null,
-    stopped: last?.historyDone ? 'історію пройдено до кінця' : `зупинились на ${last?.cursor ?? '—'}`,
+    stopped: last
+      ? (last.historyDone ? 'історію пройдено до кінця' : `зупинились на ${last.cursor ?? '—'}`)
+      : 'вже пройдено раніше',
   };
 }
 
