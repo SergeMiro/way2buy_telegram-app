@@ -13,28 +13,11 @@
   <link rel="stylesheet" href="/css/views.css" />
 </head>
 <body>
-  <!-- Demo profile switcher (hidden inside real Telegram) -->
-  <div id="demobar" class="demobar" hidden>
-    <span class="demobar__dot"></span>
-    <span class="demobar__label">DEMO</span>
-    <select id="demoUser" class="demobar__select" aria-label="Демо-профіль"></select>
-  </div>
-
   <main id="app" class="app"><div class="loader">Завантаження…</div></main>
 
-  <!-- Bottom navigation.
-       One line weight, one 24-grid, and — the part that was actually broken —
-       five glyphs that cannot be mistaken for each other. «Каталоги» and
-       «Примірочна» both used to be a shopping bag, so two adjacent tabs looked
-       identical and the icon carried no information at all.
-         Каталоги    grid of tiles  — the vitrine is a grid; "browse everything"
-         Канал       megaphone      — a channel broadcasts; the handle is what
-                                      separates it from a volume slider
-         Примірочна  clothes hanger — trying things on, not carrying them home
-         Знижки      price tag      — a discount, not a star (stars read as
-                                      "favourite" or "rating" to everyone)
-         Кабінет     sliders        — the panel is knobs and rules; a shield
-                                      read as "security", which it is not -->
+  <!-- Bottom navigation. One line weight, one 24-grid, and five glyphs taken
+       from the shop rather than from an icon set: paper bag, paper plane,
+       hanger, per cent, briefcase. Each is explained where it is drawn. -->
   <nav id="nav" class="nav" hidden>
     <button class="nav__btn" data-tab="catalog">
       <!-- The boutique paper bag. It was the wrong icon while «Примірочна» was
@@ -53,7 +36,7 @@
         <path d="M20.5 3.5 10.4 13.6"/>
         <path d="M20.5 3.5 14.2 20.5l-3.8-6.9-6.9-3.8z"/>
       </svg>
-      <span>Канал</span>
+      <span>Стрічка</span>
     </button>
     <!-- Примірочна: the badge is the only counter a client has to understand -->
     <button class="nav__btn nav__btn--cart" data-tab="cart">

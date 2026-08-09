@@ -45,7 +45,7 @@ h1, h2, h3 {
   margin: 0 auto;
   /* The bottom gap clears the nav bar AND the tall «Відправити Даші» button —
      that button must never sit under the navigation. */
-  padding: calc(var(--w2b-space-4) + var(--w2b-safe-top, 0px)) var(--w2b-space-4)
+  padding: calc(var(--w2b-space-2) + var(--w2b-safe-top, 0px)) var(--w2b-space-4)
            calc(var(--w2b-nav-h) + var(--w2b-space-8) + var(--w2b-space-6) + var(--w2b-safe-bottom));
   min-height: 100dvh;
 }

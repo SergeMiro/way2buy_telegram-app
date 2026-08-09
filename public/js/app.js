@@ -17,8 +17,6 @@
   var $sheet = document.getElementById('sheet');
   var $sheetPanel = document.getElementById('sheetPanel');
   var $toast = document.getElementById('toast');
-  var $demobar = document.getElementById('demobar');
-  var $demoUser = document.getElementById('demoUser');
 
   var state = {
     config: null,
@@ -509,13 +507,27 @@
   //  the only coloured control in the app.
   function searchHtml() {
     var q = state.search || '';
-    return '<div class="search">' +
-      '<svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true">' +
-        '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>' +
-      '<input class="search__input" id="searchInput" type="search" ' +
-        'placeholder="Пошук за назвою або артикулом" value="' + esc(q) + '" ' +
-        'autocomplete="off" enterkeyhint="search" />' +
-      (q ? '<button class="search__clear" type="button" data-search-clear aria-label="Очистити">×</button>' : '') +
+    var applied = activeFilters();
+    return '<div class="searchbar">' +
+      '<div class="search">' +
+        '<svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true">' +
+          '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>' +
+        '<input class="search__input" id="searchInput" type="search" ' +
+          'placeholder="Пошук за назвою або артикулом" value="' + esc(q) + '" ' +
+          'autocomplete="off" enterkeyhint="search" />' +
+        (q ? '<button class="search__clear" type="button" data-search-clear aria-label="Очистити">×</button>' : '') +
+      '</div>' +
+      // The filter button carries its own count, so "am I filtered?" is
+      // answerable without scrolling anywhere.
+      // The count is always in the markup and only toggled, because the search
+      // row is deliberately NOT re-rendered when the vitrine repaints — doing so
+      // would take the focus out of the input mid-word. See paintFilterButton().
+      '<button class="filterbtn' + (applied.length ? ' is-on' : '') + '" type="button" data-open-filters>' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<path d="M3.5 6.5h17M6.5 12h11M10 17.5h4"/></svg>' +
+        '<span class="filterbtn__count"' + (applied.length ? '' : ' hidden') + '>' +
+          applied.length + '</span>' +
+      '</button>' +
     '</div>';
   }
 
@@ -541,29 +553,72 @@
     '</div>';
   }
 
+  // What is applied right now, in one list — the badges and the button count
+  // both read from it, so they cannot disagree.
+  function activeFilters() {
+    var out = [];
+    if (state.filters.brand) out.push({ kind: 'brand', value: state.filters.brand });
+    if (state.filters.category) out.push({ kind: 'category', value: state.filters.category });
+    return out;
+  }
+
+  // Applied filters as removable badges. This is the part that was missing: the
+  // old rows showed what COULD be chosen and left "what is chosen" to be inferred
+  // from which chip looked darker, halfway along a scrolling row.
+  function activeFiltersHtml() {
+    var applied = activeFilters();
+    if (!applied.length) return '';
+    return '<div class="applied">' +
+      applied.map(function (f) {
+        return '<button class="fbadge" type="button" data-drop-filter="' + esc(f.kind) + '">' +
+          esc(f.value) + '<span class="fbadge__x" aria-hidden="true">×</span></button>';
+      }).join('') +
+      (applied.length > 1
+        ? '<button class="applied__clear" type="button" data-drop-filter="all">Скинути все</button>'
+        : '') +
+    '</div>';
+  }
+
   // The content filters. Two rows at most, and each one appears only when it
   // has something to say: a single brand is not a choice, and «Сумки жіночі»
   // has no use for a category filter where every card is a bag. That is what
   // keeps the screen from silting up as catalogues are added.
-  function facetRowHtml(kind, label, values, active) {
-    if (!values || values.length < 2) return '';
-    var chip = function (v) {
-      return '<button class="fchip' + (active === v.value ? ' is-active' : '') +
-        '" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '">' +
-        esc(v.value) + '<span class="fchip__count">' + v.count + '</span></button>';
+  // The choices live in a sheet, not in two permanently open rows. With
+  // eighteen brands those rows were a wall of horizontally scrolling text above
+  // every screen of the vitrine, and the one thing they never showed was what
+  // was actually applied. The sheet holds as many values as the data has, and
+  // the badges under the search say what is on.
+  function filtersSheetHtml() {
+    var f = state.facets || {};
+    var section = function (kind, label, values, active) {
+      if (!values || !values.length) return '';
+      return '<div class="fsheet">' +
+        '<div class="fsheet__label">' + esc(label) + '</div>' +
+        '<div class="fsheet__grid">' +
+          values.map(function (v) {
+            return '<button class="fchip' + (active === v.value ? ' is-active' : '') +
+              '" type="button" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '">' +
+              esc(v.value) + '<span class="fchip__count">' + v.count + '</span></button>';
+          }).join('') +
+        '</div></div>';
     };
-    return '<div class="facets">' +
-      '<span class="facets__label">' + esc(label) + '</span>' +
-      '<button class="fchip' + (active ? '' : ' is-active') +
-        '" data-facet="' + esc(kind) + '" data-value="">Усі</button>' +
-      values.map(chip).join('') +
-    '</div>';
+
+    var body = section('brand', 'Бренд', f.brands, state.filters.brand) +
+      section('category', 'Категорія', f.categories, state.filters.category);
+
+    if (!body) return '<p class="panel__note">Тут поки нема за чим фільтрувати.</p>';
+
+    return body +
+      '<div class="fsheet__actions">' +
+        (activeFilters().length
+          ? '<button class="btn btn--ghost" type="button" data-drop-filter="all">Скинути все</button>'
+          : '') +
+        '<button class="btn btn--primary" type="button" data-close>Готово</button>' +
+      '</div>';
   }
 
-  function facetsHtml() {
-    var f = state.facets || {};
-    return facetRowHtml('brand', 'Бренд', f.brands, state.filters.brand) +
-      facetRowHtml('category', 'Категорія', f.categories, state.filters.category);
+  function openFiltersSheet() {
+    openSheet('Фільтри', filtersSheetHtml());
   }
 
   // Everything that changes when the selection changes lives in one container.
@@ -581,7 +636,7 @@
     // would act on.
     var total = state.facets && state.facets.total ? state.facets.total : state.feed.length;
 
-    var html = facetsHtml() +
+    var html = activeFiltersHtml() +
       '<div class="vitrine-head">' +
         '<span class="vitrine-head__title">' + esc(title) + '</span>' +
         '<span class="vitrine-head__count">' + total + ' ' +
@@ -613,14 +668,34 @@
   function repaintVitrine() {
     var host = document.getElementById('vitrine');
     if (host) host.innerHTML = vitrineBodyHtml();
+    paintFilterButton();
   }
 
-  // ── Канал: the main channel's posts, read like a feed ────────────────────
+  // The one element outside #vitrine that has to follow the selection. Patched
+  // rather than re-rendered, so the search input beside it keeps its focus.
+  function paintFilterButton() {
+    var btn = document.querySelector('[data-open-filters]');
+    if (!btn) return;
+    var n = activeFilters().length;
+    btn.classList.toggle('is-on', n > 0);
+    var count = btn.querySelector('.filterbtn__count');
+    if (count) {
+      count.textContent = n;
+      count.hidden = !n;
+    }
+  }
+
+  // ── Стрічка: one channel, read as a feed ─────────────────────────────────
+  //
+  // Named «Стрічка» and not «Канал» because that is what this is in Ukrainian —
+  // the word Facebook and the Telegram clients both use for a feed, and the app's
+  // own copy already said «вся стрічка каналу». «Канал» also collided with the
+  // cabinet, where «канал» means a source to sync, not a screen.
   function renderFeed() {
     var html = topbarHtml() + '<div class="stack">';
 
     if (!state.feed.length) {
-      html += '<div class="empty">У каналі ще немає публікацій.</div>';
+      html += '<div class="empty">У стрічці ще немає публікацій.</div>';
     } else {
       html += state.feed.map(function (p) {
         var ch = p.channelMeta || {};
@@ -1065,8 +1140,8 @@
         (c.username
           ? '<div class="row__actions">' +
               (c.kind === 'main'
-                ? '<span class="pill pill--ok">канал</span>'
-                : '<button class="btn btn--ghost btn--sm" data-make-main="' + esc(c.key) + '">Зробити каналом</button>') +
+                ? '<span class="pill pill--ok">стрічка</span>'
+                : '<button class="btn btn--ghost btn--sm" data-make-main="' + esc(c.key) + '">Зробити стрічкою</button>') +
               '<button class="btn btn--primary btn--sm" data-sync="' + esc(c.key) + '"' +
                 (job && job.running ? ' disabled' : '') + '>' +
                 (job && job.running ? '…' : 'Синхронізувати') + '</button>' +
@@ -1774,6 +1849,25 @@
       return;
     }
 
+    if (t.closest('[data-open-filters]')) {
+      tg.haptic('light');
+      openFiltersSheet();
+      return;
+    }
+
+    var drop = t.closest('[data-drop-filter]');
+    if (drop) {
+      var which = drop.getAttribute('data-drop-filter');
+      if (which === 'all') state.filters = { brand: null, category: null };
+      else state.filters[which] = null;
+      tg.haptic('light');
+      await refreshVitrine();
+      // The sheet stays open while filters are being changed from inside it.
+      if (!$sheet.hidden) $sheetPanel.querySelector('[data-facet]')
+        ? openSheet('Фільтри', filtersSheetHtml()) : closeSheet();
+      return;
+    }
+
     var facet = t.closest('[data-facet]');
     if (facet) {
       var kind = facet.getAttribute('data-facet');
@@ -1782,6 +1876,9 @@
       state.filters[kind] = state.filters[kind] === value ? null : value;
       tg.haptic('light');
       await refreshVitrine();
+      // Re-render the sheet in place so the choice is visibly taken and a second
+      // filter can be stacked without reopening anything.
+      if (!$sheet.hidden) openSheet('Фільтри', filtersSheetHtml());
       return;
     }
 
@@ -1807,7 +1904,7 @@
         state.catalogs = [];          // one chip left the filter row
         state.feed = [];
         repaintAdmin();
-        toast('«' + r.channel.title + '» тепер показується у вкладці «Канал»' +
+        toast('«' + r.channel.title + '» тепер показується у вкладці «Стрічка»' +
           (r.demoted.length ? ' (замість «' + r.demoted[0].title + '»)' : ''));
       } catch (e) { toast(e.message, 'error'); }
       return;
@@ -2169,23 +2266,6 @@
     }
 
     state.me = await api.me();
-
-    // Demo profile switcher — only outside Telegram, and only while the server
-    // reports open-demo mode.
-    if (tg.isDemo && state.config.demo) {
-      try {
-        var p = await api.demoProfiles();
-        $demoUser.innerHTML = p.profiles.map(function (x) {
-          return '<option value="' + esc(x.tgId) + '"' + (x.tgId === tg.userId ? ' selected' : '') +
-            '>' + esc(x.name) + '</option>';
-        }).join('');
-        $demobar.hidden = false;
-        $demoUser.addEventListener('change', function () {
-          tg.setUserId($demoUser.value);
-          go(state.tab);
-        });
-      } catch (e) { /* switcher is a convenience, not a requirement */ }
-    }
 
     // The admin tab is shown when the server says this caller is an admin.
     if (state.me.admin) {
