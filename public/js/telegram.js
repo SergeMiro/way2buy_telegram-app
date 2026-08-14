@@ -5,11 +5,14 @@
    whether we are inside the Telegram client or in a plain browser (demo).
 
    Identity:
-     • inside Telegram → initDataUnsafe.user.id (in production the server will
-       re-derive this from a validated initData HMAC; the client shape is
-       already correct, so nothing here changes when that lands).
+     • inside Telegram → initDataUnsafe.user.id for what to DISPLAY, and the
+       raw signed `initData` string for what to PROVE. The server re-derives
+       the id from the HMAC on that string and trusts nothing else — see
+       server/auth.js — so `initData` is the credential and `userId` is only
+       a label. Never treat *Unsafe as authority; the name says so.
      • plain browser   → ?tgid=… , else the last picked demo profile
-       (localStorage), else the first seeded customer.
+       (localStorage), else the first seeded customer. Unsigned, so it opens
+       the demo and never the cabinet on a production deployment.
 
    Exposes: window.W2B.tg
 ============================================================================ */
@@ -58,6 +61,10 @@
     // and the server is the authority either way (requireAdmin).
     isDemo: !inTelegram,
     userId: userId,
+    // The signed launch payload, verbatim. api.js sends it on every request and
+    // the server checks its HMAC. Empty outside Telegram — which is exactly why
+    // a plain browser cannot reach the cabinet in production.
+    initData: inTelegram ? wa.initData : '',
 
     name: inTelegram
       ? [wa.initDataUnsafe.user.first_name, wa.initDataUnsafe.user.last_name].filter(Boolean).join(' ')

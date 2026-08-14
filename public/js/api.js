@@ -1,10 +1,13 @@
 /* ============================================================================
    api.js — the JSON client.
 
-   Every request carries the caller's identity the way the server expects it:
-   `tgid` as a query param on GET, in the body on POST. Admin routes additionally
-   need `admin=1` while the app runs in open-demo mode (no ADMIN_TG_IDS set) —
-   the server still decides, this only asks.
+   Every request carries the caller's identity twice: as PROOF in the
+   `X-Telegram-Init-Data` header — Telegram's signed launch payload, which the
+   server verifies by HMAC — and as the legacy `tgid` claim, which the server
+   only falls back to while Mini Apps opened on an older bundle are still
+   running. Admin routes additionally need `admin=1` while the app runs in
+   open-demo mode (no ADMIN_TG_IDS set) — the server still decides, this only
+   asks, and in production it asks in vain without the signature.
 
    Exposes: window.W2B.api
 ============================================================================ */
@@ -41,6 +44,12 @@
   async function request(method, path, body, query) {
     var url = path + (path.indexOf('?') === -1 ? '?' : '&') + qs(query);
     var init = { method: method, headers: {} };
+    // The proof of identity, on every call. A header rather than a parameter:
+    // it rides along on GET and POST alike, and it never lands in an access log
+    // the way `?initData=…` would. The `tgid` beside it stays for now — the
+    // server prefers the signature and only falls back while older bundles are
+    // still open in somebody's Telegram (server/auth.js explains the window).
+    if (tg.initData) init.headers['X-Telegram-Init-Data'] = tg.initData;
     if (body !== undefined) {
       init.headers['content-type'] = 'application/json';
       var payload = Object.assign({ tgid: tg.userId }, body);

@@ -24,6 +24,7 @@ import * as sync from './sync.js';
 import * as scheduler from './scheduler.js';
 import * as polling from './polling.js';
 import { adminAlerts } from './notify.js';
+import { identify } from './auth.js';
 import { asJson } from './sql.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,15 +75,49 @@ const IN_STOCK_KEY = process.env.IN_STOCK_CHANNEL_KEY || 'available';
 const RATE = { USD: 1, EUR: 1.08, UAH: 1 / 41 };
 const toUsd = (amount, currency) => Math.round(amount * (RATE[currency] ?? 1) * 100) / 100;
 
-// ── identity helpers ───────────────────────────────────────────────────────
-// Demo: identity comes from ?tgid= (frontend supplies it). In production this
-// is replaced by Telegram initData HMAC validation — the shape stays the same.
-const tgid = (req) => String(req.query.tgid || req.body?.tgid || '').trim();
+// ── identity ───────────────────────────────────────────────────────────────
+// Identity used to be a query parameter, which meant `?tgid=<an admin's id>`
+// was the whole of the lock on the cabinet. auth.js now checks the HMAC that
+// Telegram puts on every Mini App launch; what that answer GATES is decided
+// here, in one place:
+//
+//   • a signature offered that does not hold → 401, always. That is forgery,
+//     and there is no reading of it where the request should proceed.
+//   • the cabinet → a held signature is REQUIRED. This is the door that was
+//     open to anyone who knew a nine-digit number.
+//   • ordinary client routes → the signature is used when it is there, and the
+//     old parameter still works when it is not. A Mini App already open in
+//     somebody's hand is running the previous bundle and does not send one;
+//     refusing it would log a client out in the middle of an order to fix a
+//     hole that is not in front of them. W2B_REQUIRE_SIGNED=1 closes that
+//     fallback, and the warning below is how we know when it is safe to.
+const REQUIRE_SIGNED = process.env.W2B_REQUIRE_SIGNED === '1';
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  const who = identify(req);
+  req.w2b = who;
+
+  if (who.tampered) return res.status(401).json({ error: 'invalid initData', reason: who.reason });
+  // An identity CLAIMED without a signature. No claim at all (the photo proxy,
+  // an anonymous look at the vitrine) is not this case and stays open.
+  if (!who.verified && who.id) {
+    if (REQUIRE_SIGNED) return res.status(401).json({ error: 'initData required' });
+    console.warn(`[auth] unsigned ${req.method} ${req.path}`);
+  }
+  return next();
+});
+
+const tgid = (req) => (req.w2b ? req.w2b.id : '');
+const signedIn = (req) => Boolean(req.w2b && req.w2b.verified);
 const findCustomer = async (id) => await db.prepare('SELECT * FROM customers WHERE tg_user_id=?').get(id);
 const isAdmin = (req) => {
   const id = tgid(req);
+  // The zero-config demo has no bot token, so there is no signature to check —
+  // and nothing behind the door but seeded data. Production never reaches this
+  // branch: DEMO is false the moment ADMIN_TG_IDS names anybody.
   if (DEMO) return String(req.query.admin || req.body?.admin || '') === '1' || ADMIN_IDS.includes(id);
-  return ADMIN_IDS.includes(id);
+  return signedIn(req) && ADMIN_IDS.includes(id);
 };
 const requireAdmin = (req, res, next) => (isAdmin(req) ? next() : res.status(403).json({ error: 'admin only' }));
 
