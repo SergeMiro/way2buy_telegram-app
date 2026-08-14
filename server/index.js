@@ -10,7 +10,7 @@ import { db, init } from './db.js';
 import { loyaltyFor, snapshotBatch, cashbackRule, TIERS } from './loyalty.js';
 import {
   listChannels, getChannel, channelMap, liveMode, publishPost, ingestChannelPost, fetchPhoto,
-  handleMessage, botInfo, webhookInfo, checkChannelAccess,
+  handleMessage, botInfo, webhookInfo, checkChannelAccess, userProfilePhotoId,
 } from './telegram.js';
 import { mediaUrl } from './media.js';
 import { buildReport, sendReport } from './ai.js';
@@ -352,6 +352,37 @@ app.get('/api/photo/:fileId', async (req, res) => {
     res.send(file.buffer);
   } catch (e) {
     res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// The support person's own Telegram avatar, proxied. The bot token never
+// reaches the browser, and the file id is resolved on each cache miss rather
+// than configured — change the photograph in Telegram and the app follows.
+//
+// 404 when there is nothing to show (no support id, no bot token, or a person
+// the bot cannot see because they have never opened it). The client treats that
+// as "draw initials", which is why this must not be a 500.
+app.get('/api/support/photo', async (req, res) => {
+  const id = process.env.SUPPORT_PHOTO_TG_ID || cart.supportIds()[0] || '';
+  if (!id) return res.status(404).json({ error: 'no support id configured' });
+  try {
+    const fileId = await userProfilePhotoId(id);
+    if (!fileId) return res.status(404).json({ error: 'no profile photo visible to the bot' });
+    const hit = photoCache.get(fileId);
+    const send = (file) => res
+      .set('content-type', file.contentType)
+      // Cached hard at the edge: a face does not change between two taps, and
+      // this is fetched on every confirmation card.
+      .set('cache-control', 'public, max-age=21600')
+      .send(file.buffer);
+    if (hit && Date.now() - hit.at < PHOTO_TTL) return send(hit);
+    const file = await fetchPhoto(fileId);
+    if (!file) return res.status(404).json({ error: 'photos require a bot token' });
+    if (photoCache.size > 200) photoCache.clear();
+    photoCache.set(fileId, { ...file, at: Date.now() });
+    return send(file);
+  } catch (e) {
+    return res.status(502).json({ error: String(e.message || e) });
   }
 });
 

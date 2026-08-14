@@ -2500,6 +2500,21 @@
     }
   });
 
+  // An avatar that fails to load must become initials, not a broken-image icon.
+  // The support photograph is resolved from Telegram at request time and there
+  // are honest reasons it may be missing — see /api/support/photo. Captured,
+  // because `error` on an <img> does not bubble.
+  document.addEventListener('error', function (e) {
+    var img = e.target;
+    if (!img || !img.classList || !img.classList.contains('thanks__photo')) return;
+    var host = img.parentNode;
+    if (!host) return;
+    var s = support();
+    var initials = String(s.name || '?').trim().split(/\s+/).slice(0, 2)
+      .map(function (w) { return w.charAt(0); }).join('').toUpperCase();
+    host.innerHTML = '<span class="thanks__initials">' + esc(initials) + '</span>';
+  }, true);
+
   // Dynamic search: 220 ms after the last keystroke, only the vitrine repaints.
   document.addEventListener('input', function (e) {
     if (e.target.id === 'searchInput') {
@@ -2702,6 +2717,17 @@
     } catch (e) {
       $app.innerHTML = '<div class="empty">Сервер недоступний. Спробуйте пізніше.</div>';
       return;
+    }
+
+    // The zero-config demo picks a seeded customer to browse as — but only when
+    // the SERVER says this is a demo. In production an unsigned browser stays
+    // anonymous: it can look at the vitrine and is invited to join, instead of
+    // claiming an id it cannot prove and being refused.
+    if (!tg.inTelegram && !tg.userId && state.config.demo) {
+      try {
+        var profiles = (await api.demoProfiles()).profiles || [];
+        if (profiles.length) tg.setUserId(profiles[0].tgId || profiles[0].tg_user_id);
+      } catch (e) { /* no demo profiles — stay anonymous */ }
     }
 
     state.me = await api.me();

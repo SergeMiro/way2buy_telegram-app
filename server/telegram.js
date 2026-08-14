@@ -129,6 +129,43 @@ export async function fetchPhoto(fileId) {
   };
 }
 
+// ── a person's own profile photo ───────────────────────────────────────────
+//
+// The face on the confirmation card. Resolved rather than stored: Telegram
+// hands back a file_id for the current avatar, so when Dasha changes her
+// photograph the app follows without anybody editing a setting.
+//
+// It only works for somebody the bot can SEE — a user who has started it, or
+// who shares a chat where the bot may look. For anyone else Telegram answers
+// «user not found», and that is not an error to shout about: the caller falls
+// back to initials. Both answers are cached, the negative one briefly, so a
+// support person who presses Start today appears within the hour instead of at
+// the next deploy.
+const profilePhotoCache = new Map(); // userId → { fileId, at, ttl }
+const PROFILE_OK_TTL = 6 * 3600_000;
+const PROFILE_MISS_TTL = 30 * 60_000;
+
+export async function userProfilePhotoId(userId) {
+  const id = String(userId || '').trim();
+  if (!id || !liveMode()) return null;
+
+  const hit = profilePhotoCache.get(id);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.fileId;
+
+  let fileId = null;
+  try {
+    const r = await tg('getUserProfilePhotos', { user_id: id, limit: 1 });
+    const sizes = r?.photos?.[0];
+    // The last entry is the largest Telegram offers; the avatar is rendered at
+    // 76px but a retina screen asks for more than 76 real pixels.
+    if (Array.isArray(sizes) && sizes.length) fileId = sizes[sizes.length - 1].file_id;
+  } catch {
+    fileId = null;
+  }
+  profilePhotoCache.set(id, { fileId, at: Date.now(), ttl: fileId ? PROFILE_OK_TTL : PROFILE_MISS_TTL });
+  return fileId;
+}
+
 // ── parsing a catalogue post ──────────────────────────────────────────────
 
 // Article numbers as they are actually written in the catalogues.

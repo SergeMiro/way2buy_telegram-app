@@ -56,9 +56,13 @@ export const support = () => ({
   dative: process.env.SUPPORT_NAME_DATIVE || process.env.SUPPORT_NAME || 'Даші',
   username: (process.env.SUPPORT_USERNAME || '').replace(/^@/, ''),
   role: process.env.SUPPORT_ROLE || 'менеджер Way2Buy',
-  // A photograph is the whole point of the confirmation card. Empty is handled:
-  // the client falls back to initials rather than to a broken image.
-  photo: process.env.SUPPORT_PHOTO_URL || '',
+  // A photograph is the whole point of the confirmation card. By default it is
+  // her own Telegram avatar, proxied and re-resolved as it changes, so nobody
+  // has to upload anything or remember to replace it. SUPPORT_PHOTO_URL
+  // overrides that with a fixed image; empty support ids mean no photo at all.
+  // Every one of those endings is handled by the client falling back to
+  // initials rather than to a broken image.
+  photo: process.env.SUPPORT_PHOTO_URL || (supportIds().length ? '/api/support/photo' : ''),
 });
 
 const FX = { USD: 1, EUR: 1.08, UAH: 1 / 41 };
