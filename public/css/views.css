@@ -155,74 +155,87 @@
   font-weight: var(--w2b-fw-semi);
 }
 
-/* ── feed post ───────────────────────────────────────────────────────────── */
-/* Like the rows below, consecutive posts share their rules and read as one
-   column instead of three floating boxes. The thumbnail is 3:4 rather than a
-   square — everything sold here is photographed standing up. */
+/* ── стрічка: a channel post is a photograph and a caption ────────────────────
+   This tab IS the Telegram channel, and it was drawn as a table row: a 46px
+   thumbnail on the left of a headline. The whole reason a client follows the
+   channel is the photograph, so the photograph is the card and the caption sits
+   under it, the way it does in the client the post was written in.            */
 .post {
-  display: flex;
-  gap: var(--w2b-space-3);
-  padding: var(--w2b-space-3);
+  display: block;
+  padding: 0;
   border-radius: var(--w2b-radius-card);
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
   box-shadow: none;
-}
-.stack > .post + .post { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
-.post__thumb {
-  width: 46px;
-  height: 58px;
-  flex: none;
-  border-radius: 0;
-  background: var(--w2b-surface-3);
-  display: grid;
-  place-items: center;
-  font-size: 22px;
   overflow: hidden;
-  box-shadow: none;
 }
-.post__thumb img { width: 100%; height: 100%; object-fit: cover; }
-.post__body { min-width: 0; flex: 1; }
+/* Consecutive posts share their rules and read as one column of paper rather
+   than a stack of floating boxes. */
+.stack > .post + .post { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
+
+/* An album is a scroll-snap strip — a real gallery for six lines of CSS and no
+   script. The aspect sits on the STRIP, not on each picture, so every post in
+   the feed has media of exactly the same height whether it carries one photo
+   or four; with more than one, the next one peeks in and says «swipe». */
+.post__gallery {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  aspect-ratio: 4 / 5;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  background: var(--w2b-surface-3);
+}
+.post__gallery::-webkit-scrollbar { display: none; }
+.post__gallery--multi { grid-auto-columns: 88%; }
+.post__gallery img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  scroll-snap-align: start;
+}
+
+.post__body { min-width: 0; padding: var(--w2b-space-3); }
 .post__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--w2b-space-2);
   font-size: var(--w2b-fs-2xs);
   color: var(--w2b-text-subtle);
   text-transform: uppercase;
   letter-spacing: var(--w2b-ls-caps);
 }
-.post__title {
-  font-weight: var(--w2b-fw-semi);
-  font-size: var(--w2b-fs-base);
-  line-height: var(--w2b-lh-snug);
-  margin-top: var(--w2b-space-1);
-}
-.post__text {
-  color: var(--w2b-text-muted);
+.post__when { flex: none; }
+/* pre-line, because a channel caption is written with its own line breaks and
+   collapsing them turns a three-line announcement into a paragraph. */
+.post__caption {
+  margin-top: var(--w2b-space-2);
   font-size: var(--w2b-fs-sm);
   line-height: var(--w2b-lh-body);
-  margin-top: var(--w2b-space-1);
+  color: var(--w2b-text);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.post__caption a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
 .post__foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--w2b-space-3);
-  margin-top: var(--w2b-space-2);
+  margin-top: var(--w2b-space-3);
 }
-/* The «Хочу» in a post is a secondary action — the vitrine is where things get
-   chosen. At the full button height it claimed a row of its own. */
-.post__foot .btn { padding: 8px var(--w2b-space-3); }
 .post__price {
   font-family: var(--w2b-font-display);
-  font-weight: var(--w2b-fw-bold);
-  font-size: var(--w2b-fs-base);
-  color: var(--w2b-gold-soft);
-}
-.post__src {
-  font-size: var(--w2b-fs-2xs);
-  color: var(--w2b-text-subtle);
+  font-weight: var(--w2b-fw-regular);
+  font-size: var(--w2b-fs-md);
+  color: var(--w2b-text);
 }
 
 /* ── purchase row ────────────────────────────────────────────────────────── */

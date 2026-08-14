@@ -700,6 +700,29 @@
   // the word Facebook and the Telegram clients both use for a feed, and the app's
   // own copy already said «вся стрічка каналу». «Канал» also collided with the
   // cabinet, where «канал» means a source to sync, not a screen.
+  // The photographs of a channel post, as a swipeable strip. No carousel script:
+  // a scroll-snap row does it in CSS, and when there is more than one picture the
+  // next one peeks in at the edge so the swipe is discoverable without a dot row.
+  function postGalleryHtml(p) {
+    var urls = (p.photoUrls || []).filter(Boolean);
+    if (!urls.length) return '';
+    return '<div class="post__gallery' + (urls.length > 1 ? ' post__gallery--multi' : '') + '">' +
+      urls.map(function (u, i) {
+        return '<img src="' + esc(u) + '" alt="" loading="' + (i ? 'lazy' : 'eager') + '" />';
+      }).join('') +
+    '</div>';
+  }
+
+  // Nearly every caption ends «Для замовлення пишіть @daschamelnyk» — that is
+  // the point of the channel, so it should be one tap rather than something to
+  // copy out by hand. esc() runs FIRST and the pattern only matches characters
+  // it cannot have introduced, so nothing here can reopen an injection.
+  function linkifyMentions(text) {
+    return esc(text).replace(/@([A-Za-z0-9_]{4,32})/g, function (_m, name) {
+      return '<a href="https://t.me/' + name + '" target="_blank" rel="noopener">@' + name + '</a>';
+    });
+  }
+
   function renderFeed() {
     var html = topbarHtml() + '<div class="stack">';
 
@@ -709,16 +732,22 @@
       html += state.feed.map(function (p) {
         var ch = p.channelMeta || {};
         var inCart = Boolean(p.inCart);
+        // The caption, not the title. A title is a catalogue idea — it is
+        // DERIVED from the post's own first sentence, so printing both put the
+        // same words on the screen twice, in two weights. In a feed the caption
+        // is the post; the title is only a fallback for a photo posted bare.
+        var caption = p.body || p.title || '';
         return '<article class="post">' +
-          '<div class="post__thumb">' + postMediaHtml(p) + '</div>' +
+          postGalleryHtml(p) +
           '<div class="post__body">' +
-            '<div class="post__head">' + esc((ch.emoji || '') + ' ' + (ch.title || p.channel)) +
-              ' · ' + esc(timeAgo(p.created_at)) + '</div>' +
-            '<div class="post__title">' + esc(p.title) + '</div>' +
-            (p.body ? '<p class="post__text">' + esc(p.body) + '</p>' : '') +
+            '<div class="post__head">' +
+              '<span>' + esc(ch.title || p.channel) + '</span>' +
+              '<span class="post__when">' + esc(timeAgo(p.created_at)) + '</span>' +
+            '</div>' +
+            (caption ? '<div class="post__caption">' + linkifyMentions(caption) + '</div>' : '') +
             '<div class="post__foot">' +
-              '<span class="post__price">' + esc(money(p.price, p.currency)) + '</span>' +
-              '<button class="btn ' + (inCart ? 'btn--ghost is-in' : 'btn--primary') +
+              (p.price ? '<span class="post__price">' + esc(money(p.price, p.currency)) + '</span>' : '<span></span>') +
+              '<button class="btn btn--ghost btn--sm' + (inCart ? ' is-in' : '') +
                 '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
                 (inCart ? 'У примірочній ✓' : 'Хочу') + '</button>' +
             '</div>' +
