@@ -44,9 +44,11 @@ h1, h2, h3 {
   max-width: var(--w2b-maxw);
   margin: 0 auto;
   /* The bottom gap clears the nav bar AND the tall «Відправити Даші» button —
-     that button must never sit under the navigation. */
+     that button must never sit under the navigation. One nav height plus a
+     margin is enough for that; the old value added two more spacing steps on
+     top and left a dead band of empty paper under every screen. */
   padding: calc(var(--w2b-space-2) + var(--w2b-safe-top, 0px)) var(--w2b-space-4)
-           calc(var(--w2b-nav-h) + var(--w2b-space-8) + var(--w2b-space-6) + var(--w2b-safe-bottom));
+           calc(var(--w2b-nav-h) + var(--w2b-space-6) + var(--w2b-safe-bottom));
   min-height: 100dvh;
 }
 
@@ -136,7 +138,7 @@ h1, h2, h3 {
   padding: var(--w2b-space-2) var(--w2b-space-3);
   background: var(--w2b-surface-2);
   border: 1px solid var(--w2b-line);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   font-size: var(--w2b-fs-xs);
 }
 .demobar__dot {
@@ -156,7 +158,7 @@ h1, h2, h3 {
   color: var(--w2b-text);
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
 }
 
 /* ---- Sheet / modal host -------------------------------------------------- */
@@ -194,7 +196,7 @@ h1, h2, h3 {
   display: block;
   width: 40px; height: 4px;
   margin: 0 auto var(--w2b-space-4);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-line-strong);
 }
 @keyframes w2b-fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -215,7 +217,7 @@ h1, h2, h3 {
   background: var(--w2b-surface-3);
   color: var(--w2b-text);
   border: 1px solid var(--w2b-line-strong);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   box-shadow: var(--w2b-shadow-3);
   font-size: var(--w2b-fs-sm);
   text-align: center;
@@ -236,7 +238,7 @@ h1, h2, h3 {
   justify-content: center;
   gap: var(--w2b-space-2);
   padding: var(--w2b-space-3) var(--w2b-space-5);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   font-weight: var(--w2b-fw-semi);
   font-size: var(--w2b-fs-sm);
   transition: transform var(--w2b-dur-fast) var(--w2b-ease-out),
@@ -307,9 +309,9 @@ h1, h2, h3 {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--w2b-space-2);
-  padding: var(--w2b-space-5);
-  padding-top: var(--w2b-space-6);
+  gap: 6px;
+  padding: var(--w2b-space-4);
+  padding-top: var(--w2b-space-5);
   border-radius: var(--w2b-radius-card);
   border: 1px solid var(--w2b-line);
   color: var(--w2b-text);            /* body text is ALWAYS light-on-dark → AA safe */
@@ -412,7 +414,7 @@ h1, h2, h3 {
 .card__copy {
   margin-left: auto;
   padding: 6px var(--w2b-space-3);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-gold-fill);
   color: var(--w2b-on-primary);
   font-size: var(--w2b-fs-xs);
@@ -525,7 +527,7 @@ h1, h2, h3 {
   position: absolute;
   top: 0;
   width: 7px; height: 10px;
-  border-radius: 2px;
+  border-radius: 0;
   opacity: 0;
   will-change: transform, opacity;
 }
@@ -565,62 +567,43 @@ h1, h2, h3 {
 }
 
 /* ==========================================================================
-   LOYALTY — progress ring + tier badges + milestone chips
+   LOYALTY — a progress rule, tier badges, milestone chips
    Markup:
-     <div class="loyalty-ring" style="--w2b-ring-pct: 64%">
-       <div class="loyalty-ring__hole">
-         <span class="loyalty-ring__value">64%</span>
-         <span class="loyalty-ring__caption">до Gold</span>
-       </div>
+     <div class="meter" style="--w2b-meter-pct: 64%">
+       <div class="meter__track"><span class="meter__fill"></span></div>
+       <div class="meter__legend"><span>64%</span><span>з $300</span></div>
      </div>
+
+   This was a 132px ring, and it was the largest object on the «Знижки» screen
+   for the sake of one number. A 3px rule states the same progress, reads at a
+   glance, and gives sixty vertical pixels back to the merchandise — which is
+   the only thing on that screen anybody scrolls for.
 ========================================================================== */
-.loyalty-ring {
-  --w2b-ring-size: 132px;
-  --_pct: var(--w2b-ring-pct, 0%);
+.meter { --_pct: var(--w2b-meter-pct, 0%); }
+.meter__track {
   position: relative;
-  width: var(--w2b-ring-size);
-  height: var(--w2b-ring-size);
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background:
-    conic-gradient(var(--w2b-gold) var(--_pct),
-                   rgba(255, 255, 255, 0.08) 0);
-  transition: --w2b-ring-pct var(--w2b-dur-slow) var(--w2b-ease-out);
-  box-shadow: var(--w2b-glow-gold);
+  height: 3px;
+  background: var(--w2b-line);
+  overflow: hidden;
 }
-.loyalty-ring::after { /* subtle facet highlight */
-  content: "";
+.meter__fill {
   position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(from -90deg,
-    rgba(255,255,255,0.25), transparent 30%);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 0);
-          mask: radial-gradient(farthest-side, transparent calc(100% - 10px), #000 0);
-  opacity: 0.4;
-  pointer-events: none;
+  inset: 0 auto 0 0;
+  width: var(--_pct);
+  background: var(--w2b-primary);
+  transition: width var(--w2b-dur-slow) var(--w2b-ease-out);
 }
-.loyalty-ring__hole {
-  width: calc(var(--w2b-ring-size) - 22px);
-  height: calc(var(--w2b-ring-size) - 22px);
-  border-radius: 50%;
-  background: var(--w2b-surface-1);
-  display: grid;
-  place-items: center;
-  text-align: center;
-  z-index: 1;
-}
-.loyalty-ring__value {
-  font-family: var(--w2b-font-display);
-  font-size: var(--w2b-fs-xl);
-  font-weight: var(--w2b-fw-black);
-  line-height: 1;
-}
-.loyalty-ring__caption {
+.meter__legend {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w2b-space-2);
+  margin-top: 6px;
   font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
   color: var(--w2b-text-subtle);
-  letter-spacing: var(--w2b-ls-wide);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Tier badge chips — dark ink on metallic fill (all pairs AA). */
@@ -629,7 +612,7 @@ h1, h2, h3 {
   align-items: center;
   gap: 5px;
   padding: 4px 11px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   font-size: var(--w2b-fs-xs);
   font-weight: var(--w2b-fw-bold);
   letter-spacing: 0.02em;
@@ -652,7 +635,7 @@ h1, h2, h3 {
   align-items: center;
   gap: 6px;
   padding: 6px var(--w2b-space-3);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
   font-size: var(--w2b-fs-xs);
@@ -708,7 +691,7 @@ h1, h2, h3 {
 .notif__icon {
   flex: 0 0 auto;
   width: 34px; height: 34px;
-  border-radius: 50%;
+  border-radius: 0;
   display: grid;
   place-items: center;
   background: var(--w2b-surface-3);
@@ -873,7 +856,7 @@ h1, h2, h3 {
 .chat__field {
   flex: 1 1 auto;
   padding: var(--w2b-space-3) var(--w2b-space-4);
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-surface-2);
   border: 1px solid var(--w2b-line-strong);
   color: var(--w2b-text);
@@ -884,7 +867,7 @@ h1, h2, h3 {
 .chat__send {
   flex: 0 0 auto;
   width: 44px; height: 44px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--w2b-gold-fill);
   color: var(--w2b-ink);
   font-size: var(--w2b-fs-lg);
@@ -897,12 +880,12 @@ h1, h2, h3 {
 /* ==========================================================================
    Shared utilities
 ========================================================================== */
-.stack   { display: flex; flex-direction: column; gap: var(--w2b-space-4); }
+.stack   { display: flex; flex-direction: column; gap: var(--w2b-space-3); }
 .section-title {
   font-family: var(--w2b-font-display);
   font-size: var(--w2b-fs-lg);
   font-weight: var(--w2b-fw-bold);
-  margin: var(--w2b-space-6) 0 var(--w2b-space-3);
+  margin: var(--w2b-space-5) 0 var(--w2b-space-2);
 }
 .eyebrow {
   font-size: var(--w2b-fs-2xs);

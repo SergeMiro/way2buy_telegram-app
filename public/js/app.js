@@ -231,16 +231,15 @@
 
   /* ── loyalty widgets ────────────────────────────────────────────────────── */
 
-  // The ring fills with the bonus balance against its ceiling ($300), which is
-  // the only progress the client has now that tiers are hidden.
-  function ringHtml(l) {
+  // The bonus balance against its ceiling ($300) — the only progress the client
+  // has now that tiers are hidden. A rule rather than a ring: same number, three
+  // pixels tall instead of a hundred and thirty. See .meter in app.css.
+  function meterHtml(l) {
     var pct = l.progressPct || 0;
     var caption = l.capUsd ? 'з ' + usd(l.capUsd) : 'бонуси';
-    return '<div class="loyalty-ring" style="--w2b-ring-pct: ' + pct + '%">' +
-      '<div class="loyalty-ring__hole">' +
-        '<span class="loyalty-ring__value">' + pct + '%</span>' +
-        '<span class="loyalty-ring__caption">' + esc(caption) + '</span>' +
-      '</div>' +
+    return '<div class="meter" style="--w2b-meter-pct: ' + pct + '%">' +
+      '<div class="meter__track"><span class="meter__fill"></span></div>' +
+      '<div class="meter__legend"><span>' + pct + '%</span><span>' + esc(caption) + '</span></div>' +
     '</div>';
   }
 
@@ -386,10 +385,14 @@
     var ruleText = 'Правило: покупка від ' + usd(l.minOrderUsd) + ' → ' +
       discountLabel(l.mode, l.value) + ' бонусу' +
       (l.capUsd ? ', накопичення максимум ' + usd(l.capUsd) : '');
-    html += '<section class="wallet">' + ringHtml(l) +
+    // Label, sum, progress, rule — in that order, down the panel. The ring used
+    // to sit to the left of all of it and squeeze the rule into a four-line
+    // column; the sum is the thing being read here, so it gets the full width.
+    html += '<section class="wallet">' +
       '<div class="wallet__body">' +
+        '<div class="eyebrow">бонусів доступно до списання</div>' +
         '<div class="wallet__amount">' + usd(l.cashbackAvailable) + '</div>' +
-        '<div class="wallet__caption">бонусів доступно до списання</div>' +
+        meterHtml(l) +
         '<div class="wallet__hint">' + esc(ruleText) +
           (l.capReached ? ' · ліміт досягнуто — використайте бонуси, щоб нараховувати далі' : '') + '</div>' +
         (l.cashbackAvailable > 0
@@ -492,8 +495,14 @@
       '</div>' +
       '<div class="tile__body">' +
         '<div class="tile__title">' + esc(p.title || 'Позиція') + '</div>' +
-        (p.article ? '<div class="tile__art">' + esc(p.article) + '</div>' : '') +
-        (p.price ? '<div class="tile__price">' + esc(money(p.price, p.currency)) + '</div>' : '') +
+        // Price and article code on one baseline — they were two stacked lines
+        // saying two words each, and a phone pays for that twice per row.
+        (p.price || p.article
+          ? '<div class="tile__meta">' +
+              (p.price ? '<span class="tile__price">' + esc(money(p.price, p.currency)) + '</span>' : '') +
+              (p.article ? '<span class="tile__art">' + esc(p.article) + '</span>' : '') +
+            '</div>'
+          : '') +
         '<button class="tile__btn' + (inCart ? ' is-in' : '') +
           '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
           (inCart ? 'У примірочній' : 'Хочу') + '</button>' +
@@ -810,9 +819,10 @@
 
     html += '<div class="section-title">Покупки</div>';
     html += p.purchases.length
+      // No icon: every Ukrainian order carried the same flag, so a column of ten
+      // identical emoji said nothing and cost thirty pixels of width per line.
       ? p.purchases.map(function (x) {
           return '<div class="row">' +
-            '<div class="row__icon">' + (x.source_channel === 'luxury' ? '💎' : '🇺🇦') + '</div>' +
             '<div class="row__body">' +
               '<div class="row__title">' + esc(x.title || 'Покупка') + '</div>' +
               '<div class="row__sub">' + esc(dateShort(x.created_at)) +

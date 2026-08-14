@@ -16,7 +16,7 @@
   width: 46px;
   height: 46px;
   flex: none;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-gold-fill);
   color: var(--w2b-ink);
   display: grid;
@@ -48,7 +48,7 @@
   position: relative;
   width: 40px;
   height: 40px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   border: 1px solid var(--w2b-line);
   background: var(--w2b-surface-1);
   color: var(--w2b-text);
@@ -60,30 +60,29 @@
 .bell:active { transform: scale(0.94); }
 .bell .notif-badge { position: absolute; top: -4px; right: -4px; }
 
-/* ── cashback panel ──────────────────────────────────────────────────────── */
+/* ── cashback panel ───────────────────────────────────────────────────────
+   Read top to bottom rather than left to right: what it is, how much, how far
+   along. The ring that used to sit on the left took a third of the panel's
+   width and pushed the rule text into a four-line column beside it. */
 .wallet {
-  display: flex;
-  align-items: center;
-  gap: var(--w2b-space-5);
-  padding: var(--w2b-space-5);
+  display: block;
+  padding: var(--w2b-space-3);
   border-radius: var(--w2b-radius-card);
   background: var(--w2b-surface-1);
-  box-shadow: var(--w2b-inset-hairline), var(--w2b-shadow-2);
+  border: 1px solid var(--w2b-line);
+  box-shadow: none;
 }
-.wallet__body { min-width: 0; flex: 1; }
+.wallet__body { min-width: 0; }
 .wallet__amount {
   font-family: var(--w2b-font-display);
-  font-weight: var(--w2b-fw-black);
+  font-weight: var(--w2b-fw-regular);
   font-size: var(--w2b-fs-2xl);
-  line-height: var(--w2b-lh-tight);
+  line-height: 1;
   letter-spacing: var(--w2b-ls-tight);
-  color: var(--w2b-gold-soft);
+  color: var(--w2b-text);
+  margin-top: 3px;
 }
-.wallet__caption {
-  color: var(--w2b-text-muted);
-  font-size: var(--w2b-fs-sm);
-  margin-top: var(--w2b-space-1);
-}
+.wallet .meter { margin-top: var(--w2b-space-3); }
 .wallet__hint {
   color: var(--w2b-text-subtle);
   font-size: var(--w2b-fs-xs);
@@ -126,7 +125,7 @@
   align-items: center;
   gap: var(--w2b-space-1);
   padding: 6px 10px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-surface-1);
   box-shadow: var(--w2b-inset-hairline);
   font-size: var(--w2b-fs-xs);
@@ -139,7 +138,7 @@
 .chip {
   flex: none;
   padding: 8px 14px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   border: 1px solid var(--w2b-line);
   background: var(--w2b-surface-1);
   color: var(--w2b-text-muted);
@@ -157,25 +156,32 @@
 }
 
 /* ── feed post ───────────────────────────────────────────────────────────── */
+/* Like the rows below, consecutive posts share their rules and read as one
+   column instead of three floating boxes. The thumbnail is 3:4 rather than a
+   square — everything sold here is photographed standing up. */
 .post {
   display: flex;
   gap: var(--w2b-space-3);
-  padding: var(--w2b-space-4);
+  padding: var(--w2b-space-3);
   border-radius: var(--w2b-radius-card);
   background: var(--w2b-surface-1);
-  box-shadow: var(--w2b-inset-hairline), var(--w2b-shadow-1);
+  border: 1px solid var(--w2b-line);
+  box-shadow: none;
 }
+.stack > .post + .post { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
 .post__thumb {
-  width: 54px;
-  height: 54px;
+  width: 46px;
+  height: 58px;
   flex: none;
-  border-radius: var(--w2b-radius-md);
-  background: var(--w2b-generic-base);
+  border-radius: 0;
+  background: var(--w2b-surface-3);
   display: grid;
   place-items: center;
-  font-size: 26px;
-  box-shadow: var(--w2b-inset-hairline);
+  font-size: 22px;
+  overflow: hidden;
+  box-shadow: none;
 }
+.post__thumb img { width: 100%; height: 100%; object-fit: cover; }
 .post__body { min-width: 0; flex: 1; }
 .post__head {
   display: flex;
@@ -203,8 +209,11 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--w2b-space-3);
-  margin-top: var(--w2b-space-3);
+  margin-top: var(--w2b-space-2);
 }
+/* The «Хочу» in a post is a secondary action — the vitrine is where things get
+   chosen. At the full button height it claimed a row of its own. */
+.post__foot .btn { padding: 8px var(--w2b-space-3); }
 .post__price {
   font-family: var(--w2b-font-display);
   font-weight: var(--w2b-fw-bold);
@@ -363,12 +372,12 @@
 }
 .panel__note { color: var(--w2b-text-subtle); font-size: var(--w2b-fs-xs); line-height: var(--w2b-lh-body); }
 
-.seg { display: flex; gap: var(--w2b-space-1); padding: 4px; border-radius: var(--w2b-radius-pill); background: var(--w2b-surface-2); }
+.seg { display: flex; gap: var(--w2b-space-1); padding: 4px; border-radius: 0; background: var(--w2b-surface-2); }
 .seg__btn {
   flex: 1;
   padding: 8px 10px;
   border: 0;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: transparent;
   color: var(--w2b-text-muted);
   font-size: var(--w2b-fs-xs);
@@ -391,7 +400,7 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-surface-2);
   color: var(--w2b-text-muted);
   font-size: var(--w2b-fs-2xs);
@@ -418,12 +427,29 @@
 ============================================================================= */
 
 /* ── type: display headings become serif, controls become wide caps ───────── */
+/* A section heading is structure, not a headline. Set as a 24px serif with 32px
+   of air above it, five of them cost ~370px on the «Знижки» tab — more than a
+   third of the phone — to say «Промокоди» and «Покупки». It is now the rule a
+   magazine uses to break a column: a small wide-tracked label and a hairline
+   running to the margin. The display face is kept for the two things that are
+   actually being sold — the name of the vitrine and the sum of money. */
 .section-title {
-  font-family: var(--w2b-font-display);
-  font-weight: var(--w2b-fw-regular);
-  font-size: var(--w2b-fs-xl);
-  letter-spacing: 0.01em;
-  margin: var(--w2b-space-8) 0 var(--w2b-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-3);
+  font-family: var(--w2b-font-body);
+  font-weight: var(--w2b-fw-medium);
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  color: var(--w2b-text-subtle);
+  margin: var(--w2b-space-3) 0 0;
+}
+.section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--w2b-line);
 }
 .sheet__title {
   font-weight: var(--w2b-fw-regular);
@@ -445,7 +471,7 @@
   letter-spacing: var(--w2b-ls-caps);
   font-weight: var(--w2b-fw-regular);
   font-size: var(--w2b-fs-xs);
-  padding: 14px var(--w2b-space-5);
+  padding: 11px var(--w2b-space-4);
 }
 .btn--primary {
   background: var(--w2b-primary);
@@ -494,10 +520,10 @@
 /* ── filter row: text labels, an underline for the active one ─────────────── */
 .chips {
   display: flex;
-  gap: var(--w2b-space-5);
+  gap: var(--w2b-space-4);
   overflow-x: auto;
   scrollbar-width: none;
-  padding: var(--w2b-space-1) 0 var(--w2b-space-2);
+  padding: 0 0 var(--w2b-space-2);
   border-bottom: 1px solid var(--w2b-line);
 }
 .chips::-webkit-scrollbar { display: none; }
@@ -547,8 +573,20 @@
 
 /* ── a channel row in the admin office, with its sync controls ─────────────── */
 .row--sync { align-items: flex-start; flex-wrap: wrap; }
-.row--sync .row__body { min-width: 55%; }
-.row__actions { display: flex; gap: var(--w2b-space-2); flex: none; margin-left: auto; }
+.row--sync .row__body { min-width: 0; }
+/* Three buttons and a channel name do not fit across 390px, and a flex row that
+   cannot wrap simply pushes «Уся історія» off the edge of a page that hides its
+   overflow — an admin control that exists but cannot be pressed. They take a
+   line of their own and wrap within it. */
+.row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w2b-space-2);
+  flex: 1 0 100%;
+  margin-top: var(--w2b-space-2);
+}
+/* A button inside a row must not be what sets the row's height. */
+.row > .btn:not(.btn--sm) { padding: 8px var(--w2b-space-3); }
 .btn--sm { padding: 6px 10px; font-size: var(--w2b-fs-2xs); }
 /* The running commentary of a sync: how many rounds have landed so far. It sits
    under the channel's own line because a deep backfill is many requests and a
@@ -683,7 +721,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--w2b-space-3);
-  margin-top: var(--w2b-space-5);
+  margin-top: var(--w2b-space-2);
 }
 .vitrine-head__title {
   font-family: var(--w2b-font-display);
@@ -697,10 +735,14 @@
   color: var(--w2b-text-subtle);
 }
 
+/* The photograph keeps its 3:4 — it is the merchandise and nothing is taken
+   from it. Everything around it gives ground: the gutters, the caption block
+   and the button below each tile were together taller than a third of the
+   picture they belonged to. */
 .tiles {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--w2b-space-5) var(--w2b-space-3);
+  gap: var(--w2b-space-4) var(--w2b-space-2);
 }
 .tile { display: flex; flex-direction: column; background: none; }
 .tile__media {
@@ -709,7 +751,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 46px;
+  font-size: 32px;
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
   overflow: hidden;
@@ -718,42 +760,55 @@
 .tile__chan {
   position: absolute;
   top: 0; left: 0;
-  padding: 5px 9px;
+  padding: 4px 7px;
   background: rgba(255, 255, 255, 0.92);
   color: var(--w2b-text-muted);
   text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: 9px;
+  letter-spacing: 0.14em;
+  font-size: 8px;
 }
 .tile--stock .tile__chan { background: var(--w2b-accent); color: #fff; }
-.tile__body { padding: var(--w2b-space-3) 0 0; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.tile__body { padding: var(--w2b-space-2) 0 0; display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .tile__title {
   font-family: var(--w2b-font-display);
   font-size: var(--w2b-fs-md);
   font-weight: var(--w2b-fw-regular);
-  line-height: 1.2;
+  line-height: 1.15;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Price and article code shared no information and each took a line of its
+   own. On one baseline they read as a single caption: what it is, what it
+   costs. */
+.tile__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w2b-space-2);
+  margin-top: 1px;
+}
 .tile__art {
   text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-size: 9px;
   color: var(--w2b-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.tile__price { font-family: var(--w2b-font-display); font-size: var(--w2b-fs-base); }
+.tile__price { font-family: var(--w2b-font-display); font-size: var(--w2b-fs-base); white-space: nowrap; }
 .tile__btn {
-  margin-top: var(--w2b-space-3);
+  margin-top: var(--w2b-space-2);
   width: 100%;
-  padding: 11px 8px;
+  padding: 8px;
   border: 1px solid var(--w2b-text);
   background: none;
   color: var(--w2b-text);
   text-transform: uppercase;
   letter-spacing: var(--w2b-ls-caps);
-  font-size: 10px;
+  font-size: 9px;
 }
 .tile__btn:hover { background: var(--w2b-text); color: var(--w2b-on-primary); }
 .tile__btn.is-in {
@@ -780,7 +835,7 @@
   text-align: center;
 }
 .fit-row__thumb {
-  width: 62px; height: 78px;
+  width: 50px; height: 63px;
   flex: none;
   background: var(--w2b-surface-3);
   display: flex; align-items: center; justify-content: center;
@@ -791,22 +846,22 @@
 .coupon {
   display: flex;
   align-items: center;
-  gap: var(--w2b-space-4);
-  padding: var(--w2b-space-4);
+  gap: var(--w2b-space-3);
+  padding: var(--w2b-space-3);
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-text);
 }
 .coupon__badge {
   font-family: var(--w2b-font-display);
-  font-size: var(--w2b-fs-2xl);
+  font-size: var(--w2b-fs-xl);
   font-weight: var(--w2b-fw-regular);
   line-height: 1;
 }
-.btn--send { width: 100%; padding: 18px; font-size: var(--w2b-fs-xs); }
+.btn--send { width: 100%; padding: 14px; font-size: var(--w2b-fs-xs); }
 
 /* ── empty state: a line of prose, centred, no box ────────────────────────── */
 .empty {
-  padding: var(--w2b-space-10) var(--w2b-space-5);
+  padding: var(--w2b-space-8) var(--w2b-space-4);
   text-align: center;
   color: var(--w2b-text-subtle);
   font-family: var(--w2b-font-display);
@@ -816,47 +871,54 @@
 }
 
 /* ── wordmark + header ────────────────────────────────────────────────────── */
+/* The two header rows are furniture: they repeat identically on all five tabs
+   and carry no merchandise. Together they used to cost ~105px of a 844px
+   phone — an eighth of every screen, every time. Everything here is sized to
+   the smallest that still reads: the mark at 11px, the tagline at 10px, the
+   avatar at 34px. Nothing was removed; it is simply no longer shouting. */
 .wordmark {
   text-align: center;
-  /* Tightened deliberately: on a 390×844 phone the header used to eat a fifth
-     of the first screen before a single photograph appeared. */
-  padding: 0 0 var(--w2b-space-3);
+  padding: 0 0 var(--w2b-space-2);
   border-bottom: 1px solid var(--w2b-line);
-  margin-bottom: var(--w2b-space-3);
+  margin-bottom: var(--w2b-space-2);
 }
 .wordmark__name {
   font-family: var(--w2b-font-body);
   font-weight: var(--w2b-fw-regular);
   text-transform: uppercase;
   letter-spacing: 0.42em;
-  font-size: var(--w2b-fs-sm);
+  font-size: 11px;
   text-indent: 0.42em; /* optical centring against the trailing letterspace */
 }
 .wordmark__sub {
-  margin-top: 4px;
+  margin-top: 2px;
   font-family: var(--w2b-font-display);
   font-style: italic;
-  font-size: var(--w2b-fs-xs);
+  font-size: var(--w2b-fs-2xs);
+  line-height: 1.2;
   color: var(--w2b-text-subtle);
 }
-.topbar { padding: 0 0 var(--w2b-space-3); }
+.wordmark__row { gap: 8px; }
+.brush { width: 24px; height: 16px; }
+
+.topbar { padding: 0 0 var(--w2b-space-2); gap: var(--w2b-space-2); }
 .topbar__avatar {
   border-radius: 0;
-  width: 42px; height: 42px;
+  width: 34px; height: 34px;
   background: var(--w2b-primary);
   color: var(--w2b-on-primary);
   font-weight: var(--w2b-fw-regular);
-  font-size: var(--w2b-fs-sm);
+  font-size: var(--w2b-fs-xs);
   letter-spacing: 0.04em;
   box-shadow: none;
 }
-.topbar__name { font-size: var(--w2b-fs-lg); letter-spacing: 0.01em; }
-.topbar__sub { color: var(--w2b-text-subtle); }
+.topbar__name { font-size: var(--w2b-fs-md); letter-spacing: 0.01em; line-height: 1.2; }
+.topbar__sub { color: var(--w2b-text-subtle); margin-top: 1px; }
 
 /* The bell is a drawn glyph, not an emoji: a coloured emoji is the one thing
    that breaks a monochrome storefront. */
 .bell {
-  width: 38px; height: 38px;
+  width: 32px; height: 32px;
   border: 1px solid var(--w2b-line);
   border-radius: 0;
   background: none;
@@ -864,7 +926,7 @@
   place-items: center;
   position: relative;
 }
-.bell svg { width: 17px; height: 17px; fill: none; stroke: var(--w2b-text); stroke-width: 1.4; }
+.bell svg { width: 16px; height: 16px; fill: none; stroke: var(--w2b-text); stroke-width: 1.4; }
 .notif-badge {
   position: absolute;
   top: -6px; right: -6px;
@@ -884,13 +946,13 @@
   border-top: 1px solid var(--w2b-line-strong);
 }
 .nav__btn {
-  gap: 5px;
+  gap: 4px;
   font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: var(--w2b-text-subtle);
 }
-.nav__btn svg { width: 20px; height: 20px; stroke-width: 1.2; }
+.nav__btn svg { width: 19px; height: 19px; stroke-width: 1.2; }
 .nav__btn.is-active { color: var(--w2b-text); }
 .nav__btn.is-active svg { stroke-width: 1.6; }
 .nav__btn.is-active::after {
@@ -905,7 +967,7 @@
 
 /* Emoji placeholders stay until the real channel photos arrive — desaturated
    so a demo screen still reads as one palette. Real photos are untouched. */
-.ph { filter: grayscale(1); opacity: 0.5; }
+.ph { filter: grayscale(1); opacity: 0.32; }
 
 .demobar { background: var(--w2b-surface-1); border-bottom: 1px solid var(--w2b-line); }
 .demobar__label { letter-spacing: var(--w2b-ls-caps); }
@@ -917,29 +979,79 @@
   border: 1px solid var(--w2b-line);
   border-radius: 0;
   box-shadow: none;
+  padding: var(--w2b-space-3);
 }
-.panel__title { font-family: var(--w2b-font-display); font-weight: var(--w2b-fw-regular); font-size: var(--w2b-fs-lg); }
+.panel__title { font-family: var(--w2b-font-display); font-weight: var(--w2b-fw-regular); font-size: var(--w2b-fs-md); }
+.panel__head { margin-bottom: var(--w2b-space-2); }
+
+/* A row is a line in a list, not a card. Ten purchases used to be ten separate
+   boxes with sixteen pixels of paper between them; that is a filing cabinet,
+   not a statement. They now share their rules — the stack gap and one of the
+   two borders are pulled back — so consecutive rows read as one continuous
+   list and a screen holds fourteen of them instead of nine. The list breaks by
+   itself wherever a section heading interrupts the run. */
 .row {
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
   border-radius: 0;
   box-shadow: none;
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  gap: var(--w2b-space-3);
 }
+.stack > .row + .row { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
 .row__title { font-weight: var(--w2b-fw-regular); }
-.row__icon { border-radius: 0; background: var(--w2b-surface-3); }
-.stat { background: var(--w2b-surface-1); border: 1px solid var(--w2b-line); border-radius: 0; box-shadow: none; }
+.row__sub { line-height: 1.35; }
+.row__icon {
+  border-radius: 0;
+  background: none;
+  border: 1px solid var(--w2b-line);
+  width: 30px; height: 30px;
+  font-size: 15px;
+}
+/* Money lines up when the figures do, and a column of prices that jitters by a
+   digit is the fastest way to make a list look homemade. */
+.row__amount, .stat__value, .wallet__amount, .tile__price, .post__price {
+  font-variant-numeric: tabular-nums;
+}
+.stat {
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  box-shadow: none;
+  padding: var(--w2b-space-2) var(--w2b-space-1);
+}
+.stat__value { font-size: var(--w2b-fs-base); }
+.stat__label { margin-top: 1px; }
 .field__input, .field__select, .field__textarea {
   border-radius: 0;
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line-strong);
 }
-.seg { border-radius: 0; background: none; border: 1px solid var(--w2b-line); }
-.seg__btn {
+/* A segmented control with six labels does not fit across 390px, and flex items
+   do not shrink below their own word — so «Клієнти» and «Контент» ran off the
+   right edge of a page that hides its overflow, which made two admin tabs
+   unreachable on a phone. They now scroll, and each button still grows to fill
+   the bar when there are only three of them. The inner padding is gone so an
+   active segment is a full-height block of ink, not a floating chip. */
+.seg {
   border-radius: 0;
-  text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: 10px;
+  background: none;
+  border: 1px solid var(--w2b-line);
+  padding: 0;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.seg::-webkit-scrollbar { display: none; }
+.seg__btn {
+  flex: 1 0 auto;
+  border-radius: 0;
+  padding: 9px 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9px;
+}
+.seg__btn + .seg__btn { border-left: 1px solid var(--w2b-line); }
 .seg__btn.is-active { background: var(--w2b-primary); color: var(--w2b-on-primary); }
 .pill {
   border-radius: 0;
@@ -995,7 +1107,7 @@
 .card--vip .card__code { background: rgba(17, 16, 15, 0.06); }
 
 /* Tiles: names vary in length, so the buttons must still line up. */
-.tile__title { min-height: 2.4em; }
+.tile__title { min-height: 2.3em; }
 .tile__btn { margin-top: auto; }
 .tile { height: 100%; }
 
