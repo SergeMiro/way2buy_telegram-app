@@ -6,7 +6,7 @@ import {
   parseArticle, parsePrice, parsePostText, ingestChannelPost, resolveChannel, listChannels,
 } from '../server/telegram.js';
 
-migrate();
+await migrate();
 
 // ── parsing what a catalogue post actually looks like ─────────────────────
 
@@ -70,32 +70,32 @@ const post = (over = {}) => ({
   },
 });
 
-test('a brand-new channel registers itself on its first post', () => {
-  const before = listChannels({ includeDisabled: true }).length;
-  const id = ingestChannelPost(post({ text: 'Prada Re-Edition\nАрт. PR-771\n$620' }));
+test('a brand-new channel registers itself on its first post', async () => {
+  const before = (await listChannels({ includeDisabled: true })).length;
+  const id = await ingestChannelPost(await post({ text: 'Prada Re-Edition\nАрт. PR-771\n$620' }));
   assert.ok(id, 'post stored');
 
-  const after = listChannels({ includeDisabled: true });
+  const after = await listChannels({ includeDisabled: true });
   assert.equal(after.length, before + 1, 'the channel appeared without any config');
   const ch = after.find((c) => c.username === 'w2b_test_catalog');
   assert.equal(ch.kind, 'catalog');
   assert.equal(ch.chatId, '-1001234567890');
 
-  const row = db.prepare('SELECT * FROM posts WHERE id=?').get(id);
+  const row = await db.prepare('SELECT * FROM posts WHERE id=?').get(id);
   assert.equal(row.article, 'PR-771');
   assert.equal(row.price, 620);
   assert.equal(row.source, 'channel');
 });
 
-test('the same message twice does not create two cards', () => {
-  const first = ingestChannelPost(post({ message_id: 42, text: 'Gucci Marmont' }));
-  const second = ingestChannelPost(post({ message_id: 42, text: 'Gucci Marmont' }));
+test('the same message twice does not create two cards', async () => {
+  const first = await ingestChannelPost(await post({ message_id: 42, text: 'Gucci Marmont' }));
+  const second = await ingestChannelPost(await post({ message_id: 42, text: 'Gucci Marmont' }));
   assert.equal(first, second);
 });
 
-test('editing the post in the channel updates the card in the app', () => {
-  const id = ingestChannelPost(post({ message_id: 77, text: 'Chloe Woody\n$400' }));
-  ingestChannelPost({
+test('editing the post in the channel updates the card in the app', async () => {
+  const id = await ingestChannelPost(await post({ message_id: 77, text: 'Chloe Woody\n$400' }));
+  await ingestChannelPost({
     edited_channel_post: {
       message_id: 77,
       date: Math.floor(Date.UTC(2026, 6, 30) / 1000),
@@ -103,7 +103,7 @@ test('editing the post in the channel updates the card in the app', () => {
       text: 'Chloe Woody — РОЗПРОДАЖ\n$350',
     },
   });
-  const row = db.prepare('SELECT * FROM posts WHERE id=?').get(id);
+  const row = await db.prepare('SELECT * FROM posts WHERE id=?').get(id);
   // The edit is reflected in the body (the raw text); the title is derived, so
   // it stays the brand-based one.
   assert.match(row.body, /РОЗПРОДАЖ/);
@@ -111,25 +111,59 @@ test('editing the post in the channel updates the card in the app', () => {
   assert.ok(row.edited_at);
 });
 
-test('an album arrives as several updates but becomes one card', () => {
+test('an album arrives as several updates but becomes one card', async () => {
   const base = {
     date: Math.floor(Date.UTC(2026, 6, 30) / 1000),
     chat: { id: -1001234567890, username: 'w2b_test_catalog', title: 'Way2Buy Test' },
     media_group_id: '99001',
   };
-  const a = ingestChannelPost({ channel_post: { ...base, message_id: 501, caption: 'Hermes Birkin\n$9000', photo: [{ file_id: 'ph-1', file_size: 100 }] } });
-  const b = ingestChannelPost({ channel_post: { ...base, message_id: 502, photo: [{ file_id: 'ph-2', file_size: 200 }] } });
-  const c = ingestChannelPost({ channel_post: { ...base, message_id: 503, photo: [{ file_id: 'ph-3', file_size: 300 }] } });
+  const a = await ingestChannelPost({ channel_post: { ...base, message_id: 501, caption: 'Hermes Birkin\n$9000', photo: [{ file_id: 'ph-1', file_size: 100 }] } });
+  const b = await ingestChannelPost({ channel_post: { ...base, message_id: 502, photo: [{ file_id: 'ph-2', file_size: 200 }] } });
+  const c = await ingestChannelPost({ channel_post: { ...base, message_id: 503, photo: [{ file_id: 'ph-3', file_size: 300 }] } });
 
   assert.equal(a, b);
   assert.equal(b, c);
-  const row = db.prepare('SELECT * FROM posts WHERE id=?').get(a);
-  assert.deepEqual(JSON.parse(row.photos_json), ['ph-1', 'ph-2', 'ph-3']);
-  assert.equal(row.title, 'Hermes');
+  const row = await db.prepare('SELECT * FROM posts WHERE id=?').get(a);
+  // photos_json is jsonb: it arrives as an array, already parsed.
+  assert.deepEqual(row.photos_json, ['ph-1', 'ph-2', 'ph-3']);
+  // The caption says "Hermes"; the card says «Hermès». One house is one filter
+  // value however the post spelled it.
+  assert.equal(row.title, 'Hermès');
+  assert.equal(row.brand, 'Hermès');
 });
 
-test('the largest photo size is the one stored', () => {
-  const id = ingestChannelPost(post({
+test('one house is one brand, however the catalogue spelled it', () => {
+  // Both spellings run in the real channels, sometimes in neighbouring posts.
+  assert.equal(parsePostText('Hermes Kelly 28').brand, 'Hermès');
+  assert.equal(parsePostText('Hermès Kelly 28').brand, 'Hermès');
+  assert.equal(parsePostText('YSL Loulou').brand, 'Saint Laurent');
+  assert.equal(parsePostText('Saint Laurent Loulou').brand, 'Saint Laurent');
+  assert.equal(parsePostText('Bottega Jodie').brand, 'Bottega Veneta');
+  assert.equal(parsePostText('Louboutin So Kate').brand, 'Christian Louboutin');
+  // A brand name inside another word is not a brand.
+  assert.equal(parsePostText('LVMH звіт').brand, null);
+});
+
+test('a catalogue named after a category labels the posts it holds', () => {
+  // The real case: nine cards in ten read like this — a house and a size, no
+  // category word anywhere. The channel's own name is what supplies it.
+  const inBags = parsePostText('Balenciaga\nSize 33-12-12cm', { channelTitle: 'Сумки жіночі' });
+  assert.equal(inBags.category, 'сумка');
+  assert.equal(inBags.title, 'Balenciaga · сумка');
+
+  const inShoes = parsePostText('Chanel\nSize 38', { channelTitle: 'Взуття жіноче' });
+  assert.equal(inShoes.category, 'взуття');
+
+  // A catalogue named after a house says nothing about the category, and
+  // nothing is invented.
+  assert.equal(parsePostText('Classic Flap', { channelTitle: 'Chanel' }).category, null);
+  // The text still wins over the channel: a wallet posted in «Сумки жіночі» is
+  // a wallet.
+  assert.equal(parsePostText('Chanel гаманець', { channelTitle: 'Сумки жіночі' }).category, 'гаманець');
+});
+
+test('the largest photo size is the one stored', async () => {
+  const id = await ingestChannelPost(await post({
     message_id: 900,
     caption: 'Balenciaga Hourglass',
     photo: [
@@ -138,25 +172,25 @@ test('the largest photo size is the one stored', () => {
       { file_id: 'medium', file_size: 20000 },
     ],
   }));
-  assert.deepEqual(JSON.parse(db.prepare('SELECT * FROM posts WHERE id=?').get(id).photos_json), ['large']);
+  assert.deepEqual((await db.prepare('SELECT * FROM posts WHERE id=?').get(id)).photos_json, ['large']);
 });
 
-test('posts from a disabled channel are dropped', () => {
-  const ch = resolveChannel({ id: -100999, username: 'w2b_off', title: 'Вимкнений' });
-  db.prepare('UPDATE channels SET enabled=0 WHERE key=?').run(ch.key);
-  const id = ingestChannelPost(post({ message_id: 1, chat: { id: -100999, username: 'w2b_off', title: 'Вимкнений' }, text: 'ігнор' }));
+test('posts from a disabled channel are dropped', async () => {
+  const ch = await resolveChannel({ id: -100999, username: 'w2b_off', title: 'Вимкнений' });
+  await db.prepare('UPDATE channels SET enabled=false WHERE key=?').run(ch.key);
+  const id = await ingestChannelPost(await post({ message_id: 1, chat: { id: -100999, username: 'w2b_off', title: 'Вимкнений' }, text: 'ігнор' }));
   assert.equal(id, null);
 });
 
-test('a channel first known by @username gets its numeric id bound on first post', () => {
-  db.prepare("INSERT INTO channels (key,username,title,kind,enabled,created_at) VALUES ('preconf','w2b_preconf','Заздалегідь','catalog',1,?)")
+test('a channel first known by @username gets its numeric id bound on first post', async () => {
+  await db.prepare("INSERT INTO channels (key,username,title,kind,enabled,created_at) VALUES ('preconf','w2b_preconf','Заздалегідь','catalog',true,?)")
     .run(new Date().toISOString());
-  ingestChannelPost(post({ message_id: 1, chat: { id: -100555, username: 'w2b_preconf', title: 'Заздалегідь' }, text: 'перший пост' }));
-  assert.equal(db.prepare("SELECT chat_id FROM channels WHERE key='preconf'").get().chat_id, '-100555');
+  await ingestChannelPost(await post({ message_id: 1, chat: { id: -100555, username: 'w2b_preconf', title: 'Заздалегідь' }, text: 'перший пост' }));
+  assert.equal((await db.prepare("SELECT chat_id FROM channels WHERE key='preconf'").get()).chat_id, '-100555');
 });
 
-test('a non-post update is ignored rather than crashing the webhook', () => {
-  assert.equal(ingestChannelPost({ message: { text: 'привіт' } }), null);
-  assert.equal(ingestChannelPost({}), null);
-  assert.equal(ingestChannelPost(null), null);
+test('a non-post update is ignored rather than crashing the webhook', async () => {
+  assert.equal(await ingestChannelPost({ message: { text: 'привіт' } }), null);
+  assert.equal(await ingestChannelPost({}), null);
+  assert.equal(await ingestChannelPost(null), null);
 });

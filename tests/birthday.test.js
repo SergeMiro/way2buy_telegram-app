@@ -7,15 +7,15 @@ import {
 } from '../server/birthday.js';
 import { updateRule } from '../server/rules.js';
 
-migrate();
+await migrate();
 
 const ts = new Date().toISOString();
 let seq = 0;
-const makeCustomer = (birthday = null) => {
+const makeCustomer = async (birthday = null) => {
   seq += 1;
-  const id = db.prepare('INSERT INTO customers (tg_user_id,name,birthday,created_at) VALUES (?,?,?,?)')
-    .run(`bday-${seq}`, `Клієнт ${seq}`, birthday, ts).lastInsertRowid;
-  return db.prepare('SELECT * FROM customers WHERE id=?').get(id);
+  const id = (await db.prepare('INSERT INTO customers (tg_user_id,name,birthday,created_at) VALUES (?,?,?,?)')
+    .run(`bday-${seq}`, `Клієнт ${seq}`, birthday, ts)).lastInsertRowid;
+  return await db.prepare('SELECT * FROM customers WHERE id=?').get(id);
 };
 
 // A date whose window is guaranteed open "now", and one that is not.
@@ -74,119 +74,119 @@ test('29 February falls back to 28 February in a non-leap year', () => {
 
 // ── the claim flow ────────────────────────────────────────────────────────
 
-test('first claim records the date and grants the discount', () => {
-  const c = makeCustomer(null);
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+test('first claim records the date and grants the discount', async () => {
+  const c = await makeCustomer(null);
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
 
   assert.equal(r.verdict, 'granted');
   assert.equal(r.discount.amountUsd, 50);
   assert.equal(r.discount.minOrderUsd, 500);
 
-  const stored = db.prepare('SELECT * FROM customers WHERE id=?').get(c.id);
+  const stored = await db.prepare('SELECT * FROM customers WHERE id=?').get(c.id);
   assert.equal(stored.birthday, '1990-07-15', 'the date is now on file');
   assert.equal(stored.birthday_source, 'claim');
 
-  const promo = db.prepare('SELECT * FROM promo_codes WHERE id=?').get(r.promo.id);
+  const promo = await db.prepare('SELECT * FROM promo_codes WHERE id=?').get(r.promo.id);
   assert.equal(promo.mode, 'fixed');
   assert.equal(promo.amount_usd, 50);
   assert.equal(promo.min_order_usd, 500);
   assert.equal(promo.rule_key, 'birthday');
 });
 
-test('a second claim the same year is refused', () => {
-  const c = makeCustomer(null);
-  claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
-  const again = claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+test('a second claim the same year is refused', async () => {
+  const c = await makeCustomer(null);
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+  const again = await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
   assert.equal(again.verdict, 'already_claimed');
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM promo_codes WHERE customer_id=? AND rule_key='birthday'").get(c.id).n, 1);
+  assert.equal((await db.prepare("SELECT COUNT(*) n FROM promo_codes WHERE customer_id=? AND rule_key='birthday'").get(c.id)).n, 1);
 });
 
-test('the same client CAN claim again the following year', () => {
-  const c = makeCustomer(null);
-  claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
-  const nextYear = claimBirthdayDiscount({
-    customer: db.prepare('SELECT * FROM customers WHERE id=?').get(c.id),
+test('the same client CAN claim again the following year', async () => {
+  const c = await makeCustomer(null);
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+  const nextYear = await claimBirthdayDiscount({
+    customer: await db.prepare('SELECT * FROM customers WHERE id=?').get(c.id),
     birthdayInput: '15.07.1990',
     now: Date.UTC(2027, 6, 15, 12),
   });
   assert.equal(nextYear.verdict, 'granted');
 });
 
-test('a date that does not match the one on file is refused and raised to the admin', () => {
-  const c = makeCustomer('1990-07-15');
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: '20.05.1990', now: AT });
+test('a date that does not match the one on file is refused and raised to the admin', async () => {
+  const c = await makeCustomer('1990-07-15');
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: '20.05.1990', now: AT });
 
   assert.equal(r.verdict, 'mismatch');
   assert.equal(r.ok, false);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM promo_codes WHERE customer_id=?').get(c.id).n, 0, 'no discount minted');
-  assert.equal(db.prepare('SELECT birthday FROM customers WHERE id=?').get(c.id).birthday, '1990-07-15', 'stored date not overwritten');
+  assert.equal((await db.prepare('SELECT COUNT(*) n FROM promo_codes WHERE customer_id=?').get(c.id)).n, 0, 'no discount minted');
+  assert.equal((await db.prepare('SELECT birthday FROM customers WHERE id=?').get(c.id)).birthday, '1990-07-15', 'stored date not overwritten');
 
-  const alert = db.prepare("SELECT * FROM notifications WHERE kind='bday_mismatch' AND customer_id IS NULL ORDER BY id DESC").get();
+  const alert = await db.prepare("SELECT * FROM notifications WHERE kind='bday_mismatch' AND customer_id IS NULL ORDER BY id DESC").get();
   assert.ok(alert, 'the admin is told');
   assert.match(alert.body, /07-15/);
   assert.match(alert.body, /05-20/);
 });
 
-test('claiming outside the window tells the client when it opens', () => {
-  const c = makeCustomer(null);
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: '25.12.1990', now: AT });
+test('claiming outside the window tells the client when it opens', async () => {
+  const c = await makeCustomer(null);
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: '25.12.1990', now: AT });
   assert.equal(r.verdict, 'out_of_window');
   assert.equal(r.window.open, false);
   // The date is still recorded — that is the point of the register.
-  assert.equal(db.prepare('SELECT birthday FROM customers WHERE id=?').get(c.id).birthday, '1990-12-25');
+  assert.equal((await db.prepare('SELECT birthday FROM customers WHERE id=?').get(c.id)).birthday, '1990-12-25');
 });
 
-test('an unparseable date is logged, not silently ignored', () => {
-  const c = makeCustomer(null);
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: '31.02.1990', now: AT });
+test('an unparseable date is logged, not silently ignored', async () => {
+  const c = await makeCustomer(null);
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: '31.02.1990', now: AT });
   assert.equal(r.verdict, 'invalid_date');
-  assert.equal(claimsFor(c.id)[0].verdict, 'invalid_date');
+  assert.equal((await claimsFor(c.id))[0].verdict, 'invalid_date');
 });
 
-test('every request is written to the register regardless of verdict', () => {
-  const c = makeCustomer('1990-07-15');
-  claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });   // granted
-  claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });   // already_claimed
-  claimBirthdayDiscount({ customer: c, birthdayInput: '01.01.1990', now: AT });   // mismatch
-  const verdicts = claimsFor(c.id).map((r) => r.verdict).sort();
+test('every request is written to the register regardless of verdict', async () => {
+  const c = await makeCustomer('1990-07-15');
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });   // granted
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });   // already_claimed
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '01.01.1990', now: AT });   // mismatch
+  const verdicts = (await claimsFor(c.id)).map((r) => r.verdict).sort();
   assert.deepEqual(verdicts, ['already_claimed', 'granted', 'mismatch']);
 });
 
-test('a client with no date on file may claim by supplying it — but not with nothing', () => {
-  const c = makeCustomer(null);
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: null, now: AT });
+test('a client with no date on file may claim by supplying it — but not with nothing', async () => {
+  const c = await makeCustomer(null);
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: null, now: AT });
   assert.equal(r.verdict, 'invalid_date');
 });
 
-test('the discount follows the rule: switch to 10% and the promo changes shape', () => {
-  updateRule('birthday', { mode: 'percent', value: 10 });
-  const c = makeCustomer(null);
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
-  const promo = db.prepare('SELECT * FROM promo_codes WHERE id=?').get(r.promo.id);
+test('the discount follows the rule: switch to 10% and the promo changes shape', async () => {
+  await updateRule('birthday', { mode: 'percent', value: 10 });
+  const c = await makeCustomer(null);
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+  const promo = await db.prepare('SELECT * FROM promo_codes WHERE id=?').get(r.promo.id);
   assert.equal(promo.mode, 'percent');
   assert.equal(promo.percent, 10);
-  updateRule('birthday', { mode: 'fixed', value: 50 });
+  await updateRule('birthday', { mode: 'fixed', value: 50 });
 });
 
-test('a disabled birthday rule grants nothing', () => {
-  updateRule('birthday', { enabled: false });
-  const c = makeCustomer(null);
-  const r = claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+test('a disabled birthday rule grants nothing', async () => {
+  await updateRule('birthday', { enabled: false });
+  const c = await makeCustomer(null);
+  const r = await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
   assert.equal(r.verdict, 'disabled');
-  updateRule('birthday', { enabled: true });
+  await updateRule('birthday', { enabled: true });
 });
 
-test('birthdayStatus drives the card the client sees', () => {
-  const unknown = birthdayStatus(makeCustomer(null), AT);
+test('birthdayStatus drives the card the client sees', async () => {
+  const unknown = await birthdayStatus(await makeCustomer(null), AT);
   assert.equal(unknown.state, 'unknown_date');
 
-  const open = birthdayStatus(makeCustomer('1990-07-15'), AT);
+  const open = await birthdayStatus(await makeCustomer('1990-07-15'), AT);
   assert.equal(open.state, 'available');
 
-  const later = birthdayStatus(makeCustomer('1990-12-25'), AT);
+  const later = await birthdayStatus(await makeCustomer('1990-12-25'), AT);
   assert.equal(later.state, 'upcoming');
 
-  const c = makeCustomer('1990-07-15');
-  claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
-  assert.equal(birthdayStatus(c, AT).state, 'claimed');
+  const c = await makeCustomer('1990-07-15');
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+  assert.equal((await birthdayStatus(c, AT)).state, 'claimed');
 });

@@ -7,7 +7,7 @@
 //
 //  Step 2 (done here): turn signals → a readable narrative. If GEMINI_API_KEY
 //  is set we ask Gemini to write it (free tier is plenty); otherwise we render
-//  a solid built-in template. Either way `sendReport()` DMs it to the admins.
+//  a solid built-in template. Either way `await sendReport()` DMs it to the admins.
 //
 //  This is the "prepare the ground for AI" layer: the moment a key is added,
 //  the reports get smart — no restructuring needed.
@@ -18,21 +18,26 @@ import { sendToUser } from './telegram.js';
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 
-export function buildSignals(period = 'day') {
+export async function buildSignals(period = 'day') {
   const now = new Date('2026-07-21T20:00:00Z'); // fixed clock for a deterministic demo
   const sinceDays = period === 'week' ? 7 : 1;
   const since = new Date(now.getTime() - sinceDays * 86400000).toISOString();
 
-  const newCustomers = db.prepare('SELECT COUNT(*) c FROM customers WHERE created_at>=?').get(since).c;
-  const sales = db.prepare("SELECT COUNT(*) n, COALESCE(SUM(amount_usd),0) sum FROM purchases WHERE created_at>=? AND status='confirmed'").get(since);
+  const newCustomers = (await db.prepare('SELECT COUNT(*) c FROM customers WHERE created_at>=?').get(since)).c;
+  const sales = await db.prepare("SELECT COUNT(*) n, COALESCE(SUM(amount_usd),0) sum FROM purchases WHERE created_at>=? AND status='confirmed'").get(since);
 
-  const top = db.prepare(`SELECT c.id,c.name, SUM(p.amount_usd) spent
+  const top = await db.prepare(`SELECT c.id,c.name, SUM(p.amount_usd) spent
       FROM customers c JOIN purchases p ON p.customer_id=c.id
       GROUP BY c.id ORDER BY spent DESC LIMIT 3`).all();
 
   // Customers within $400 of their next $100 reward → nudge them.
-  const nearReward = db.prepare('SELECT id,name FROM customers').all()
-    .map((c) => ({ ...c, l: loyaltyFor(c.id) }))
+  // Promise.all before the filter: loyaltyFor is a database read, and filtering
+  // an array of promises would test `.l` on the promise and keep everyone.
+  const withLoyalty = await Promise.all(
+    (await db.prepare('SELECT id,name FROM customers').all())
+      .map(async (c) => ({ ...c, l: await loyaltyFor(c.id) }))
+  );
+  const nearReward = withLoyalty
     .filter((c) => c.l.toNextReward <= 400 && c.l.totalSpent > 0)
     .sort((a, b) => a.l.toNextReward - b.l.toNextReward)
     .slice(0, 5)
@@ -45,18 +50,18 @@ export function buildSignals(period = 'day') {
     const d = new Date(now.getTime() + i * 86400000);
     soon.push(`${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`);
   }
-  const birthdays = db.prepare('SELECT name,birthday FROM customers WHERE birthday IS NOT NULL').all()
+  const birthdays = (await db.prepare('SELECT name,birthday FROM customers WHERE birthday IS NOT NULL').all())
     .filter((c) => soon.includes(md(c.birthday)))
     .map((c) => ({ name: c.name, date: c.birthday }));
 
   // Churn risk: bought once, > 90 days ago.
-  const churn = db.prepare(`SELECT c.name, COUNT(p.id) n, MAX(p.created_at) last
+  const churn = (await db.prepare(`SELECT c.name, COUNT(p.id) n, MAX(p.created_at) last
       FROM customers c JOIN purchases p ON p.customer_id=c.id
       GROUP BY c.id HAVING n<=1 AND last < ?`)
-    .all(new Date(now.getTime() - 90 * 86400000).toISOString())
+    .all(new Date(now.getTime() - 90 * 86400000).toISOString()))
     .map((c) => ({ name: c.name, last: c.last.slice(0, 10) }));
 
-  const hot = db.prepare(`SELECT p.title, COUNT(e.id) signals
+  const hot = await db.prepare(`SELECT p.title, COUNT(e.id) signals
       FROM events e JOIN posts p ON p.id=e.post_id
       WHERE e.type IN ('want','return') GROUP BY p.id ORDER BY signals DESC LIMIT 3`).all();
 
@@ -121,7 +126,7 @@ async function renderWithGemini(signals) {
 }
 
 export async function buildReport(period = 'day') {
-  const signals = buildSignals(period);
+  const signals = await buildSignals(period);
   let text;
   let engine = 'template';
   if (GEMINI_KEY) {

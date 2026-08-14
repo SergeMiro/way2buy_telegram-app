@@ -17,8 +17,6 @@
   var $sheet = document.getElementById('sheet');
   var $sheetPanel = document.getElementById('sheetPanel');
   var $toast = document.getElementById('toast');
-  var $demobar = document.getElementById('demobar');
-  var $demoUser = document.getElementById('demoUser');
 
   var state = {
     config: null,
@@ -36,10 +34,24 @@
     catalogTotal: 0,
     inStockKey: 'available',
     search: '',
+    // The vitrine's selection and what the server says can be filtered inside
+    // it. Nothing here is a hardcoded list: a new catalogue full of a brand
+    // nobody has posted before grows its own chip.
+    filters: { brand: null, category: null },
+    facets: { total: 0, brands: [], categories: [] },
+    nextCursor: null,
+    loadingMore: false,
     admin: {
       customers: [], campaigns: [], report: null, reportPeriod: 'day',
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
       inquiries: [], popular: null, popularPeriod: 'month', posts: [],
+      channels: [],
+      // The campaign builder: the ready-made presets, the conditions currently
+      // being composed, and how many customers they reach right now.
+      presets: [], team: [], draft: null, reach: null,
+      // Per-channel sync progress, keyed by channel: { running, note, error }.
+      // A deep backfill is many calls, so the admin needs to see it moving.
+      sync: {},
       adminTab: 'bonuses',
     },
   };
@@ -55,6 +67,15 @@
   // Who the client is writing to. A name in the interface is a setting, not a
   // string literal: during the test everything routes to Serhiy, in production
   // to Dasha. Ukrainian needs the dative ("написати Даші / Сергію").
+  // What this person may do, straight from the server (/api/me → `can`). The
+  // cabinet draws itself from this, so a manager is never shown a section that
+  // would then refuse her — and the server checks it again anyway, because a
+  // hidden button is a courtesy, not a lock.
+  function can(capability) {
+    var list = (state.me && state.me.can) || [];
+    return list.indexOf(capability) !== -1;
+  }
+
   function support() {
     return (state.config && state.config.support) || { name: 'Менеджер', dative: 'менеджеру', username: '' };
   }
@@ -137,13 +158,18 @@
     toast._t = setTimeout(function () { $toast.hidden = true; }, 2600);
   }
 
-  function openSheet(title, html) {
-    $sheetPanel.innerHTML = '<div class="sheet__title">' + esc(title) + '</div>' + html;
+  function openSheet(title, html, opts) {
+    var o = opts || {};
+    $sheetPanel.innerHTML = (title ? '<div class="sheet__title">' + esc(title) + '</div>' : '') + html;
+    // A form slides up from the bottom edge; a message from a person belongs in
+    // the middle of the screen, where a face is not something you scroll to.
+    $sheet.classList.toggle('sheet--center', Boolean(o.center));
     $sheet.hidden = false;
   }
 
   function closeSheet() {
     $sheet.hidden = true;
+    $sheet.classList.remove('sheet--center');
     $sheetPanel.innerHTML = '';
   }
 
@@ -178,10 +204,10 @@
 
     function zoomMediaFromEvent(eventTarget) {
       var image = eventTarget && eventTarget.closest && eventTarget.closest(
-        '.tile__media img, .post__thumb img, .fit-row__thumb img'
+        '.tile__media img, .post__gallery img, .fit-row__thumb img'
       );
       if (!image) return null;
-      return { image: image, media: image.closest('.tile__media, .post__thumb, .fit-row__thumb') };
+      return { image: image, media: image.closest('.tile__media, .post__gallery img, .fit-row__thumb') };
     }
 
     function paintedImageBox(image, frame) {
@@ -302,6 +328,37 @@
 
   initImageLoupe();
 
+  // The confirmation after an inquiry is sent.
+  //
+  // A client has just handed over a wish list and cannot see where it went. What
+  // answers that is a name and a face: «Даша звʼяжеться з вами» over a
+  // photograph reads as a person who will write back, where «заявку надіслано»
+  // reads as a form that swallowed it. Nothing here names anybody else — who
+  // ELSE receives the message is the shop's business, not the client's.
+  function thanksHtml(res) {
+    var s = support();
+    var initials = String(s.name || '?').trim().split(/\s+/).slice(0, 2)
+      .map(function (w) { return w.charAt(0); }).join('');
+    var face = s.photo
+      ? '<img class="thanks__photo" src="' + esc(s.photo) + '" alt="' + esc(s.name) + '" />'
+      : '<span class="thanks__initials">' + esc(initials.toUpperCase()) + '</span>';
+
+    return '<div class="thanks">' +
+      '<div class="thanks__avatar">' + face + '</div>' +
+      '<div class="thanks__name">' + esc(s.name) + '</div>' +
+      (s.role ? '<div class="thanks__role">' + esc(s.role) + '</div>' : '') +
+      '<p class="thanks__text">Дякуємо! Ваш запит уже в роботі — ' + esc(s.name) +
+        ' звʼяжеться з вами найближчим часом.</p>' +
+      (res && res.promo
+        ? '<div class="thanks__note">Вашу знижку ' + esc(res.promo.label) + ' враховано</div>'
+        : '') +
+      '<button class="btn btn--primary" type="button" data-close>Добре</button>' +
+      (s.username
+        ? '<a class="thanks__direct" href="https://t.me/' + esc(s.username) + '" ' +
+          'target="_blank" rel="noopener">Написати ' + esc(s.dative) + ' напряму</a>'
+        : '') +
+    '</div>';
+  }
   $sheet.addEventListener('click', function (e) {
     if (e.target.hasAttribute('data-close')) closeSheet();
   });
@@ -377,16 +434,15 @@
 
   /* ── loyalty widgets ────────────────────────────────────────────────────── */
 
-  // The ring fills with the bonus balance against its ceiling ($300), which is
-  // the only progress the client has now that tiers are hidden.
-  function ringHtml(l) {
+  // The bonus balance against its ceiling ($300) — the only progress the client
+  // has now that tiers are hidden. A rule rather than a ring: same number, three
+  // pixels tall instead of a hundred and thirty. See .meter in app.css.
+  function meterHtml(l) {
     var pct = l.progressPct || 0;
     var caption = l.capUsd ? 'з ' + usd(l.capUsd) : 'бонуси';
-    return '<div class="loyalty-ring" style="--w2b-ring-pct: ' + pct + '%">' +
-      '<div class="loyalty-ring__hole">' +
-        '<span class="loyalty-ring__value">' + pct + '%</span>' +
-        '<span class="loyalty-ring__caption">' + esc(caption) + '</span>' +
-      '</div>' +
+    return '<div class="meter" style="--w2b-meter-pct: ' + pct + '%">' +
+      '<div class="meter__track"><span class="meter__fill"></span></div>' +
+      '<div class="meter__legend"><span>' + pct + '%</span><span>' + esc(caption) + '</span></div>' +
     '</div>';
   }
 
@@ -532,10 +588,14 @@
     var ruleText = 'Правило: покупка від ' + usd(l.minOrderUsd) + ' → ' +
       discountLabel(l.mode, l.value) + ' бонусу' +
       (l.capUsd ? ', накопичення максимум ' + usd(l.capUsd) : '');
-    html += '<section class="wallet">' + ringHtml(l) +
+    // Label, sum, progress, rule — in that order, down the panel. The ring used
+    // to sit to the left of all of it and squeeze the rule into a four-line
+    // column; the sum is the thing being read here, so it gets the full width.
+    html += '<section class="wallet">' +
       '<div class="wallet__body">' +
+        '<div class="eyebrow">бонусів доступно до списання</div>' +
         '<div class="wallet__amount">' + usd(l.cashbackAvailable) + '</div>' +
-        '<div class="wallet__caption">бонусів доступно до списання</div>' +
+        meterHtml(l) +
         '<div class="wallet__hint">' + esc(ruleText) +
           (l.capReached ? ' · ліміт досягнуто — використайте бонуси, щоб нараховувати далі' : '') + '</div>' +
         (l.cashbackAvailable > 0
@@ -638,8 +698,14 @@
       '</div>' +
       '<div class="tile__body">' +
         '<div class="tile__title">' + esc(p.title || 'Позиція') + '</div>' +
-        (p.article ? '<div class="tile__art">' + esc(p.article) + '</div>' : '') +
-        (p.price ? '<div class="tile__price">' + esc(money(p.price, p.currency)) + '</div>' : '') +
+        // Price and article code on one baseline — they were two stacked lines
+        // saying two words each, and a phone pays for that twice per row.
+        (p.price || p.article
+          ? '<div class="tile__meta">' +
+              (p.price ? '<span class="tile__price">' + esc(money(p.price, p.currency)) + '</span>' : '') +
+              (p.article ? '<span class="tile__art">' + esc(p.article) + '</span>' : '') +
+            '</div>'
+          : '') +
         '<button class="tile__btn' + (inCart ? ' is-in' : '') +
           '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
           (inCart ? 'У примірочній' : 'Хочу') + '</button>' +
@@ -653,13 +719,27 @@
   //  the only coloured control in the app.
   function searchHtml() {
     var q = state.search || '';
-    return '<div class="search">' +
-      '<svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true">' +
-        '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>' +
-      '<input class="search__input" id="searchInput" type="search" ' +
-        'placeholder="Пошук за назвою або артикулом" value="' + esc(q) + '" ' +
-        'autocomplete="off" enterkeyhint="search" />' +
-      (q ? '<button class="search__clear" type="button" data-search-clear aria-label="Очистити">×</button>' : '') +
+    var applied = activeFilters();
+    return '<div class="searchbar">' +
+      '<div class="search">' +
+        '<svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true">' +
+          '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>' +
+        '<input class="search__input" id="searchInput" type="search" ' +
+          'placeholder="Пошук за назвою або артикулом" value="' + esc(q) + '" ' +
+          'autocomplete="off" enterkeyhint="search" />' +
+        (q ? '<button class="search__clear" type="button" data-search-clear aria-label="Очистити">×</button>' : '') +
+      '</div>' +
+      // The filter button carries its own count, so "am I filtered?" is
+      // answerable without scrolling anywhere.
+      // The count is always in the markup and only toggled, because the search
+      // row is deliberately NOT re-rendered when the vitrine repaints — doing so
+      // would take the focus out of the input mid-word. See paintFilterButton().
+      '<button class="filterbtn' + (applied.length ? ' is-on' : '') + '" type="button" data-open-filters>' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<path d="M3.5 6.5h17M6.5 12h11M10 17.5h4"/></svg>' +
+        '<span class="filterbtn__count"' + (applied.length ? '' : ' hidden') + '>' +
+          applied.length + '</span>' +
+      '</button>' +
     '</div>';
   }
 
@@ -685,48 +765,192 @@
     '</div>';
   }
 
-  function renderCatalog() {
+  // What is applied right now, in one list — the badges and the button count
+  // both read from it, so they cannot disagree.
+  function activeFilters() {
+    var out = [];
+    if (state.filters.brand) out.push({ kind: 'brand', value: state.filters.brand });
+    if (state.filters.category) out.push({ kind: 'category', value: state.filters.category });
+    return out;
+  }
+
+  // Applied filters as removable badges. This is the part that was missing: the
+  // old rows showed what COULD be chosen and left "what is chosen" to be inferred
+  // from which chip looked darker, halfway along a scrolling row.
+  function activeFiltersHtml() {
+    var applied = activeFilters();
+    if (!applied.length) return '';
+    return '<div class="applied">' +
+      applied.map(function (f) {
+        return '<button class="fbadge" type="button" data-drop-filter="' + esc(f.kind) + '">' +
+          esc(f.value) + '<span class="fbadge__x" aria-hidden="true">×</span></button>';
+      }).join('') +
+      (applied.length > 1
+        ? '<button class="applied__clear" type="button" data-drop-filter="all">Скинути все</button>'
+        : '') +
+    '</div>';
+  }
+
+  // The content filters. Two rows at most, and each one appears only when it
+  // has something to say: a single brand is not a choice, and «Сумки жіночі»
+  // has no use for a category filter where every card is a bag. That is what
+  // keeps the screen from silting up as catalogues are added.
+  // The choices live in a sheet, not in two permanently open rows. With
+  // eighteen brands those rows were a wall of horizontally scrolling text above
+  // every screen of the vitrine, and the one thing they never showed was what
+  // was actually applied. The sheet holds as many values as the data has, and
+  // the badges under the search say what is on.
+  function filtersSheetHtml() {
+    var f = state.facets || {};
+    var section = function (kind, label, values, active) {
+      if (!values || !values.length) return '';
+      return '<div class="fsheet">' +
+        '<div class="fsheet__label">' + esc(label) + '</div>' +
+        '<div class="fsheet__grid">' +
+          values.map(function (v) {
+            return '<button class="fchip' + (active === v.value ? ' is-active' : '') +
+              '" type="button" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '">' +
+              esc(v.value) + '<span class="fchip__count">' + v.count + '</span></button>';
+          }).join('') +
+        '</div></div>';
+    };
+
+    var body = section('brand', 'Бренд', f.brands, state.filters.brand) +
+      section('category', 'Категорія', f.categories, state.filters.category);
+
+    if (!body) return '<p class="panel__note">Тут поки нема за чим фільтрувати.</p>';
+
+    return body +
+      '<div class="fsheet__actions">' +
+        (activeFilters().length
+          ? '<button class="btn btn--ghost" type="button" data-drop-filter="all">Скинути все</button>'
+          : '') +
+        '<button class="btn btn--primary" type="button" data-close>Готово</button>' +
+      '</div>';
+  }
+
+  function openFiltersSheet() {
+    openSheet('Фільтри', filtersSheetHtml());
+  }
+
+  // Everything that changes when the selection changes lives in one container.
+  // Typing in the search box repaints only this, so the input keeps its focus
+  // and its caret — retyping a word because the field blurred mid-letter is the
+  // kind of thing that makes an app feel broken.
+  function vitrineBodyHtml() {
     var current = (state.catalogs || []).filter(function (c) { return c.key === state.feedChannel; })[0];
     var title = state.search
       ? 'Пошук'
-      : (current ? current.title : 'Усі каталоги');
+      : (state.filters.brand || (current ? current.title : 'Усі каталоги'));
 
-    var html = topbarHtml() + '<div class="stack">' + searchHtml() + chipsHtml();
+    // The count is the size of the whole selection, not of the page in hand:
+    // «60 позицій» under a filter holding 900 of them is a number the client
+    // would act on.
+    var total = state.facets && state.facets.total ? state.facets.total : state.feed.length;
 
-    html += '<div class="vitrine-head">' +
-      '<span class="vitrine-head__title">' + esc(title) + '</span>' +
-      '<span class="vitrine-head__count">' + state.feed.length + ' позицій</span>' +
-    '</div>';
+    var html = activeFiltersHtml() +
+      '<div class="vitrine-head">' +
+        '<span class="vitrine-head__title">' + esc(title) + '</span>' +
+        '<span class="vitrine-head__count">' + total + ' ' +
+          plural(total, ['позиція', 'позиції', 'позицій']) + '</span>' +
+      '</div>';
 
     html += state.feed.length
       ? '<div class="tiles">' + state.feed.map(tileHtml).join('') + '</div>'
       : '<div class="empty">' + (state.search
           ? 'За запитом «' + esc(state.search) + '» нічого не знайшли'
-          : 'У цьому каталозі ще немає позицій') + '</div>';
+          : (state.filters.brand || state.filters.category
+              ? 'За цим фільтром нічого немає'
+              : 'У цьому каталозі ще немає позицій')) + '</div>';
 
-    return html + '</div>';
+    if (state.nextCursor) {
+      html += '<button class="btn btn--ghost more" type="button" data-more="1"' +
+        (state.loadingMore ? ' disabled' : '') + '>' +
+        (state.loadingMore ? 'Завантажую…' : 'Показати ще') + '</button>';
+    }
+    return html;
   }
 
-  // ── Канал: the main channel's posts, read like a feed ────────────────────
+  function renderCatalog() {
+    return topbarHtml() + '<div class="stack">' + searchHtml() + chipsHtml() +
+      '<div id="vitrine">' + vitrineBodyHtml() + '</div>' +
+    '</div>';
+  }
+
+  function repaintVitrine() {
+    var host = document.getElementById('vitrine');
+    if (host) host.innerHTML = vitrineBodyHtml();
+    paintFilterButton();
+  }
+
+  // The one element outside #vitrine that has to follow the selection. Patched
+  // rather than re-rendered, so the search input beside it keeps its focus.
+  function paintFilterButton() {
+    var btn = document.querySelector('[data-open-filters]');
+    if (!btn) return;
+    var n = activeFilters().length;
+    btn.classList.toggle('is-on', n > 0);
+    var count = btn.querySelector('.filterbtn__count');
+    if (count) {
+      count.textContent = n;
+      count.hidden = !n;
+    }
+  }
+
+  // ── Стрічка: one channel, read as a feed ─────────────────────────────────
+  //
+  // Named «Стрічка» and not «Канал» because that is what this is in Ukrainian —
+  // the word Facebook and the Telegram clients both use for a feed, and the app's
+  // own copy already said «вся стрічка каналу». «Канал» also collided with the
+  // cabinet, where «канал» means a source to sync, not a screen.
+  // The photographs of a channel post, as a swipeable strip. No carousel script:
+  // a scroll-snap row does it in CSS, and when there is more than one picture the
+  // next one peeks in at the edge so the swipe is discoverable without a dot row.
+  function postGalleryHtml(p) {
+    var urls = (p.photoUrls || []).filter(Boolean);
+    if (!urls.length) return '';
+    return '<div class="post__gallery' + (urls.length > 1 ? ' post__gallery--multi' : '') + '">' +
+      urls.map(function (u, i) {
+        return '<img src="' + esc(u) + '" alt="" loading="' + (i ? 'lazy' : 'eager') + '" />';
+      }).join('') +
+    '</div>';
+  }
+
+  // Nearly every caption ends «Для замовлення пишіть @daschamelnyk» — that is
+  // the point of the channel, so it should be one tap rather than something to
+  // copy out by hand. esc() runs FIRST and the pattern only matches characters
+  // it cannot have introduced, so nothing here can reopen an injection.
+  function linkifyMentions(text) {
+    return esc(text).replace(/@([A-Za-z0-9_]{4,32})/g, function (_m, name) {
+      return '<a href="https://t.me/' + name + '" target="_blank" rel="noopener">@' + name + '</a>';
+    });
+  }
+
   function renderFeed() {
     var html = topbarHtml() + '<div class="stack">';
 
     if (!state.feed.length) {
-      html += '<div class="empty">У каналі ще немає публікацій.</div>';
+      html += '<div class="empty">У стрічці ще немає публікацій.</div>';
     } else {
       html += state.feed.map(function (p) {
         var ch = p.channelMeta || {};
         var inCart = Boolean(p.inCart);
+        // The caption, not the title. A title is a catalogue idea — it is
+        // DERIVED from the post's own first sentence, so printing both put the
+        // same words on the screen twice, in two weights. In a feed the caption
+        // is the post; the title is only a fallback for a photo posted bare.
+        var caption = p.body || p.title || '';
         return '<article class="post">' +
-          '<div class="post__thumb">' + postMediaHtml(p) + '</div>' +
+          postGalleryHtml(p) +
           '<div class="post__body">' +
-            '<div class="post__head">' + esc((ch.emoji || '') + ' ' + (ch.title || p.channel)) +
-              ' · ' + esc(timeAgo(p.created_at)) + '</div>' +
-            '<div class="post__title">' + esc(p.title) + '</div>' +
-            (p.body ? '<p class="post__text">' + esc(p.body) + '</p>' : '') +
+            '<div class="post__head">' +
+              '<span>' + esc(ch.title || p.channel) + '</span>' +
+              '<span class="post__when">' + esc(timeAgo(p.created_at)) + '</span>' +
+            '</div>' +
+            (caption ? '<div class="post__caption">' + linkifyMentions(caption) + '</div>' : '') +
             '<div class="post__foot">' +
-              '<span class="post__price">' + esc(money(p.price, p.currency)) + '</span>' +
-              '<button class="btn ' + (inCart ? 'btn--ghost is-in' : 'btn--primary') +
+              (p.price ? '<span class="post__price">' + esc(money(p.price, p.currency)) + '</span>' : '<span></span>') +
+              '<button class="btn btn--ghost btn--sm' + (inCart ? ' is-in' : '') +
                 '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
                 (inCart ? 'У примірочній ✓' : 'Хочу') + '</button>' +
             '</div>' +
@@ -827,9 +1051,10 @@
 
     html += '<div class="section-title">Покупки</div>';
     html += p.purchases.length
+      // No icon: every Ukrainian order carried the same flag, so a column of ten
+      // identical emoji said nothing and cost thirty pixels of width per line.
       ? p.purchases.map(function (x) {
           return '<div class="row">' +
-            '<div class="row__icon">' + (x.source_channel === 'luxury' ? '💎' : '🇺🇦') + '</div>' +
             '<div class="row__body">' +
               '<div class="row__title">' + esc(x.title || 'Покупка') + '</div>' +
               '<div class="row__sub">' + esc(dateShort(x.created_at)) +
@@ -848,14 +1073,22 @@
     return html;
   }
 
+  // Every tab says which right it needs. The bar is then built from what this
+  // person actually holds, so a manager's cabinet has no doors that open onto a
+  // refusal — and «Акції» and «Команда» simply do not exist for her.
   var ADMIN_TABS = [
-    { key: 'bonuses', label: 'Бонуси' },
-    { key: 'inquiries', label: 'Заявки' },
-    { key: 'popular', label: 'Популярне' },
-    { key: 'profit', label: 'Прибуток' },
-    { key: 'customers', label: 'Клієнти' },
-    { key: 'content', label: 'Контент' },
+    { key: 'inquiries', label: 'Заявки',     need: 'inquiries.read' },
+    { key: 'promos',    label: 'Акції',      need: 'discounts.manage' },
+    { key: 'bonuses',   label: 'Бонуси',     need: 'discounts.manage' },
+    { key: 'popular',   label: 'Популярне',  need: 'popular.read' },
+    { key: 'profit',    label: 'Прибуток',   need: 'profit.read' },
+    { key: 'customers', label: 'Клієнти',    need: 'customers.read' },
+    { key: 'content',   label: 'Контент',    need: 'catalog.read' },
+    { key: 'team',      label: 'Команда',    need: 'team.manage' },
   ];
+  var visibleAdminTabs = function () {
+    return ADMIN_TABS.filter(function (t) { return can(t.need); });
+  };
 
   // ── Заявки: what Dasha and Maryna both work from ──────────────────────────
   function adminInquiriesHtml(a) {
@@ -863,8 +1096,14 @@
     if (!a.inquiries.length) return html + '<div class="empty">Заявок ще немає.</div>';
 
     return html + a.inquiries.map(function (q) {
+      // The same link the DM carries. Whoever answers should be one tap from
+      // the post, not from a title a parser guessed. Inquiries stored before
+      // links existed simply render as text.
       var items = (q.items || []).map(function (i) {
-        return '• ' + esc(i.title || 'Позиція') + (i.article ? ' · арт. ' + esc(i.article) : '');
+        var label = esc(i.title || 'Позиція') + (i.article ? ' · арт. ' + esc(i.article) : '');
+        return '• ' + (i.url
+          ? '<a href="' + esc(i.url) + '" target="_blank" rel="noopener">' + label + '</a>'
+          : label);
       }).join('<br/>');
       var STATUS = { new: ['🆕', 'нова'], answered: ['💬', 'відповіли'], closed: ['✅', 'закрита'] };
       var s = STATUS[q.status] || ['•', q.status];
@@ -965,6 +1204,250 @@
     }
 
     return html;
+  }
+
+  // ── Акції: the campaign builder ───────────────────────────────────────────
+  //
+  // Two ways in, and the order matters. A preset is one tap that fills the whole
+  // form — dates, audience, a sensible discount — because nobody launching a
+  // Christmas sale wants to think in conditions. Composing from scratch is the
+  // second door, for the cases no preset covers.
+  //
+  // Every condition present must hold; they are ANDed with no operator to
+  // choose. «3+ покупки АБО $5000, але не з Києва» is a sentence nobody fills in
+  // correctly, and a wrong audience is money given to the wrong people.
+  var CONDITION_FIELDS = [
+    { key: 'firstOrder',           type: 'check', label: 'Ще жодної покупки (перше замовлення)' },
+    { key: 'minPurchases',         type: 'num',   label: 'Покупок від' },
+    { key: 'maxPurchases',         type: 'num',   label: 'Покупок до' },
+    { key: 'minSpentUsd',          type: 'num',   label: 'Сума покупок від, $' },
+    { key: 'maxSpentUsd',          type: 'num',   label: 'Сума покупок до, $' },
+    { key: 'boughtWithinDays',     type: 'num',   label: 'Купував за останні, днів' },
+    { key: 'minPurchasesInWindow', type: 'num',   label: '…і стільки разів за цей період' },
+    { key: 'dormantDays',          type: 'num',   label: 'Не купував уже, днів' },
+    { key: 'birthdayWithinDays',   type: 'num',   label: 'День народження протягом, днів' },
+    { key: 'joinedWithinDays',     type: 'num',   label: 'У клубі не довше, днів' },
+    { key: 'hasBirthday',          type: 'check', label: 'Лише ті, чия дата народження відома' },
+    { key: 'city',                 type: 'text',  label: 'Місто' },
+  ];
+
+  function adminPromosHtml(a) {
+    var html = '<div class="section-title">Готові акції</div>';
+
+    var groups = {};
+    (a.presets || []).forEach(function (p) {
+      (groups[p.group] = groups[p.group] || []).push(p);
+    });
+    var keys = Object.keys(groups);
+    if (!keys.length) return html + '<div class="empty">Завантаження…</div>';
+
+    keys.forEach(function (g) {
+      html += '<div class="fsheet__label">' + esc(g) + '</div><div class="presets">';
+      html += groups[g].map(function (p) {
+        var when = p.startsAt
+          ? dateShort(p.startsAt) + (p.endsAt ? ' — ' + dateShort(p.endsAt) : ' — без кінця')
+          : 'з моменту запуску';
+        return '<button class="preset" type="button" data-preset="' + esc(p.key) + '">' +
+          '<span class="preset__emoji" aria-hidden="true">' + esc(p.emoji) + '</span>' +
+          '<span class="preset__name">' + esc(p.name) + '</span>' +
+          '<span class="preset__when">' + esc(when) + '</span>' +
+          '<span class="preset__why">' + esc(p.why) + '</span>' +
+        '</button>';
+      }).join('') + '</div>';
+    });
+
+    html += '<div class="section-title">Запущені акції</div>';
+    html += (a.campaigns || []).length
+      ? a.campaigns.map(function (c) {
+          var label = c.mode === 'fixed' ? usd(c.value) : (c.value || c.percent) + '%';
+          var when = c.starts_at ? dateShort(c.starts_at) : '—';
+          when += ' → ' + (c.ends_at ? dateShort(c.ends_at) : '∞');
+          return '<div class="row">' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(c.name) + ' · ' + esc(label) + '</div>' +
+              '<div class="row__sub">' + esc(c.status) + ' · ' + esc(when) +
+                (c.preset ? ' · шаблон' : '') + '</div>' +
+            '</div>' +
+            '<button class="btn btn--ghost btn--sm" data-materialize="' + c.id + '">Видати</button>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Акцій ще немає.</div>';
+
+    return html;
+  }
+
+  // The builder itself. `draft` is the campaign being composed; the reach line
+  // under the conditions is the point of the whole screen — the owner sees «27
+  // клієнтів» BEFORE saving, not after, because an audience of nobody is a
+  // campaign that looks like it ran and gave away nothing.
+  function campaignSheetHtml(d, reach) {
+    var chan = (state.config && state.config.channels) || [];
+    var field = function (f) {
+      var v = d.audience[f.key];
+      if (f.type === 'check') {
+        return '<label class="inline"><input type="checkbox" data-cond="' + esc(f.key) + '"' +
+          (v ? ' checked' : '') + ' /> <span class="muted">' + esc(f.label) + '</span></label>';
+      }
+      return '<label class="field"><span class="field__label">' + esc(f.label) + '</span>' +
+        '<input class="field__input" data-cond="' + esc(f.key) + '" ' +
+        (f.type === 'num' ? 'type="number" min="0" ' : '') +
+        'value="' + esc(v == null ? '' : v) + '" /></label>';
+    };
+
+    return '<form class="stack" id="campaignForm">' +
+      '<label class="field"><span class="field__label">Назва акції</span>' +
+        '<input class="field__input" name="name" required value="' + esc(d.name || '') + '" /></label>' +
+      '<div class="form-grid">' +
+        '<label class="field"><span class="field__label">Тип знижки</span>' +
+          '<select class="field__select" name="mode">' +
+            '<option value="percent"' + (d.mode !== 'fixed' ? ' selected' : '') + '>% — відсоток</option>' +
+            '<option value="fixed"' + (d.mode === 'fixed' ? ' selected' : '') + '>$ — фіксована сума</option>' +
+          '</select></label>' +
+        '<label class="field"><span class="field__label">Розмір</span>' +
+          '<input class="field__input" name="value" type="number" step="0.01" min="0.01" required ' +
+            'value="' + esc(d.value == null ? '' : d.value) + '" /></label>' +
+      '</div>' +
+      '<div class="form-grid">' +
+        '<label class="field"><span class="field__label">Мін. замовлення, $</span>' +
+          '<input class="field__input" name="minOrderUsd" type="number" min="0" value="' + esc(d.minOrderUsd || 0) + '" /></label>' +
+        '<label class="field"><span class="field__label">Промокод діє, днів</span>' +
+          '<input class="field__input" name="promoValidDays" type="number" min="1" value="' + esc(d.promoValidDays || 14) + '" /></label>' +
+      '</div>' +
+      '<div class="form-grid">' +
+        '<label class="field"><span class="field__label">Початок</span>' +
+          '<input class="field__input" name="startsAt" type="date" value="' + esc((d.startsAt || '').slice(0, 10)) + '" /></label>' +
+        '<label class="field"><span class="field__label">Кінець</span>' +
+          '<input class="field__input" name="endsAt" type="date" value="' + esc((d.endsAt || '').slice(0, 10)) + '" /></label>' +
+      '</div>' +
+      '<p class="field__hint">Порожній кінець — акція без дати завершення.</p>' +
+
+      '<div class="section-title">Кому</div>' +
+      '<div class="reach" id="reach">' + reachHtml(reach) + '</div>' +
+      CONDITION_FIELDS.map(field).join('') +
+      (chan.length
+        ? '<label class="field"><span class="field__label">Купував з каталогу</span>' +
+            '<select class="field__select" data-cond="sourceChannel">' +
+              '<option value="">— будь-який —</option>' +
+              chan.map(function (c) {
+                return '<option value="' + esc(c.key) + '"' +
+                  (d.audience.sourceChannel === c.key ? ' selected' : '') + '>' + esc(c.title) + '</option>';
+              }).join('') +
+            '</select></label>'
+        : '') +
+
+      '<button class="btn btn--primary" type="submit">Створити акцію</button>' +
+    '</form>';
+  }
+
+  function reachHtml(reach) {
+    if (!reach) return '<span class="reach__count">…</span>';
+    if (reach.error) return '<span class="reach__count reach__count--bad">' + esc(reach.error) + '</span>';
+    var n = reach.count;
+    return '<span class="reach__count' + (n === 0 ? ' reach__count--bad' : '') + '">' +
+        n + ' ' + plural(n, ['клієнт', 'клієнти', 'клієнтів']) + '</span>' +
+      '<span class="reach__terms">' + (reach.audience || []).map(esc).join(' · ') + '</span>';
+  }
+
+  // Read the conditions back out of the form. An empty box is not a condition:
+  // it is the absence of one, which is why blanks are dropped rather than sent
+  // as zero — `minPurchases: 0` would match everybody and read as deliberate.
+  function draftAudienceFromDom() {
+    var out = {};
+    var nodes = document.querySelectorAll('[data-cond]');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var key = el.getAttribute('data-cond');
+      if (el.type === 'checkbox') { if (el.checked) out[key] = true; continue; }
+      var v = String(el.value || '').trim();
+      if (!v) continue;
+      out[key] = el.type === 'number' ? Number(v) : v;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  var reachTimer = null;
+  async function repaintReach() {
+    var host = document.getElementById('reach');
+    if (!host) return;
+    var audience = draftAudienceFromDom();
+    if (state.admin.draft) state.admin.draft.audience = audience || {};
+    clearTimeout(reachTimer);
+    reachTimer = setTimeout(async function () {
+      try {
+        host.innerHTML = reachHtml(await api.admin.previewAudience(audience));
+      } catch (e) {
+        host.innerHTML = reachHtml({ error: e.message });
+      }
+    }, 250);
+  }
+
+  async function openCampaignSheet(presetKey) {
+    var p = (state.admin.presets || []).filter(function (x) { return x.key === presetKey; })[0];
+    state.admin.draft = p
+      ? {
+          preset: p.key, name: p.name, type: p.type,
+          mode: p.suggest.mode, value: p.suggest.value,
+          minOrderUsd: p.suggest.minOrderUsd, promoValidDays: p.suggest.promoValidDays,
+          startsAt: p.startsAt, endsAt: p.endsAt,
+          audience: p.audience || {},
+        }
+      : { preset: null, name: '', type: 'generic', mode: 'percent', value: 10,
+          minOrderUsd: 0, promoValidDays: 14, startsAt: null, endsAt: null, audience: {} };
+
+    openSheet(p ? p.emoji + ' ' + p.name : 'Своя акція', campaignSheetHtml(state.admin.draft, null));
+    await repaintReach();
+  }
+
+  // ── Команда: who works here ───────────────────────────────────────────────
+  function adminTeamHtml(a) {
+    var html = '<div class="section-title">Команда</div>' +
+      '<div class="panel"><p class="panel__note">Супер-адмін бачить і змінює все: акції, бонуси, ' +
+        'прибуток, налаштування і склад команди. Адмін працює з клієнтами — заявки, картки ' +
+        'каталогу, покупки, синхронізація каналів — але не бачить собівартості й не призначає ' +
+        'знижок.</p>' +
+        '<div class="inline"><button class="btn btn--ghost btn--sm" data-action="add-member">Додати людину</button></div>' +
+      '</div>';
+
+    html += (a.team || []).map(function (m) {
+      return '<div class="row">' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(m.name || ('#' + m.tgId)) +
+            ' · ' + (m.role === 'super' ? 'супер-адмін' : 'адмін') + '</div>' +
+          '<div class="row__sub">id ' + esc(m.tgId) +
+            (m.enabled ? '' : ' · вимкнено') +
+            (m.locked ? ' · задано на сервері' : '') + '</div>' +
+        '</div>' +
+        (m.locked ? '<span class="pill">незмінний</span>' :
+          '<div class="row__actions">' +
+            '<button class="btn btn--ghost btn--sm" data-member-role="' + esc(m.tgId) + '" ' +
+              'data-role="' + (m.role === 'super' ? 'admin' : 'super') + '">' +
+              (m.role === 'super' ? 'Зробити адміном' : 'Зробити супер-адміном') + '</button>' +
+            (m.enabled
+              ? '<button class="btn btn--ghost btn--sm" data-member-off="' + esc(m.tgId) + '">Вимкнути</button>'
+              : '<button class="btn btn--ghost btn--sm" data-member-on="' + esc(m.tgId) + '">Увімкнути</button>') +
+          '</div>') +
+      '</div>';
+    }).join('');
+
+    return html;
+  }
+
+  function sheetAddMember() {
+    openSheet('Додати людину',
+      '<form class="stack" id="memberForm">' +
+        '<label class="field"><span class="field__label">Telegram id</span>' +
+          '<input class="field__input" name="tgId" required inputmode="numeric" placeholder="387442030" /></label>' +
+        '<label class="field"><span class="field__label">Імʼя</span>' +
+          '<input class="field__input" name="name" placeholder="Даша" /></label>' +
+        '<label class="field"><span class="field__label">Роль</span>' +
+          '<select class="field__select" name="role">' +
+            '<option value="admin">Адмін — клієнти, каталог, покупки</option>' +
+            '<option value="super">Супер-адмін — усе, разом з акціями й командою</option>' +
+          '</select></label>' +
+        '<p class="field__hint">Id можна дізнатись через @userinfobot. Людина має хоча б раз ' +
+          'відкрити бота, інакше повідомлення до неї не дійдуть.</p>' +
+        '<button class="btn btn--primary" type="submit">Додати</button>' +
+      '</form>');
   }
 
   // ── Бонуси: the $ ⇄ % switch for both rules and every holiday ─────────────
@@ -1107,19 +1590,66 @@
   }
 
   function adminContentHtml(a) {
-    var html = '<div class="section-title">Канали</div>' +
-      '<div class="panel"><p class="panel__note">Все, що адмін публікує в каналі, автоматично ' +
-        'зʼявляється у стрічці застосунку; публікація звідси йде в канал. Новий канал реєструється ' +
-        'сам, коли бот-адмін бачить перший пост.</p></div>';
+    // The channel list carries its own sync state, so it comes from the admin
+    // endpoint (with counts) rather than from the client config. `.length` and not
+    // just `a.channels`: an empty array is truthy, so the fallback would never
+    // fire and the section would render as a heading with nothing under it.
+    var channels = (a.channels && a.channels.length) ? a.channels : (state.config.channels || []);
+    var syncable = channels.filter(function (c) { return c.username && c.enabled; });
+    var all = a.sync.__all || {};
 
-    html += (state.config.channels || []).map(function (c) {
-      return '<div class="row">' +
+    var html = '<div class="section-title">Канали</div>' +
+      '<div class="panel"><p class="panel__note">«Синхронізувати» зчитує канал і вирівнює каталог ' +
+        'під нього: нові пости додаються, змінені оновлюються, знятих більше не видно. ' +
+        'Сам канал не змінюється — застосунок його лише читає. Виправлені вручну назви та ' +
+        'приховані картки синхронізація не перезаписує.</p>' +
+      // At fifteen catalogues, pressing the per-channel button fifteen times is
+      // not a workflow. Adding one is a form for the same reason: a new channel
+      // must never need a developer.
+      '<div class="inline">' +
+        '<button class="btn btn--primary btn--sm" data-sync-all="1"' + (all.running ? ' disabled' : '') + '>' +
+          (all.running ? esc(all.note) : 'Синхронізувати всі (' + syncable.length + ')') + '</button>' +
+        '<button class="btn btn--ghost btn--sm" data-action="add-channel">Додати каталог</button>' +
+      '</div></div>';
+    // Thirty-one rows, of which a dozen are empty placeholders for brands nobody
+    // has a channel for yet. The ones that can actually be synced go first, then
+    // the fullest — the same ordering rule the client's chips use.
+    channels = channels.slice().sort(function (x, y) {
+      var sx = (x.username ? 2 : 0) + (x.enabled ? 1 : 0);
+      var sy = (y.username ? 2 : 0) + (y.enabled ? 1 : 0);
+      if (sx !== sy) return sy - sx;
+      return ((y.posts && y.posts.published) || 0) - ((x.posts && x.posts.published) || 0);
+    });
+    html += channels.map(function (c) {
+      var counts = c.posts || null;
+      var job = a.sync[c.key];
+      var sub = esc(c.username ? '@' + c.username : c.key) +
+        (counts ? ' · ' + counts.published + ' поз.' : '') +
+        (counts && counts.gone ? ' · ' + counts.gone + ' знято' : '') +
+        (counts && counts.hidden ? ' · ' + counts.hidden + ' прихов.' : '') +
+        (c.syncedAt ? ' · ' + esc(timeAgo(c.syncedAt)) : ' · ще не синхронізовано');
+
+      return '<div class="row row--sync">' +
         '<div class="row__icon">' + esc(c.emoji || '🛍️') + '</div>' +
         '<div class="row__body">' +
           '<div class="row__title">' + esc(c.title) + '</div>' +
-          '<div class="row__sub">' + esc(c.username ? '@' + c.username : c.key) +
-            ' · ' + (c.kind === 'main' ? 'головний' : 'каталог') + '</div>' +
+          '<div class="row__sub">' + sub + '</div>' +
+          (job ? '<div class="row__sync' + (job.error ? ' is-error' : '') + '">' +
+            esc(job.error || job.note) + '</div>' : '') +
         '</div>' +
+        (c.username
+          ? '<div class="row__actions">' +
+              (c.kind === 'main'
+                ? '<span class="pill pill--ok">стрічка</span>'
+                : '<button class="btn btn--ghost btn--sm" data-make-main="' + esc(c.key) + '">Зробити стрічкою</button>') +
+              '<button class="btn btn--primary btn--sm" data-sync="' + esc(c.key) + '"' +
+                (job && job.running ? ' disabled' : '') + '>' +
+                (job && job.running ? '…' : 'Синхронізувати') + '</button>' +
+              (c.historyDone ? '' :
+                '<button class="btn btn--ghost btn--sm" data-sync-deep="' + esc(c.key) + '"' +
+                  (job && job.running ? ' disabled' : '') + '>Уся історія</button>') +
+            '</div>'
+          : '<span class="pill pill--warn">без @username</span>') +
       '</div>';
     }).join('');
 
@@ -1186,17 +1716,25 @@
     var html = topbarHtml() + '<div class="stack">';
 
     html += '<div class="panel"><div class="panel__head">' +
-        '<div class="panel__title">Кабінет</div>' +
+        '<div class="panel__title">Кабінет' +
+          (state.me && state.me.role === 'super' ? ' · супер-адмін' : (state.me && state.me.role ? ' · адмін' : '')) +
+        '</div>' +
         '<span class="pill' + (state.config.live ? ' pill--ok' : ' pill--warn') + '">' +
           (state.config.live ? 'Telegram LIVE' : 'DEMO — публікації симулюються') + '</span>' +
       '</div>' +
       '<div class="inline">' +
-        '<button class="btn btn--primary" data-action="new-post">Опублікувати товар</button>' +
-        '<button class="btn btn--ghost" data-action="new-purchase">Додати покупку</button>' +
-        '<button class="btn btn--ghost" data-action="new-campaign">Нова кампанія</button>' +
+        (can('posts.publish') ? '<button class="btn btn--primary" data-action="new-post">Опублікувати товар</button>' : '') +
+        (can('purchases.write') ? '<button class="btn btn--ghost" data-action="new-purchase">Додати покупку</button>' : '') +
+        (can('discounts.manage') ? '<button class="btn btn--ghost" data-action="new-campaign">Нова акція</button>' : '') +
       '</div></div>';
 
-    html += '<div class="seg">' + ADMIN_TABS.map(function (t) {
+    var tabs = visibleAdminTabs();
+    // Somebody whose current tab is not in their list (a role changed under
+    // them) lands on the first one they do have rather than on an empty panel.
+    if (!tabs.some(function (t) { return t.key === a.adminTab; })) {
+      a.adminTab = tabs.length ? tabs[0].key : null;
+    }
+    html += '<div class="seg">' + tabs.map(function (t) {
       return '<button class="seg__btn' + (a.adminTab === t.key ? ' is-active' : '') +
         '" data-admin-tab="' + t.key + '">' + esc(t.label) + '</button>';
     }).join('') + '</div>';
@@ -1206,12 +1744,36 @@
     else if (a.adminTab === 'popular') html += adminPopularHtml(a);
     else if (a.adminTab === 'customers') html += adminCustomersHtml(a);
     else if (a.adminTab === 'content') html += adminContentHtml(a);
-    else html += adminBonusesHtml(a);
+    else if (a.adminTab === 'promos') html += adminPromosHtml(a);
+    else if (a.adminTab === 'team') html += adminTeamHtml(a);
+    else if (a.adminTab === 'bonuses') html += adminBonusesHtml(a);
+    else html += '<div class="empty">Тут для вас поки нічого немає.</div>';
 
     return html + '</div>';
   }
 
   /* ── sheets (admin forms) ───────────────────────────────────────────────── */
+
+  // Adding a catalogue: the @username is the only thing that matters. The title
+  // and the emoji are the labels on the chip and default to what the channel
+  // calls itself, so the shortest possible path is one field.
+  function sheetAddChannel() {
+    openSheet('Додати каталог',
+      '<form class="stack" id="addChannelForm">' +
+        '<label class="field"><span class="field__label">Канал</span>' +
+          '<input class="field__input" name="username" required placeholder="@w2b_luxury_bags" ' +
+            'autocapitalize="off" autocorrect="off" spellcheck="false" /></label>' +
+        '<div class="form-grid">' +
+          '<label class="field"><span class="field__label">Назва (необовʼязково)</span>' +
+            '<input class="field__input" name="title" placeholder="Сумки жіночі" /></label>' +
+          '<label class="field"><span class="field__label">Емодзі</span>' +
+            '<input class="field__input" name="emoji" placeholder="👜" maxlength="4" /></label>' +
+        '</div>' +
+        '<p class="field__hint">Канал має бути публічним — застосунок читає його відкриту ' +
+          'сторінку. Після додавання натисніть «Синхронізувати», щоб підтягнути позиції.</p>' +
+        '<button class="btn btn--primary" type="submit">Додати</button>' +
+      '</form>');
+  }
 
   function sheetNewPost() {
     openSheet('Опублікувати товар',
@@ -1535,11 +2097,18 @@
       state.purchases = r[3];
       state.birthday = r[1].birthday || (r[0].birthday || null);
     } else if (tab === 'catalog') {
-      var both = await Promise.all([loadVitrine(), state.catalogs.length ? null : api.catalogs()]);
-      if (both[1]) {
-        state.catalogs = both[1].catalogs || [];
-        state.catalogTotal = both[1].total || 0;
-        state.inStockKey = both[1].inStockKey || 'available';
+      var loaded = await Promise.all([
+        loadVitrine(),
+        api.facets(selection()),
+        // The chips carry per-catalogue totals, which do not depend on the
+        // selection — fetched once per session.
+        state.catalogs.length ? null : api.catalogs(),
+      ]);
+      state.facets = loaded[1] || state.facets;
+      if (loaded[2]) {
+        state.catalogs = loaded[2].catalogs || [];
+        state.catalogTotal = loaded[2].total || 0;
+        state.inStockKey = loaded[2].inStockKey || 'available';
       }
     } else if (tab === 'feed') {
       var f = await api.feedKind('main');
@@ -1550,54 +2119,178 @@
     } else if (tab === 'admin') {
       // One round-trip per panel, all in parallel; a failing panel must not
       // blank the whole cabinet, so each result is taken defensively.
-      var a = await Promise.all([
-        api.admin.customers(), api.admin.campaigns(), api.admin.rules(),
-        api.admin.profit(), api.admin.pendingCosts(), api.admin.birthdayClaims(),
+      // Only what this role is allowed to read, and each panel taken on its
+      // own: Promise.all rejects as a group, so one 403 used to blank the whole
+      // cabinet — which is exactly what a manager would have seen, since half
+      // of these are the owner's.
+      var take = function (allowed, call, apply) {
+        if (!allowed) return Promise.resolve();
+        return call().then(apply).catch(function () { /* one panel, not the cabinet */ });
+      };
+      await Promise.all([
+        take(can('customers.read'), api.admin.customers, function (r) { state.admin.customers = r.customers || []; }),
+        take(can('customers.read'), api.admin.birthdayClaims, function (r) { state.admin.claims = r.claims || []; }),
+        take(can('discounts.manage'), api.admin.campaigns, function (r) { state.admin.campaigns = r.campaigns || []; }),
+        take(can('discounts.manage'), api.admin.rules, function (r) {
+          state.admin.rules = r.rules || []; state.admin.holidays = r.holidays || [];
+        }),
+        take(can('profit.read'), api.admin.profit, function (r) { state.admin.profit = r || null; }),
+        take(can('profit.read'), api.admin.pendingCosts, function (r) { state.admin.pendingCosts = r.pending || []; }),
       ]);
-      state.admin.customers = a[0].customers || [];
-      state.admin.campaigns = a[1].campaigns || [];
-      state.admin.rules = a[2].rules || [];
-      state.admin.holidays = a[2].holidays || [];
-      state.admin.profit = a[3] || null;
-      state.admin.pendingCosts = a[4].pending || [];
-      state.admin.claims = a[5].claims || [];
-      if (state.admin.adminTab === 'popular') await loadPopular();
-      if (state.admin.adminTab === 'content') state.admin.posts = (await api.admin.posts()).posts || [];
-      if (state.admin.adminTab === 'inquiries') {
+      if (state.admin.adminTab === 'popular' && can('popular.read')) await loadPopular();
+      if (state.admin.adminTab === 'content' && can('catalog.read')) {
+        var content = await Promise.all([api.admin.posts(), api.admin.channels()]);
+        state.admin.posts = content[0].posts || [];
+        state.admin.channels = content[1].channels || [];
+      }
+      if (state.admin.adminTab === 'inquiries' && can('inquiries.read')) {
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+      }
+      if (state.admin.adminTab === 'promos' && can('discounts.manage')) {
+        state.admin.presets = (await api.admin.presets()).presets || [];
+      }
+      if (state.admin.adminTab === 'team' && can('team.manage')) {
+        state.admin.team = (await api.admin.team()).team || [];
       }
     }
   }
 
-  // Search wins over the chip: a query looks across every catalogue.
-  async function loadVitrine() {
-    var r = state.search
-      ? await api.feedSearch(state.search)
-      : (state.feedChannel && state.feedChannel !== 'all'
-          ? await api.feed(state.feedChannel)
-          : await api.feedKind('catalog'));
-    state.feed = r.posts || [];
+  // What the client is currently looking at — the one description of the
+  // selection, shared by the vitrine and by its filters. api.js turns it into
+  // query params (and drops the chip while a search is running, because a
+  // search spans every catalogue).
+  function selection(extra) {
+    var sel = {
+      channel: state.feedChannel,
+      q: state.search,
+      brand: state.filters.brand,
+      category: state.filters.category,
+    };
+    if (extra && extra.cursor) sel.cursor = extra.cursor;
+    return sel;
+  }
+
+  async function loadVitrine(opts) {
+    var append = Boolean(opts && opts.append);
+    var r = await api.vitrine(selection(append ? { cursor: state.nextCursor } : null));
+    state.feed = append ? state.feed.concat(r.posts || []) : (r.posts || []);
+    state.nextCursor = r.nextCursor || null;
     return r;
   }
 
-  // Typing re-queries the server without repainting the whole screen, so the
-  // input never loses focus mid-word.
-  var searchTimer = null;
+  // Changing the selection re-queries the vitrine AND its filters: the values
+  // worth offering inside «Chanel» are not the ones worth offering across every
+  // catalogue. Both are refreshed together so the row never advertises a filter
+  // that yields nothing.
   async function refreshVitrine() {
     try {
-      await loadVitrine();
-      var grid = $app.querySelector('.tiles');
-      var head = $app.querySelector('.vitrine-head__count');
-      var empty = $app.querySelector('.empty');
-      if (head) head.textContent = state.feed.length + ' позицій';
-      var tiles = state.feed.map(tileHtml).join('');
-      if (grid) {
-        if (state.feed.length) grid.innerHTML = tiles;
-        else grid.outerHTML = '<div class="empty">За запитом «' + esc(state.search) + '» нічого не знайшли</div>';
-      } else if (empty && state.feed.length) {
-        empty.outerHTML = '<div class="tiles">' + tiles + '</div>';
-      }
+      state.nextCursor = null;
+      var r = await Promise.all([loadVitrine(), api.facets(selection())]);
+      state.facets = r[1] || state.facets;
+      repaintVitrine();
     } catch (e) { toast(e.message, 'error'); }
+  }
+
+  var searchTimer = null;
+
+  async function loadMore() {
+    if (!state.nextCursor || state.loadingMore) return;
+    state.loadingMore = true;
+    repaintVitrine();
+    try {
+      await loadVitrine({ append: true });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      state.loadingMore = false;
+      repaintVitrine();
+    }
+  }
+
+  // «Синхронізувати». One request reads a few pages of the channel; the server
+  // reports where it stopped and this keeps calling while there is more. That
+  // structure exists because the app runs on a serverless host: a whole channel
+  // is thousands of pages and a function has seconds, so the loop has to live on
+  // this side. The admin sees each round land instead of watching a frozen button.
+  async function runSync(key, deep, opts) {
+    if (state.admin.sync[key] && state.admin.sync[key].running) return;
+    var silent = Boolean(opts && opts.silent);
+
+    var totals = { added: 0, updated: 0, gone: 0, pages: 0 };
+    state.admin.sync[key] = { running: true, note: 'читаю канал…', error: null };
+    repaintAdmin();
+
+    try {
+      // A hard stop, so a mis-parsed cursor can never turn into an endless loop
+      // hammering Telegram. 400 rounds is far more history than any catalogue has.
+      for (var round = 0; round < 400; round += 1) {
+        var r = await api.admin.syncChannel(key, { deep: deep, pages: 4 });
+        totals.added += r.added;
+        totals.updated += r.updated;
+        totals.gone += r.gone;
+        totals.pages += r.pages;
+
+        state.admin.sync[key] = {
+          running: !r.done,
+          note: '+' + totals.added + ' нових · ' + totals.updated + ' оновлено' +
+            (totals.gone ? ' · ' + totals.gone + ' знято' : '') +
+            ' · ' + totals.pages + ' стор.' + (r.done ? '' : ' …'),
+          error: null,
+        };
+        repaintAdmin();
+        if (r.done) break;
+      }
+    } catch (e) {
+      state.admin.sync[key] = { running: false, note: '', error: e.message };
+      repaintAdmin();
+      toast(e.message, 'error');
+      return;
+    }
+
+    // The counts on the rows and the cards below them are both stale now.
+    try {
+      var fresh = await Promise.all([api.admin.channels(), api.admin.posts()]);
+      state.admin.channels = fresh[0].channels || [];
+      state.admin.posts = fresh[1].posts || [];
+    } catch (e) { /* the sync itself succeeded; a stale count is not worth a toast */ }
+
+    // The vitrine the client sees was just rewritten underneath it.
+    state.catalogs = [];
+    state.admin.sync[key] = Object.assign({}, state.admin.sync[key], { running: false }, totals);
+    repaintAdmin();
+    if (!silent) {
+      toast('Синхронізовано: +' + totals.added + ' нових, ' + totals.updated + ' оновлено' +
+        (totals.gone ? ', ' + totals.gone + ' знято' : ''));
+    }
+  }
+
+  // Sync every catalogue, one after another. Sequential on purpose: each channel
+  // is already a stream of requests to Telegram, and firing fifteen streams at
+  // once is how you collect a rate limit instead of a catalogue.
+  async function runSyncAll() {
+    if (state.admin.sync.__all && state.admin.sync.__all.running) return;
+    var list = (state.admin.channels || []).filter(function (c) { return c.username && c.enabled; });
+    var totals = { added: 0, updated: 0, gone: 0 };
+
+    for (var i = 0; i < list.length; i++) {
+      state.admin.sync.__all = { running: true, note: 'канал ' + (i + 1) + ' з ' + list.length + '…' };
+      repaintAdmin();
+      try {
+        await runSync(list[i].key, false, { silent: true });
+        var done = state.admin.sync[list[i].key] || {};
+        totals.added += done.added || 0;
+        totals.updated += done.updated || 0;
+        totals.gone += done.gone || 0;
+      } catch (e) { /* runSync already showed it on the row; keep going */ }
+    }
+
+    state.admin.sync.__all = { running: false, note: '' };
+    repaintAdmin();
+    toast('Усі канали синхронізовано: +' + totals.added + ' нових, ' + totals.updated + ' оновлено');
+  }
+
+  function repaintAdmin() {
+    if (state.tab === 'admin') $app.innerHTML = renderAdmin();
   }
 
   async function loadPopular() {
@@ -1672,13 +2365,92 @@
       state.feedChannel = chip.getAttribute('data-channel');
       // Tapping a catalogue is an explicit choice — it clears an active search.
       state.search = '';
+      // …and the content filters, which belonged to the previous catalogue: a
+      // brand carried over into a catalogue that has none leaves the client
+      // staring at «нічого немає» with no idea why.
+      state.filters = { brand: null, category: null };
       go('catalog');
+      return;
+    }
+
+    if (t.closest('[data-open-filters]')) {
+      tg.haptic('light');
+      openFiltersSheet();
+      return;
+    }
+
+    var drop = t.closest('[data-drop-filter]');
+    if (drop) {
+      var which = drop.getAttribute('data-drop-filter');
+      if (which === 'all') state.filters = { brand: null, category: null };
+      else state.filters[which] = null;
+      tg.haptic('light');
+      await refreshVitrine();
+      // The sheet stays open while filters are being changed from inside it.
+      if (!$sheet.hidden) $sheetPanel.querySelector('[data-facet]')
+        ? openSheet('Фільтри', filtersSheetHtml()) : closeSheet();
+      return;
+    }
+
+    var facet = t.closest('[data-facet]');
+    if (facet) {
+      var kind = facet.getAttribute('data-facet');
+      var value = facet.getAttribute('data-value') || null;
+      // Tapping the active value clears it, so a filter is never a trap.
+      state.filters[kind] = state.filters[kind] === value ? null : value;
+      tg.haptic('light');
+      await refreshVitrine();
+      // Re-render the sheet in place so the choice is visibly taken and a second
+      // filter can be stacked without reopening anything.
+      if (!$sheet.hidden) openSheet('Фільтри', filtersSheetHtml());
+      return;
+    }
+
+    if (t.closest('[data-more]')) {
+      await loadMore();
       return;
     }
 
     if (t.closest('[data-search-clear]')) {
       state.search = '';
       go('catalog');
+      return;
+    }
+
+    var mainBtn = t.closest('[data-make-main]');
+    if (mainBtn) {
+      var mkey = mainBtn.getAttribute('data-make-main');
+      tg.haptic('light');
+      try {
+        var r = await api.admin.setMainChannel(mkey);
+        var fresh = await api.admin.channels();
+        state.admin.channels = fresh.channels || [];
+        state.catalogs = [];          // one chip left the filter row
+        state.feed = [];
+        repaintAdmin();
+        toast('«' + r.channel.title + '» тепер показується у вкладці «Стрічка»' +
+          (r.demoted.length ? ' (замість «' + r.demoted[0].title + '»)' : ''));
+      } catch (e) { toast(e.message, 'error'); }
+      return;
+    }
+
+    if (t.closest('[data-sync-all]')) {
+      tg.haptic('light');
+      await runSyncAll();
+      return;
+    }
+
+    var syncBtn = t.closest('[data-sync]');
+    if (syncBtn) {
+      tg.haptic('light');
+      await runSync(syncBtn.getAttribute('data-sync'), false);
+      return;
+    }
+
+    var syncDeep = t.closest('[data-sync-deep]');
+    if (syncDeep) {
+      tg.haptic('light');
+      await runSync(syncDeep.getAttribute('data-sync-deep'), true);
       return;
     }
 
@@ -1763,7 +2535,19 @@
           $app.innerHTML = renderAdmin();
         }
         if (key === 'content') {
-          state.admin.posts = (await api.admin.posts()).posts || [];
+          // Channels come from the admin endpoint, not from the client config:
+          // only it carries the post counts and the sync state the rows show.
+          var content = await Promise.all([api.admin.posts(), api.admin.channels()]);
+          state.admin.posts = content[0].posts || [];
+          state.admin.channels = content[1].channels || [];
+          $app.innerHTML = renderAdmin();
+        }
+        if (key === 'promos') {
+          state.admin.presets = (await api.admin.presets()).presets || [];
+          $app.innerHTML = renderAdmin();
+        }
+        if (key === 'team') {
+          state.admin.team = (await api.admin.team()).team || [];
           $app.innerHTML = renderAdmin();
         }
       } catch (err) { toast(err.message, 'error'); }
@@ -1784,6 +2568,38 @@
 
     var cust = t.closest('[data-customer]');
     if (cust && !t.closest('[data-action]')) { sheetCustomer(cust.getAttribute('data-customer')); return; }
+
+    var presetBtn = t.closest('[data-preset]');
+    if (presetBtn) { await openCampaignSheet(presetBtn.getAttribute('data-preset')); return; }
+
+    var memberRole = t.closest('[data-member-role]');
+    if (memberRole) {
+      try {
+        state.admin.team = (await api.admin.setMember(memberRole.getAttribute('data-member-role'),
+          { role: memberRole.getAttribute('data-role') })).team;
+        await go('admin', { keepScroll: true });
+        toast('Роль змінено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+    var memberOff = t.closest('[data-member-off]');
+    if (memberOff) {
+      try {
+        state.admin.team = (await api.admin.removeMember(memberOff.getAttribute('data-member-off'))).team;
+        await go('admin', { keepScroll: true });
+        toast('Доступ вимкнено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+    var memberOn = t.closest('[data-member-on]');
+    if (memberOn) {
+      try {
+        state.admin.team = (await api.admin.setMember(memberOn.getAttribute('data-member-on'), { enabled: true })).team;
+        await go('admin', { keepScroll: true });
+        toast('Доступ увімкнено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
 
     var mat = t.closest('[data-materialize]');
     if (mat) {
@@ -1810,7 +2626,9 @@
 
     if (name === 'notifications') { sheetNotifications(); return; }
     if (name === 'new-post') { sheetNewPost(); return; }
-    if (name === 'new-campaign') { sheetNewCampaign(); return; }
+    if (name === 'add-channel') { sheetAddChannel(); return; }
+    if (name === 'new-campaign') { await openCampaignSheet(null); return; }
+    if (name === 'add-member') { sheetAddMember(); return; }
     if (name === 'new-holiday') { sheetNewHoliday(); return; }
     if (name === 'new-purchase') { sheetNewPurchase(action.getAttribute('data-customer')); return; }
     // Claiming with a date already on file: the server verifies it and either
@@ -1836,12 +2654,35 @@
     }
   });
 
-  // Dynamic search: 220 ms after the last keystroke, only the grid repaints.
+  // An avatar that fails to load must become initials, not a broken-image icon.
+  // The support photograph is resolved from Telegram at request time and there
+  // are honest reasons it may be missing — see /api/support/photo. Captured,
+  // because `error` on an <img> does not bubble.
+  document.addEventListener('error', function (e) {
+    var img = e.target;
+    if (!img || !img.classList || !img.classList.contains('thanks__photo')) return;
+    var host = img.parentNode;
+    if (!host) return;
+    var s = support();
+    var initials = String(s.name || '?').trim().split(/\s+/).slice(0, 2)
+      .map(function (w) { return w.charAt(0); }).join('').toUpperCase();
+    host.innerHTML = '<span class="thanks__initials">' + esc(initials) + '</span>';
+  }, true);
+
+  // Dynamic search: 220 ms after the last keystroke, only the vitrine repaints.
   document.addEventListener('input', function (e) {
-    if (e.target.id !== 'searchInput') return;
-    state.search = e.target.value.trim();
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(refreshVitrine, 220);
+    if (e.target.id === 'searchInput') {
+      state.search = e.target.value.trim();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(refreshVitrine, 220);
+      return;
+    }
+    // The reach line under the conditions, recomputed as they are typed. This
+    // is the whole honesty of the builder: the number is there BEFORE saving.
+    if (e.target.hasAttribute && e.target.hasAttribute('data-cond')) void repaintReach();
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.hasAttribute && e.target.hasAttribute('data-cond')) void repaintReach();
   });
 
   document.addEventListener('submit', async function (e) {
@@ -1852,7 +2693,43 @@
     if (submit) submit.disabled = true;
 
     try {
-      if (form.id === 'joinForm') {
+      if (form.id === 'addChannelForm') {
+        var added = await api.admin.addChannel(data);
+        closeSheet();
+        var fresh = await api.admin.channels();
+        state.admin.channels = fresh.channels || [];
+        state.catalogs = [];           // the client's chips changed
+        repaintAdmin();
+        toast(added.created
+          ? 'Каталог «' + added.channel.title + '» додано — тепер синхронізуйте'
+          : 'Такий канал уже був: «' + added.channel.title + '»');
+      } else if (form.id === 'campaignForm') {
+        var draft = state.admin.draft || {};
+        var created = await api.admin.createCampaign({
+          preset: draft.preset || null,
+          name: data.name,
+          type: draft.type || 'generic',
+          mode: data.mode,
+          value: Number(data.value),
+          minOrderUsd: Number(data.minOrderUsd || 0),
+          promoValidDays: Number(data.promoValidDays || 14),
+          // A date input gives a bare day; the end of the window means the end
+          // of that day, not its first second.
+          startsAt: data.startsAt ? data.startsAt + 'T00:00:00.000Z' : null,
+          endsAt: data.endsAt ? data.endsAt + 'T23:59:59.000Z' : null,
+          audience: draftAudienceFromDom(),
+        });
+        closeSheet();
+        state.admin.draft = null;
+        await go('admin');
+        toast('Акцію створено — «Видати», щоб роздати промокоди');
+        void created;
+      } else if (form.id === 'memberForm') {
+        state.admin.team = (await api.admin.addMember(data)).team;
+        closeSheet();
+        await go('admin');
+        toast('Додано');
+      } else if (form.id === 'joinForm') {
         await api.register({
           name: data.name, phone: data.phone, address: data.address,
           birthday: data.birthday, consent: data.consent ? 1 : 0,
@@ -1866,13 +2743,7 @@
         // cover the text.
         tg.haptic('success');
         paintCartBadge(0);
-        openSheet('Готово 💛',
-          '<div class="stack">' +
-            '<div class="panel"><p class="panel__note">' + esc(support().name) +
-              ' звʼяжеться з вами дуже скоро — ваш запит уже видно' +
-              (ires.promo ? ' і вашу знижку ' + esc(ires.promo.label) : '') + '.</p></div>' +
-            '<button class="btn btn--primary" type="button" data-close>Зрозуміло</button>' +
-          '</div>');
+        openSheet('', thanksHtml(ires), { center: true });
         await go('cart', { keepScroll: true });
       } else if (form.id === 'birthdayForm') {
         // First claim: the date is recorded now and checked on every later one.
@@ -2002,24 +2873,18 @@
       return;
     }
 
-    state.me = await api.me();
-
-    // Demo profile switcher — only outside Telegram, and only while the server
-    // reports open-demo mode.
-    if (tg.isDemo && state.config.demo) {
+    // The zero-config demo picks a seeded customer to browse as — but only when
+    // the SERVER says this is a demo. In production an unsigned browser stays
+    // anonymous: it can look at the vitrine and is invited to join, instead of
+    // claiming an id it cannot prove and being refused.
+    if (!tg.inTelegram && !tg.userId && state.config.demo) {
       try {
-        var p = await api.demoProfiles();
-        $demoUser.innerHTML = p.profiles.map(function (x) {
-          return '<option value="' + esc(x.tgId) + '"' + (x.tgId === tg.userId ? ' selected' : '') +
-            '>' + esc(x.name) + '</option>';
-        }).join('');
-        $demobar.hidden = false;
-        $demoUser.addEventListener('change', function () {
-          tg.setUserId($demoUser.value);
-          go(state.tab);
-        });
-      } catch (e) { /* switcher is a convenience, not a requirement */ }
+        var profiles = (await api.demoProfiles()).profiles || [];
+        if (profiles.length) tg.setUserId(profiles[0].tgId || profiles[0].tg_user_id);
+      } catch (e) { /* no demo profiles — stay anonymous */ }
     }
+
+    state.me = await api.me();
 
     // The admin tab is shown when the server says this caller is an admin.
     if (state.me.admin) {

@@ -13,37 +13,62 @@
   <link rel="stylesheet" href="/css/views.css" />
 </head>
 <body>
-  <!-- Demo profile switcher (hidden inside real Telegram) -->
-  <div id="demobar" class="demobar" hidden>
-    <span class="demobar__dot"></span>
-    <span class="demobar__label">DEMO</span>
-    <select id="demoUser" class="demobar__select" aria-label="Демо-профіль"></select>
-  </div>
-
   <main id="app" class="app"><div class="loader">Завантаження…</div></main>
 
-  <!-- Bottom navigation -->
+  <!-- Bottom navigation. One line weight, one 24-grid, and five glyphs taken
+       from the shop rather than from an icon set: paper bag, paper plane,
+       hanger, per cent, briefcase. Each is explained where it is drawn. -->
   <nav id="nav" class="nav" hidden>
     <button class="nav__btn" data-tab="catalog">
-      <svg viewBox="0 0 24 24"><path d="M6 8h12l1 12H5z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>
+      <!-- The boutique paper bag. It was the wrong icon while «Примірочна» was
+           also a bag; with the fitting room now a hanger the strongest retail
+           symbol there is comes free. -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5.5 8h13l-1 11.6a1 1 0 0 1-1 .9H7.5a1 1 0 0 1-1-.9z"/>
+        <path d="M9.3 8V6.4a2.7 2.7 0 0 1 5.4 0V8"/>
+      </svg>
       <span>Каталоги</span>
     </button>
     <button class="nav__btn" data-tab="feed">
-      <svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6l-5 4H4z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>
-      <span>Канал</span>
+      <!-- Telegram's own paper plane: the tab IS the Telegram channel, and no
+           drawing explains that faster than the symbol the app itself uses. -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20.5 3.5 10.4 13.6"/>
+        <path d="M20.5 3.5 14.2 20.5l-3.8-6.9-6.9-3.8z"/>
+      </svg>
+      <span>Стрічка</span>
     </button>
     <!-- Примірочна: the badge is the only counter a client has to understand -->
     <button class="nav__btn nav__btn--cart" data-tab="cart">
-      <svg viewBox="0 0 24 24"><path d="M5 7h14l-1.2 12H6.2z"/><path d="M9 7V5.5a3 3 0 0 1 6 0V7"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <!-- The hook is the only thing that separates a hanger from a triangle,
+             so it gets a wider arc than the shape would otherwise need: at 20px
+             a 1.2px stroke has very little room to say "hanger". -->
+        <path d="M12 10.2V8.4a2.3 2.3 0 1 1 2.3-2.3"/>
+        <path d="M12 10.2 4.3 16.1a1 1 0 0 0 .6 1.8h14.2a1 1 0 0 0 .6-1.8z"/>
+      </svg>
       <span>Примірочна</span>
       <span class="nav__badge" id="cartBadge" hidden>0</span>
     </button>
     <button class="nav__btn" data-tab="home">
-      <svg viewBox="0 0 24 24"><path d="M12 4l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4L7.5 17.8l.9-5L4.8 9.3l5-.7z"/></svg>
+      <!-- A percent, not a tag. The tab is «Знижки», and a per-cent sign is the
+           one symbol every client already reads as "cheaper" without learning
+           anything — a tag only says "there is a price". -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M18.5 5.5 5.5 18.5"/>
+        <circle cx="7.8" cy="7.8" r="2.8"/><circle cx="16.2" cy="16.2" r="2.8"/>
+      </svg>
       <span>Знижки</span>
     </button>
     <button class="nav__btn nav__btn--admin" data-tab="admin" hidden>
-      <svg viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></svg>
+      <!-- A briefcase: «Кабінет» is an office, and this is the office. Sliders
+           described the contents; this describes the room, which is what the
+           label says. -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.8" y="7.8" width="18.4" height="12" rx="1.6"/>
+        <path d="M8.8 7.8V6.4A1.6 1.6 0 0 1 10.4 4.8h3.2a1.6 1.6 0 0 1 1.6 1.6v1.4"/>
+        <path d="M2.8 12.6h18.4"/>
+      </svg>
       <span>Кабінет</span>
     </button>
   </nav>

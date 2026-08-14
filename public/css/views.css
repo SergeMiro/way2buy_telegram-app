@@ -16,7 +16,7 @@
   width: 46px;
   height: 46px;
   flex: none;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-gold-fill);
   color: var(--w2b-ink);
   display: grid;
@@ -48,7 +48,7 @@
   position: relative;
   width: 40px;
   height: 40px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   border: 1px solid var(--w2b-line);
   background: var(--w2b-surface-1);
   color: var(--w2b-text);
@@ -60,30 +60,29 @@
 .bell:active { transform: scale(0.94); }
 .bell .notif-badge { position: absolute; top: -4px; right: -4px; }
 
-/* ── cashback panel ──────────────────────────────────────────────────────── */
+/* ── cashback panel ───────────────────────────────────────────────────────
+   Read top to bottom rather than left to right: what it is, how much, how far
+   along. The ring that used to sit on the left took a third of the panel's
+   width and pushed the rule text into a four-line column beside it. */
 .wallet {
-  display: flex;
-  align-items: center;
-  gap: var(--w2b-space-5);
-  padding: var(--w2b-space-5);
+  display: block;
+  padding: var(--w2b-space-3);
   border-radius: var(--w2b-radius-card);
   background: var(--w2b-surface-1);
-  box-shadow: var(--w2b-inset-hairline), var(--w2b-shadow-2);
+  border: 1px solid var(--w2b-line);
+  box-shadow: none;
 }
-.wallet__body { min-width: 0; flex: 1; }
+.wallet__body { min-width: 0; }
 .wallet__amount {
   font-family: var(--w2b-font-display);
-  font-weight: var(--w2b-fw-black);
+  font-weight: var(--w2b-fw-regular);
   font-size: var(--w2b-fs-2xl);
-  line-height: var(--w2b-lh-tight);
+  line-height: 1;
   letter-spacing: var(--w2b-ls-tight);
-  color: var(--w2b-gold-soft);
+  color: var(--w2b-text);
+  margin-top: 3px;
 }
-.wallet__caption {
-  color: var(--w2b-text-muted);
-  font-size: var(--w2b-fs-sm);
-  margin-top: var(--w2b-space-1);
-}
+.wallet .meter { margin-top: var(--w2b-space-3); }
 .wallet__hint {
   color: var(--w2b-text-subtle);
   font-size: var(--w2b-fs-xs);
@@ -126,7 +125,7 @@
   align-items: center;
   gap: var(--w2b-space-1);
   padding: 6px 10px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-surface-1);
   box-shadow: var(--w2b-inset-hairline);
   font-size: var(--w2b-fs-xs);
@@ -139,7 +138,7 @@
 .chip {
   flex: none;
   padding: 8px 14px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   border: 1px solid var(--w2b-line);
   background: var(--w2b-surface-1);
   color: var(--w2b-text-muted);
@@ -156,47 +155,74 @@
   font-weight: var(--w2b-fw-semi);
 }
 
-/* ── feed post ───────────────────────────────────────────────────────────── */
+/* ── стрічка: a channel post is a photograph and a caption ────────────────────
+   This tab IS the Telegram channel, and it was drawn as a table row: a 46px
+   thumbnail on the left of a headline. The whole reason a client follows the
+   channel is the photograph, so the photograph is the card and the caption sits
+   under it, the way it does in the client the post was written in.            */
 .post {
-  display: flex;
-  gap: var(--w2b-space-3);
-  padding: var(--w2b-space-4);
+  display: block;
+  padding: 0;
   border-radius: var(--w2b-radius-card);
   background: var(--w2b-surface-1);
-  box-shadow: var(--w2b-inset-hairline), var(--w2b-shadow-1);
+  border: 1px solid var(--w2b-line);
+  box-shadow: none;
+  overflow: hidden;
 }
-.post__thumb {
-  width: 54px;
-  height: 54px;
-  flex: none;
-  border-radius: var(--w2b-radius-md);
-  background: var(--w2b-generic-base);
+/* Consecutive posts share their rules and read as one column of paper rather
+   than a stack of floating boxes. */
+.stack > .post + .post { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
+
+/* An album is a scroll-snap strip — a real gallery for six lines of CSS and no
+   script. The aspect sits on the STRIP, not on each picture, so every post in
+   the feed has media of exactly the same height whether it carries one photo
+   or four; with more than one, the next one peeks in and says «swipe». */
+.post__gallery {
   display: grid;
-  place-items: center;
-  font-size: 26px;
-  box-shadow: var(--w2b-inset-hairline);
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  aspect-ratio: 4 / 5;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  background: var(--w2b-surface-3);
 }
-.post__body { min-width: 0; flex: 1; }
+.post__gallery::-webkit-scrollbar { display: none; }
+.post__gallery--multi { grid-auto-columns: 88%; }
+.post__gallery img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  scroll-snap-align: start;
+}
+
+.post__body { min-width: 0; padding: var(--w2b-space-3); }
 .post__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--w2b-space-2);
   font-size: var(--w2b-fs-2xs);
   color: var(--w2b-text-subtle);
   text-transform: uppercase;
   letter-spacing: var(--w2b-ls-caps);
 }
-.post__title {
-  font-weight: var(--w2b-fw-semi);
-  font-size: var(--w2b-fs-base);
-  line-height: var(--w2b-lh-snug);
-  margin-top: var(--w2b-space-1);
-}
-.post__text {
-  color: var(--w2b-text-muted);
+.post__when { flex: none; }
+/* pre-line, because a channel caption is written with its own line breaks and
+   collapsing them turns a three-line announcement into a paragraph. */
+.post__caption {
+  margin-top: var(--w2b-space-2);
   font-size: var(--w2b-fs-sm);
   line-height: var(--w2b-lh-body);
-  margin-top: var(--w2b-space-1);
+  color: var(--w2b-text);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.post__caption a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
 .post__foot {
   display: flex;
@@ -207,13 +233,9 @@
 }
 .post__price {
   font-family: var(--w2b-font-display);
-  font-weight: var(--w2b-fw-bold);
-  font-size: var(--w2b-fs-base);
-  color: var(--w2b-gold-soft);
-}
-.post__src {
-  font-size: var(--w2b-fs-2xs);
-  color: var(--w2b-text-subtle);
+  font-weight: var(--w2b-fw-regular);
+  font-size: var(--w2b-fs-md);
+  color: var(--w2b-text);
 }
 
 /* ── purchase row ────────────────────────────────────────────────────────── */
@@ -269,8 +291,13 @@
 .field__input,
 .field__select,
 .field__textarea {
+  /* The box is stated as arithmetic rather than as a magic height, because the
+     date field below has to reproduce it exactly. */
+  --field-line: 1.3;
+  --field-pad-y: 12px;
   width: 100%;
-  padding: 12px 14px;
+  padding: var(--field-pad-y) 14px;
+  line-height: var(--field-line);
   border-radius: var(--w2b-radius-md);
   border: 1px solid var(--w2b-line);
   background: var(--w2b-surface-2);
@@ -278,12 +305,63 @@
   font-family: var(--w2b-font-body);
   font-size: var(--w2b-fs-base);
 }
+/* One height for every single-line control, computed from the values above:
+   text + padding + border. Without it each control is as tall as its own
+   default line box, which differs per type. */
+.field__input,
+.field__select {
+  min-height: calc(1em * var(--field-line) + 2 * var(--field-pad-y) + 2px);
+}
 .field__textarea { min-height: 84px; resize: vertical; }
+
+/* input[type=date] is the one control a browser refuses to size like the rest.
+   WebKit renders the value inside a shadow-DOM box that carries its own margins
+   and its own metrics, and on iOS the control also claims an intrinsic
+   min-width it will not shrink below — so «Дата народження» came out both
+   shorter and narrower than the text fields above it. Dropping the native
+   appearance, releasing the min-width and flattening the inner box make it the
+   same rectangle as every other field. */
+.field__input[type="date"],
+.field__input[type="time"],
+.field__input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
+  /* A fixed height, not min-height: the shadow-DOM value box and the calendar
+     icon each contribute a pixel of their own, so the control came out 47.5px
+     against the 45.5px of the phone field next to it. Stating the same
+     arithmetic as those fields is what makes the two rectangles identical. */
+  height: calc(1em * var(--field-line) + 2 * var(--field-pad-y) + 2px);
+}
+.field__input::-webkit-datetime-edit,
+.field__input::-webkit-date-and-time-value {
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  line-height: var(--field-line);
+  min-height: calc(1em * var(--field-line));
+}
+.field__input::-webkit-calendar-picker-indicator {
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+  /* Its default padding is what made the control taller than its own text. */
+  padding: 0;
+  height: 1em;
+  opacity: 0.55;
+  cursor: pointer;
+}
 .field__input::placeholder, .field__textarea::placeholder { color: var(--w2b-text-subtle); }
 .field__input.is-error, .field__select.is-error { border-color: var(--w2b-danger); }
 .field__hint { color: var(--w2b-text-subtle); font-size: var(--w2b-fs-xs); margin-top: var(--w2b-space-2); }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--w2b-space-3); }
-.form-grid--full { grid-template-columns: 1fr; }
+/* minmax(0, 1fr), not 1fr: a bare `1fr` is minmax(auto, 1fr), so a control that
+   refuses to shrink below its content — input[type=date] with its dd.mm.yyyy and
+   its picker icon — widens its own column and the two halves stop matching. */
+.form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--w2b-space-3);
+}
+.form-grid--full { grid-template-columns: minmax(0, 1fr); }
 
 /* ── admin panel ─────────────────────────────────────────────────────────── */
 .panel {
@@ -307,12 +385,12 @@
 }
 .panel__note { color: var(--w2b-text-subtle); font-size: var(--w2b-fs-xs); line-height: var(--w2b-lh-body); }
 
-.seg { display: flex; gap: var(--w2b-space-1); padding: 4px; border-radius: var(--w2b-radius-pill); background: var(--w2b-surface-2); }
+.seg { display: flex; gap: var(--w2b-space-1); padding: 4px; border-radius: 0; background: var(--w2b-surface-2); }
 .seg__btn {
   flex: 1;
   padding: 8px 10px;
   border: 0;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: transparent;
   color: var(--w2b-text-muted);
   font-size: var(--w2b-fs-xs);
@@ -335,7 +413,7 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: var(--w2b-radius-pill);
+  border-radius: 0;
   background: var(--w2b-surface-2);
   color: var(--w2b-text-muted);
   font-size: var(--w2b-fs-2xs);
@@ -362,12 +440,29 @@
 ============================================================================= */
 
 /* ── type: display headings become serif, controls become wide caps ───────── */
+/* A section heading is structure, not a headline. Set as a 24px serif with 32px
+   of air above it, five of them cost ~370px on the «Знижки» tab — more than a
+   third of the phone — to say «Промокоди» and «Покупки». It is now the rule a
+   magazine uses to break a column: a small wide-tracked label and a hairline
+   running to the margin. The display face is kept for the two things that are
+   actually being sold — the name of the vitrine and the sum of money. */
 .section-title {
-  font-family: var(--w2b-font-display);
-  font-weight: var(--w2b-fw-regular);
-  font-size: var(--w2b-fs-xl);
-  letter-spacing: 0.01em;
-  margin: var(--w2b-space-8) 0 var(--w2b-space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-3);
+  font-family: var(--w2b-font-body);
+  font-weight: var(--w2b-fw-medium);
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  color: var(--w2b-text-subtle);
+  margin: var(--w2b-space-3) 0 0;
+}
+.section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--w2b-line);
 }
 .sheet__title {
   font-weight: var(--w2b-fw-regular);
@@ -389,7 +484,7 @@
   letter-spacing: var(--w2b-ls-caps);
   font-weight: var(--w2b-fw-regular);
   font-size: var(--w2b-fs-xs);
-  padding: 14px var(--w2b-space-5);
+  padding: 11px var(--w2b-space-4);
 }
 .btn--primary {
   background: var(--w2b-primary);
@@ -438,10 +533,10 @@
 /* ── filter row: text labels, an underline for the active one ─────────────── */
 .chips {
   display: flex;
-  gap: var(--w2b-space-5);
+  gap: var(--w2b-space-4);
   overflow-x: auto;
   scrollbar-width: none;
-  padding: var(--w2b-space-1) 0 var(--w2b-space-2);
+  padding: 0 0 var(--w2b-space-2);
   border-bottom: 1px solid var(--w2b-line);
 }
 .chips::-webkit-scrollbar { display: none; }
@@ -489,13 +584,157 @@
 }
 .chip--stock.is-active::before { background: #fff; }
 
+/* ── a channel row in the admin office, with its sync controls ─────────────── */
+.row--sync { align-items: flex-start; flex-wrap: wrap; }
+.row--sync .row__body { min-width: 0; }
+/* Three buttons and a channel name do not fit across 390px, and a flex row that
+   cannot wrap simply pushes «Уся історія» off the edge of a page that hides its
+   overflow — an admin control that exists but cannot be pressed. They take a
+   line of their own and wrap within it. */
+.row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w2b-space-2);
+  flex: 1 0 100%;
+  margin-top: var(--w2b-space-2);
+}
+/* A button inside a row must not be what sets the row's height. */
+.row > .btn:not(.btn--sm) { padding: 8px var(--w2b-space-3); }
+.btn--sm { padding: 6px 10px; font-size: var(--w2b-fs-2xs); }
+/* The running commentary of a sync: how many rounds have landed so far. It sits
+   under the channel's own line because a deep backfill is many requests and a
+   button that just looks stuck is indistinguishable from one that is. */
+.row__sync {
+  margin-top: var(--w2b-space-1);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.row__sync.is-error { color: var(--w2b-danger); }
+
+/* ── search + filters ─────────────────────────────────────────────────────── */
+.searchbar { display: flex; align-items: stretch; gap: var(--w2b-space-3); }
+.searchbar .search { flex: 1; min-width: 0; }
+.filterbtn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px solid var(--w2b-line);
+  background: none;
+  color: var(--w2b-text-subtle);
+  cursor: pointer;
+}
+.filterbtn svg {
+  width: 18px; height: 18px;
+  fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round;
+}
+.filterbtn.is-on { color: var(--w2b-text); border-bottom-color: var(--w2b-text); }
+.filterbtn__count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--w2b-radius-pill);
+  background: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Applied filters, as badges that remove themselves. The whole point: a client
+   should never have to work out what is filtering the vitrine by spotting which
+   chip looks darker somewhere in a scrolling row. */
+.applied {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w2b-space-2);
+  margin-top: var(--w2b-space-3);
+}
+/* fbadge, not badge: `.badge` is already the loyalty tier chip, and it carries a
+   ◆ in a ::before — reusing the name put a diamond in front of every filter. */
+.fbadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px 5px 11px;
+  border: 1px solid var(--w2b-primary);
+  border-radius: 0;
+  background: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+  font-size: var(--w2b-fs-xs);
+  cursor: pointer;
+}
+.fbadge__x { font-size: var(--w2b-fs-sm); line-height: 1; opacity: 0.7; }
+.fbadge:active { transform: scale(0.97); }
+.applied__clear {
+  border: 0;
+  background: none;
+  color: var(--w2b-text-subtle);
+  font-size: var(--w2b-fs-xs);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* The chooser itself, inside the sheet. */
+.fsheet { margin-bottom: var(--w2b-space-5); }
+.fsheet__label {
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  font-size: var(--w2b-fs-2xs);
+  color: var(--w2b-text-subtle);
+  margin-bottom: var(--w2b-space-3);
+}
+.fsheet__grid { display: flex; flex-wrap: wrap; gap: var(--w2b-space-2); }
+.fsheet__actions { display: flex; gap: var(--w2b-space-3); margin-top: var(--w2b-space-4); }
+.fsheet__actions .btn { flex: 1; }
+
+/* ── content filters: brand and category, one level below the catalogues ────
+   Deliberately a different shape from .chip. The catalogue row is uppercase
+   text with an underline; these are sentence-case hairline pills, so the eye
+   reads two levels of filter instead of two rows of the same thing. The accent
+   colour is not used here — it belongs to «Товари в наявності» alone. */
+.fchip {
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid var(--w2b-line);
+  /* Square, like every other control in this design — the pill radius exists
+     for the one counter badge and nothing else. */
+  border-radius: 0;
+  background: none;
+  color: var(--w2b-text-muted);
+  font-size: var(--w2b-fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--w2b-dur-fast) var(--w2b-ease-out),
+              border-color var(--w2b-dur-fast) var(--w2b-ease-out),
+              background-color var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.fchip__count { margin-left: 6px; opacity: 0.5; }
+.fchip.is-active {
+  background: var(--w2b-primary);
+  border-color: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+}
+.fchip.is-active .fchip__count { opacity: 0.65; }
+
+/* «Показати ще» — the next page of the same selection. Full width, because it
+   is the one thing to do at the bottom of a vitrine. */
+.more {
+  width: 100%;
+  margin-top: var(--w2b-space-5);
+}
+
 /* ── the vitrine: photographs first ───────────────────────────────────────── */
 .vitrine-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--w2b-space-3);
-  margin-top: var(--w2b-space-5);
+  margin-top: var(--w2b-space-2);
 }
 .vitrine-head__title {
   font-family: var(--w2b-font-display);
@@ -509,10 +748,14 @@
   color: var(--w2b-text-subtle);
 }
 
+/* The photograph keeps its 3:4 — it is the merchandise and nothing is taken
+   from it. Everything around it gives ground: the gutters, the caption block
+   and the button below each tile were together taller than a third of the
+   picture they belonged to. */
 .tiles {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--w2b-space-5) var(--w2b-space-3);
+  gap: var(--w2b-space-4) var(--w2b-space-2);
 }
 .tile { display: flex; flex-direction: column; background: none; }
 .tile__media {
@@ -521,7 +764,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 46px;
+  font-size: 32px;
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
   overflow: hidden;
@@ -530,42 +773,55 @@
 .tile__chan {
   position: absolute;
   top: 0; left: 0;
-  padding: 5px 9px;
+  padding: 4px 7px;
   background: rgba(255, 255, 255, 0.92);
   color: var(--w2b-text-muted);
   text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: 9px;
+  letter-spacing: 0.14em;
+  font-size: 8px;
 }
 .tile--stock .tile__chan { background: var(--w2b-accent); color: #fff; }
-.tile__body { padding: var(--w2b-space-3) 0 0; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.tile__body { padding: var(--w2b-space-2) 0 0; display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .tile__title {
   font-family: var(--w2b-font-display);
   font-size: var(--w2b-fs-md);
   font-weight: var(--w2b-fw-regular);
-  line-height: 1.2;
+  line-height: 1.15;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Price and article code shared no information and each took a line of its
+   own. On one baseline they read as a single caption: what it is, what it
+   costs. */
+.tile__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w2b-space-2);
+  margin-top: 1px;
+}
 .tile__art {
   text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-size: 9px;
   color: var(--w2b-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.tile__price { font-family: var(--w2b-font-display); font-size: var(--w2b-fs-base); }
+.tile__price { font-family: var(--w2b-font-display); font-size: var(--w2b-fs-base); white-space: nowrap; }
 .tile__btn {
-  margin-top: var(--w2b-space-3);
+  margin-top: var(--w2b-space-2);
   width: 100%;
-  padding: 11px 8px;
+  padding: 8px;
   border: 1px solid var(--w2b-text);
   background: none;
   color: var(--w2b-text);
   text-transform: uppercase;
   letter-spacing: var(--w2b-ls-caps);
-  font-size: 10px;
+  font-size: 9px;
 }
 .tile__btn:hover { background: var(--w2b-text); color: var(--w2b-on-primary); }
 .tile__btn.is-in {
@@ -592,7 +848,7 @@
   text-align: center;
 }
 .fit-row__thumb {
-  width: 62px; height: 78px;
+  width: 50px; height: 63px;
   flex: none;
   background: var(--w2b-surface-3);
   display: flex; align-items: center; justify-content: center;
@@ -603,22 +859,189 @@
 .coupon {
   display: flex;
   align-items: center;
-  gap: var(--w2b-space-4);
-  padding: var(--w2b-space-4);
+  gap: var(--w2b-space-3);
+  padding: var(--w2b-space-3);
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-text);
 }
 .coupon__badge {
   font-family: var(--w2b-font-display);
-  font-size: var(--w2b-fs-2xl);
+  font-size: var(--w2b-fs-xl);
   font-weight: var(--w2b-fw-regular);
   line-height: 1;
 }
-.btn--send { width: 100%; padding: 18px; font-size: var(--w2b-fs-xs); }
+.btn--send { width: 100%; padding: 14px; font-size: var(--w2b-fs-xs); }
+
+/* ── the campaign builder ─────────────────────────────────────────────────────
+   Presets are cards rather than a list because they are chosen by recognising
+   one, not by reading all of them: the emoji and the dates do most of the work,
+   and the line underneath says what the campaign is FOR — a discount nobody can
+   state the reason for is one nobody can decide to stop. */
+.presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--w2b-space-2);
+  margin-bottom: var(--w2b-space-3);
+}
+.preset {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--w2b-space-3);
+  text-align: left;
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  cursor: pointer;
+}
+.preset:active { background: var(--w2b-surface-3); }
+.preset__emoji { font-size: 18px; line-height: 1; }
+.preset__name {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-base);
+  line-height: 1.15;
+  margin-top: 2px;
+}
+.preset__when {
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--w2b-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.preset__why {
+  margin-top: 4px;
+  font-size: var(--w2b-fs-xs);
+  line-height: 1.35;
+  color: var(--w2b-text-muted);
+}
+
+/* How many people the conditions currently reach. Sticky, because the number
+   is the answer to every edit made below it and scrolling away from it is what
+   makes somebody save a campaign aimed at nobody. */
+.reach {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: var(--w2b-space-3);
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  background: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+}
+.reach__count {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-md);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+/* Nobody is not an error — it is a fact the owner has to see before saving. */
+.reach__count--bad { color: #e8836a; }
+.reach__terms {
+  font-size: var(--w2b-fs-2xs);
+  line-height: 1.3;
+  opacity: 0.75;
+}
+
+/* ── the confirmation card: a person, not a receipt ───────────────────────────
+   A wish list has just left the client's hands and they cannot see where it
+   went. A name over a photograph answers that; «заявку надіслано» does not.
+
+   The avatar is a CIRCLE, and that is not an inconsistency with the square
+   corners everywhere else. Square is for furniture — panels, chips, buttons.
+   A portrait is a portrait: cropping a face into a rectangle is one of the
+   things that makes a shop look like a database. */
+.sheet--center { align-items: center; padding: var(--w2b-space-4); }
+.sheet--center .sheet__panel {
+  max-width: 340px;
+  padding: var(--w2b-space-6) var(--w2b-space-5) var(--w2b-space-5);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  box-shadow: var(--w2b-shadow-3);
+  animation: w2b-thanks-in var(--w2b-dur-slow) var(--w2b-ease-out);
+}
+/* No drag handle: this is not something you pull, it is something you read. */
+.sheet--center .sheet__panel::before { display: none; }
+@keyframes w2b-thanks-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+.thanks { text-align: center; }
+.thanks__avatar {
+  position: relative;
+  width: 76px; height: 76px;
+  margin: 0 auto var(--w2b-space-3);
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--w2b-surface-3);
+  /* A hairline held one pixel off the photograph — the way a framed portrait
+     sits inside its mount, rather than a border drawn onto the face. */
+  box-shadow: 0 0 0 1px var(--w2b-surface-1), 0 0 0 2px var(--w2b-line-strong);
+}
+/* Absolutely positioned, and that is not laziness — it is the only form that
+   holds. The parent is a grid (to centre the initials fallback), and inside a
+   grid area a percentage height on a replaced element is treated as indefinite:
+   a 200×300 portrait with `height: 100%` computed to 76×114 and the circle
+   clipped a band across the middle of it, chin and forehead gone. `inset: 0`
+   against a positioned parent is a definite 76×76 in every engine. */
+.thanks__photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Faces sit above the middle of a standing photograph; a dead-centre crop of
+     one is a picture of a collarbone. */
+  object-position: 50% 38%;
+}
+.thanks__initials {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-xl);
+  color: var(--w2b-text-muted);
+  letter-spacing: 0.04em;
+}
+.thanks__name {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-lg);
+  line-height: 1.2;
+}
+.thanks__role {
+  margin-top: 2px;
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  color: var(--w2b-text-subtle);
+}
+.thanks__text {
+  margin: var(--w2b-space-4) 0 0;
+  font-size: var(--w2b-fs-sm);
+  line-height: var(--w2b-lh-body);
+  color: var(--w2b-text-muted);
+}
+.thanks__note {
+  margin-top: var(--w2b-space-3);
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  border: 1px solid var(--w2b-line);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text);
+}
+.thanks .btn { width: 100%; margin-top: var(--w2b-space-4); }
+.thanks__direct {
+  display: inline-block;
+  margin-top: var(--w2b-space-3);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-subtle);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 
 /* ── empty state: a line of prose, centred, no box ────────────────────────── */
 .empty {
-  padding: var(--w2b-space-10) var(--w2b-space-5);
+  padding: var(--w2b-space-8) var(--w2b-space-4);
   text-align: center;
   color: var(--w2b-text-subtle);
   font-family: var(--w2b-font-display);
@@ -628,45 +1051,54 @@
 }
 
 /* ── wordmark + header ────────────────────────────────────────────────────── */
+/* The two header rows are furniture: they repeat identically on all five tabs
+   and carry no merchandise. Together they used to cost ~105px of a 844px
+   phone — an eighth of every screen, every time. Everything here is sized to
+   the smallest that still reads: the mark at 11px, the tagline at 10px, the
+   avatar at 34px. Nothing was removed; it is simply no longer shouting. */
 .wordmark {
   text-align: center;
-  padding: var(--w2b-space-3) 0 var(--w2b-space-4);
+  padding: 0 0 var(--w2b-space-2);
   border-bottom: 1px solid var(--w2b-line);
-  margin-bottom: var(--w2b-space-4);
+  margin-bottom: var(--w2b-space-2);
 }
 .wordmark__name {
   font-family: var(--w2b-font-body);
   font-weight: var(--w2b-fw-regular);
   text-transform: uppercase;
   letter-spacing: 0.42em;
-  font-size: var(--w2b-fs-sm);
+  font-size: 11px;
   text-indent: 0.42em; /* optical centring against the trailing letterspace */
 }
 .wordmark__sub {
-  margin-top: 4px;
+  margin-top: 2px;
   font-family: var(--w2b-font-display);
   font-style: italic;
-  font-size: var(--w2b-fs-xs);
+  font-size: var(--w2b-fs-2xs);
+  line-height: 1.2;
   color: var(--w2b-text-subtle);
 }
-.topbar { padding-bottom: var(--w2b-space-5); }
+.wordmark__row { gap: 8px; }
+.brush { width: 24px; height: 16px; }
+
+.topbar { padding: 0 0 var(--w2b-space-2); gap: var(--w2b-space-2); }
 .topbar__avatar {
   border-radius: 0;
-  width: 42px; height: 42px;
+  width: 34px; height: 34px;
   background: var(--w2b-primary);
   color: var(--w2b-on-primary);
   font-weight: var(--w2b-fw-regular);
-  font-size: var(--w2b-fs-sm);
+  font-size: var(--w2b-fs-xs);
   letter-spacing: 0.04em;
   box-shadow: none;
 }
-.topbar__name { font-size: var(--w2b-fs-lg); letter-spacing: 0.01em; }
-.topbar__sub { color: var(--w2b-text-subtle); }
+.topbar__name { font-size: var(--w2b-fs-md); letter-spacing: 0.01em; line-height: 1.2; }
+.topbar__sub { color: var(--w2b-text-subtle); margin-top: 1px; }
 
 /* The bell is a drawn glyph, not an emoji: a coloured emoji is the one thing
    that breaks a monochrome storefront. */
 .bell {
-  width: 38px; height: 38px;
+  width: 32px; height: 32px;
   border: 1px solid var(--w2b-line);
   border-radius: 0;
   background: none;
@@ -674,7 +1106,7 @@
   place-items: center;
   position: relative;
 }
-.bell svg { width: 17px; height: 17px; fill: none; stroke: var(--w2b-text); stroke-width: 1.4; }
+.bell svg { width: 16px; height: 16px; fill: none; stroke: var(--w2b-text); stroke-width: 1.4; }
 .notif-badge {
   position: absolute;
   top: -6px; right: -6px;
@@ -694,13 +1126,13 @@
   border-top: 1px solid var(--w2b-line-strong);
 }
 .nav__btn {
-  gap: 5px;
+  gap: 4px;
   font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: var(--w2b-text-subtle);
 }
-.nav__btn svg { width: 20px; height: 20px; stroke-width: 1.2; }
+.nav__btn svg { width: 19px; height: 19px; stroke-width: 1.2; }
 .nav__btn.is-active { color: var(--w2b-text); }
 .nav__btn.is-active svg { stroke-width: 1.6; }
 .nav__btn.is-active::after {
@@ -715,7 +1147,7 @@
 
 /* Emoji placeholders stay until the real channel photos arrive — desaturated
    so a demo screen still reads as one palette. Real photos are untouched. */
-.ph { filter: grayscale(1); opacity: 0.5; }
+.ph { filter: grayscale(1); opacity: 0.32; }
 
 .demobar { background: var(--w2b-surface-1); border-bottom: 1px solid var(--w2b-line); }
 .demobar__label { letter-spacing: var(--w2b-ls-caps); }
@@ -727,29 +1159,79 @@
   border: 1px solid var(--w2b-line);
   border-radius: 0;
   box-shadow: none;
+  padding: var(--w2b-space-3);
 }
-.panel__title { font-family: var(--w2b-font-display); font-weight: var(--w2b-fw-regular); font-size: var(--w2b-fs-lg); }
+.panel__title { font-family: var(--w2b-font-display); font-weight: var(--w2b-fw-regular); font-size: var(--w2b-fs-md); }
+.panel__head { margin-bottom: var(--w2b-space-2); }
+
+/* A row is a line in a list, not a card. Ten purchases used to be ten separate
+   boxes with sixteen pixels of paper between them; that is a filing cabinet,
+   not a statement. They now share their rules — the stack gap and one of the
+   two borders are pulled back — so consecutive rows read as one continuous
+   list and a screen holds fourteen of them instead of nine. The list breaks by
+   itself wherever a section heading interrupts the run. */
 .row {
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line);
   border-radius: 0;
   box-shadow: none;
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  gap: var(--w2b-space-3);
 }
+.stack > .row + .row { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
 .row__title { font-weight: var(--w2b-fw-regular); }
-.row__icon { border-radius: 0; background: var(--w2b-surface-3); }
-.stat { background: var(--w2b-surface-1); border: 1px solid var(--w2b-line); border-radius: 0; box-shadow: none; }
+.row__sub { line-height: 1.35; }
+.row__icon {
+  border-radius: 0;
+  background: none;
+  border: 1px solid var(--w2b-line);
+  width: 30px; height: 30px;
+  font-size: 15px;
+}
+/* Money lines up when the figures do, and a column of prices that jitters by a
+   digit is the fastest way to make a list look homemade. */
+.row__amount, .stat__value, .wallet__amount, .tile__price, .post__price {
+  font-variant-numeric: tabular-nums;
+}
+.stat {
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  box-shadow: none;
+  padding: var(--w2b-space-2) var(--w2b-space-1);
+}
+.stat__value { font-size: var(--w2b-fs-base); }
+.stat__label { margin-top: 1px; }
 .field__input, .field__select, .field__textarea {
   border-radius: 0;
   background: var(--w2b-surface-1);
   border: 1px solid var(--w2b-line-strong);
 }
-.seg { border-radius: 0; background: none; border: 1px solid var(--w2b-line); }
-.seg__btn {
+/* A segmented control with six labels does not fit across 390px, and flex items
+   do not shrink below their own word — so «Клієнти» and «Контент» ran off the
+   right edge of a page that hides its overflow, which made two admin tabs
+   unreachable on a phone. They now scroll, and each button still grows to fill
+   the bar when there are only three of them. The inner padding is gone so an
+   active segment is a full-height block of ink, not a floating chip. */
+.seg {
   border-radius: 0;
-  text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: 10px;
+  background: none;
+  border: 1px solid var(--w2b-line);
+  padding: 0;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.seg::-webkit-scrollbar { display: none; }
+.seg__btn {
+  flex: 1 0 auto;
+  border-radius: 0;
+  padding: 9px 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9px;
+}
+.seg__btn + .seg__btn { border-left: 1px solid var(--w2b-line); }
 .seg__btn.is-active { background: var(--w2b-primary); color: var(--w2b-on-primary); }
 .pill {
   border-radius: 0;
@@ -805,7 +1287,7 @@
 .card--vip .card__code { background: rgba(17, 16, 15, 0.06); }
 
 /* Tiles: names vary in length, so the buttons must still line up. */
-.tile__title { min-height: 2.4em; }
+.tile__title { min-height: 2.3em; }
 .tile__btn { margin-top: auto; }
 .tile { height: 100%; }
 
@@ -1095,7 +1577,7 @@ body {
 }
 .tile--stock .tile__chan { background: rgba(166, 61, 97, 0.9); }
 .tile__media:has(img)::after,
-.post__thumb:has(img)::after,
+.post__gallery:has(img)::after,
 .fit-row__thumb:has(img)::after {
   content: "2x";
   position: absolute;
@@ -1166,7 +1648,8 @@ body {
   border-radius: 24px;
   box-shadow: var(--w2b-shadow-1);
 }
-.post__thumb {
+.post__thumb,
+.post__gallery {
   position: relative;
   width: 100%;
   height: auto;
@@ -1176,7 +1659,8 @@ body {
   cursor: zoom-in;
   touch-action: pan-y;
 }
-.post__thumb img { width: 100%; height: 100%; object-fit: cover; user-select: none; -webkit-user-drag: none; }
+.post__thumb img,
+.post__gallery img { width: 100%; height: 100%; object-fit: cover; user-select: none; -webkit-user-drag: none; }
 .post__body { padding: 16px; }
 .post__head { font-size: 9px; font-weight: 600; letter-spacing: 0.07em; }
 .post__title { margin-top: 8px; font-size: 16px; font-weight: 700; }
@@ -1358,7 +1842,7 @@ body {
 .product-loupe.is-flipped { transform-origin: 50% 0; }
 body.is-zooming { overscroll-behavior: none; }
 body.is-zooming .tile__media img,
-body.is-zooming .post__thumb img,
+body.is-zooming .post__gallery img,
 body.is-zooming .fit-row__thumb img { transition: none; }
 
 @media (max-width: 370px) {
@@ -1379,3 +1863,107 @@ body.is-zooming .fit-row__thumb img { transition: none; }
   .tile__media img,
   .product-loupe { transition-duration: 1ms !important; }
 }
+
+/* Components introduced on the PostgreSQL branch, expressed in the same
+   soft-commerce language as the rest of the redesigned storefront. */
+.searchbar { gap: 8px; }
+.filterbtn {
+  position: relative;
+  width: 48px;
+  padding: 0;
+  justify-content: center;
+  color: var(--w2b-text-muted);
+  background: rgba(255, 253, 252, 0.86);
+  border: 1px solid var(--w2b-line);
+  border-radius: 15px;
+  box-shadow: var(--w2b-shadow-1);
+}
+.filterbtn svg { width: 20px; height: 20px; stroke-width: 1.7; }
+.filterbtn.is-on {
+  color: var(--w2b-on-primary);
+  background: var(--w2b-primary);
+  border-color: var(--w2b-primary);
+}
+.filterbtn__count {
+  position: absolute;
+  top: -6px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  color: var(--w2b-on-primary);
+  background: var(--w2b-accent);
+  border: 2px solid var(--w2b-bg);
+  border-radius: 999px;
+  font-size: 8px;
+  line-height: 14px;
+}
+
+.applied { gap: 7px; margin-top: 10px; }
+.fbadge {
+  gap: 7px;
+  padding: 7px 10px 7px 12px;
+  color: var(--w2b-accent);
+  background: var(--w2b-accent-soft);
+  border: 0;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.fbadge__x { opacity: 0.65; }
+.applied__clear { color: var(--w2b-text-muted); font-size: 10px; }
+
+.fsheet__label { font-weight: 700; letter-spacing: 0.08em; }
+.fsheet__grid { gap: 7px; }
+.fchip {
+  padding: 8px 12px;
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.fchip.is-active {
+  color: var(--w2b-on-primary);
+  background: var(--w2b-primary);
+  border-color: var(--w2b-primary);
+}
+.more { margin-top: 2px; border-radius: 14px; }
+
+.post__gallery {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.post__gallery--multi { grid-auto-columns: 88%; }
+.post__caption { margin-top: 10px; font-size: 12px; line-height: 1.6; }
+.post__when { font-size: 9px; }
+
+.presets { gap: 8px; }
+.preset {
+  padding: 12px;
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 15px;
+  box-shadow: var(--w2b-shadow-1);
+}
+.preset__name { font-weight: 700; }
+.preset__when,
+.preset__why { font-size: 10px; }
+
+.thanks__avatar {
+  border-radius: 50%;
+  box-shadow: 0 12px 30px rgba(55, 35, 45, 0.16);
+}
+.thanks__name { font-family: var(--w2b-font-display); font-size: 28px; font-weight: 600; }
+.thanks__role { color: var(--w2b-accent); font-weight: 700; letter-spacing: 0.08em; }
+.thanks__note { color: var(--w2b-accent); background: var(--w2b-accent-soft); border: 0; border-radius: 14px; }
+.thanks__direct { color: var(--w2b-accent); font-weight: 700; }
+
+.row--sync { border-radius: 18px; }
+.row__actions { gap: 7px; }
+.row__sync { color: var(--w2b-text-muted); }

@@ -23,6 +23,7 @@
 //  a post deleted in the channel stays in the app until an admin hides it.
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
+import { asJson } from './sql.js';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const API = (m) => `https://api.telegram.org/bot${TOKEN}/${m}`;
@@ -31,10 +32,10 @@ export const liveMode = () => Boolean(TOKEN);
 
 // ── channels ──────────────────────────────────────────────────────────────
 
-export function listChannels({ includeDisabled = false } = {}) {
+export async function listChannels({ includeDisabled = false } = {}) {
   const rows = includeDisabled
-    ? db.prepare('SELECT * FROM channels ORDER BY kind DESC, id').all()
-    : db.prepare('SELECT * FROM channels WHERE enabled=1 ORDER BY kind DESC, id').all();
+    ? await db.prepare('SELECT * FROM channels ORDER BY kind DESC, id').all()
+    : await db.prepare('SELECT * FROM channels WHERE enabled ORDER BY kind DESC, id').all();
   return rows.map(shapeChannel);
 }
 
@@ -43,17 +44,22 @@ export function shapeChannel(c) {
   return {
     key: c.key, title: c.title, username: c.username, emoji: c.emoji,
     kind: c.kind, enabled: Boolean(c.enabled), chatId: c.chat_id,
+    // Sync state — what the admin office needs to say "оновлено 5 хв тому" and
+    // whether «вся історія» still has anything left to walk.
+    syncedAt: c.synced_at || null,
+    syncCursor: c.sync_cursor == null ? null : Number(c.sync_cursor),
+    historyDone: Boolean(c.history_done),
   };
 }
 
-export function getChannel(key) {
-  return shapeChannel(db.prepare('SELECT * FROM channels WHERE key=?').get(key));
+export async function getChannel(key) {
+  return shapeChannel(await db.prepare('SELECT * FROM channels WHERE key=?').get(key));
 }
 
 // Back-compat for callers that still expect the old CHANNELS map.
-export function channelMap() {
+export async function channelMap() {
   const out = {};
-  for (const c of listChannels({ includeDisabled: true })) out[c.key] = c;
+  for (const c of await listChannels({ includeDisabled: true })) out[c.key] = c;
   return out;
 }
 
@@ -62,22 +68,22 @@ const slugify = (s, fallback) =>
 
 // Find the channel a Telegram post came from; register it if it is new.
 // This is what lets Maryna spin up a test channel without touching config.
-export function resolveChannel(chat) {
+export async function resolveChannel(chat) {
   if (!chat) return null;
   const chatId = chat.id != null ? String(chat.id) : null;
   const uname = chat.username ? chat.username.toLowerCase() : null;
 
   if (chatId) {
-    const byId = db.prepare('SELECT * FROM channels WHERE chat_id=?').get(chatId);
+    const byId = await db.prepare('SELECT * FROM channels WHERE chat_id=?').get(chatId);
     if (byId) return shapeChannel(byId);
   }
   if (uname) {
-    const byName = db.prepare('SELECT * FROM channels WHERE lower(username)=?').get(uname);
+    const byName = await db.prepare('SELECT * FROM channels WHERE lower(username)=?').get(uname);
     if (byName) {
       // First post from a channel we only knew by @username — bind the numeric
       // id so private channels and username changes keep working.
       if (chatId && !byName.chat_id) {
-        db.prepare('UPDATE channels SET chat_id=? WHERE id=?').run(chatId, byName.id);
+        await db.prepare('UPDATE channels SET chat_id=? WHERE id=?').run(chatId, byName.id);
         byName.chat_id = chatId;
       }
       return shapeChannel(byName);
@@ -85,11 +91,11 @@ export function resolveChannel(chat) {
   }
 
   const key = slugify(chat.username || chat.title, `ch${chatId || Date.now()}`);
-  const unique = db.prepare('SELECT 1 FROM channels WHERE key=?').get(key) ? `${key}-${Math.random().toString(36).slice(2, 5)}` : key;
-  db.prepare(`INSERT INTO channels (key,chat_id,username,title,emoji,kind,enabled,created_at)
-    VALUES (?,?,?,?,?, 'catalog',1,?)`)
+  const unique = await db.prepare('SELECT 1 FROM channels WHERE key=?').get(key) ? `${key}-${Math.random().toString(36).slice(2, 5)}` : key;
+  await db.prepare(`INSERT INTO channels (key,chat_id,username,title,emoji,kind,enabled,created_at)
+    VALUES (?,?,?,?,?, 'catalog',true,?)`)
     .run(unique, chatId, chat.username || null, chat.title || unique, '🛍️', new Date().toISOString());
-  return getChannel(unique);
+  return await getChannel(unique);
 }
 
 // ── Telegram API ──────────────────────────────────────────────────────────
@@ -121,6 +127,43 @@ export async function fetchPhoto(fileId) {
     buffer: Buffer.from(await res.arrayBuffer()),
     contentType: byExt || (served && served !== 'application/octet-stream' ? served : 'image/jpeg'),
   };
+}
+
+// ── a person's own profile photo ───────────────────────────────────────────
+//
+// The face on the confirmation card. Resolved rather than stored: Telegram
+// hands back a file_id for the current avatar, so when Dasha changes her
+// photograph the app follows without anybody editing a setting.
+//
+// It only works for somebody the bot can SEE — a user who has started it, or
+// who shares a chat where the bot may look. For anyone else Telegram answers
+// «user not found», and that is not an error to shout about: the caller falls
+// back to initials. Both answers are cached, the negative one briefly, so a
+// support person who presses Start today appears within the hour instead of at
+// the next deploy.
+const profilePhotoCache = new Map(); // userId → { fileId, at, ttl }
+const PROFILE_OK_TTL = 6 * 3600_000;
+const PROFILE_MISS_TTL = 30 * 60_000;
+
+export async function userProfilePhotoId(userId) {
+  const id = String(userId || '').trim();
+  if (!id || !liveMode()) return null;
+
+  const hit = profilePhotoCache.get(id);
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.fileId;
+
+  let fileId = null;
+  try {
+    const r = await tg('getUserProfilePhotos', { user_id: id, limit: 1 });
+    const sizes = r?.photos?.[0];
+    // The last entry is the largest Telegram offers; the avatar is rendered at
+    // 76px but a retina screen asks for more than 76 real pixels.
+    if (Array.isArray(sizes) && sizes.length) fileId = sizes[sizes.length - 1].file_id;
+  } catch {
+    fileId = null;
+  }
+  profilePhotoCache.set(id, { fileId, at: Date.now(), ttl: fileId ? PROFILE_OK_TTL : PROFILE_MISS_TTL });
+  return fileId;
 }
 
 // ── parsing a catalogue post ──────────────────────────────────────────────
@@ -156,16 +199,62 @@ export function parsePrice(text = '') {
 // відправка в будь-яку точку…". Using the first line as a title fills the
 // vitrine with paragraphs. So the title is derived — brand first (that is what
 // the client scans for), then category, and only then a trimmed first phrase.
+// One entry per house: [the name a card shows, ...the ways it gets written].
+// The catalogues are not consistent — "Hermes" and "Hermès" in neighbouring
+// posts, "YSL" one day and "Saint Laurent" the next — and detectBrand returns
+// the FIRST element whichever spelling matched. Without that the brand filter
+// offers two chips for one house and splits its own counts between them.
+//
+// Within an entry the longer spelling comes first, so "Bottega Veneta" is not
+// matched as "Bottega".
 const BRANDS = [
-  'Chanel', 'Dior', 'Hermès', 'Hermes', 'Louis Vuitton', 'Gucci', 'Prada',
-  'Saint Laurent', 'YSL', 'Bottega Veneta', 'Bottega', 'Balenciaga', 'Celine',
-  'Céline', 'Fendi', 'Miu Miu', 'Loewe', 'Chloé', 'Chloe', 'Valentino',
-  'Givenchy', 'Burberry', 'Versace', 'Dolce & Gabbana', 'Dolce&Gabbana',
-  'Michael Kors', 'Marc Jacobs', 'Coach', 'Tory Burch', 'Furla', 'Moncler',
-  'Max Mara', 'Brunello Cucinelli', 'Loro Piana', 'Stone Island', 'Canada Goose',
-  'Cartier', 'Rolex', 'Tiffany', 'Van Cleef', 'Bvlgari', 'Bulgari', 'Swarovski',
-  'Christian Louboutin', 'Louboutin', 'Jimmy Choo', 'Manolo Blahnik',
-  'Nike', 'Adidas', 'New Balance', 'Golden Goose', 'Zara', 'Massimo Dutti',
+  ['Chanel'],
+  ['Dior', 'Christian Dior'],
+  ['Hermès', 'Hermes'],
+  ['Louis Vuitton', 'LV'],
+  ['Gucci'],
+  ['Prada'],
+  ['Saint Laurent', 'Yves Saint Laurent', 'YSL'],
+  ['Bottega Veneta', 'Bottega'],
+  ['Balenciaga'],
+  ['Céline', 'Celine'],
+  ['Fendi'],
+  ['Miu Miu'],
+  ['Loewe'],
+  ['Chloé', 'Chloe'],
+  ['Valentino'],
+  ['Givenchy'],
+  ['Burberry'],
+  ['Versace'],
+  ['Dolce & Gabbana', 'Dolce&Gabbana', 'D&G'],
+  ['Michael Kors'],
+  ['Marc Jacobs'],
+  ['Coach'],
+  ['Tory Burch'],
+  ['Furla'],
+  ['Moncler'],
+  ['Max Mara'],
+  ['Brunello Cucinelli'],
+  ['Loro Piana'],
+  ['Stone Island'],
+  ['Canada Goose'],
+  ['Cartier'],
+  ['Rolex'],
+  ['Tiffany', 'Tiffany & Co'],
+  ['Van Cleef', 'Van Cleef & Arpels'],
+  ['Bvlgari', 'Bulgari'],
+  ['Swarovski'],
+  ['Christian Louboutin', 'Louboutin'],
+  ['Jimmy Choo'],
+  ['Manolo Blahnik'],
+  ['Goyard'],
+  ['Delvaux'],
+  ['Nike'],
+  ['Adidas'],
+  ['New Balance'],
+  ['Golden Goose'],
+  ['Zara'],
+  ['Massimo Dutti'],
 ];
 
 // Ukrainian/Russian category words as they appear in the catalogues.
@@ -188,10 +277,14 @@ const CATEGORIES = [
 
 export function detectBrand(text = '') {
   const s = String(text);
-  for (const brand of BRANDS) {
-    // Word-boundary match so "Dior" does not fire inside another word.
-    const re = new RegExp(`(^|[^\\p{L}])${brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'iu');
-    if (re.test(s)) return brand;
+  for (const spellings of BRANDS) {
+    for (const spelling of spellings) {
+      // Word-boundary match so "Dior" does not fire inside another word, and
+      // "LV" does not fire inside "LVMH".
+      const re = new RegExp(`(^|[^\\p{L}])${spelling.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'iu');
+      // The canonical name, not the spelling that matched.
+      if (re.test(s)) return spellings[0];
+    }
   }
   return null;
 }
@@ -202,10 +295,14 @@ export function detectCategory(text = '') {
 }
 
 // A short, scannable name. Never a paragraph.
-export function buildTitle(text = '') {
+//
+// `hints` lets the caller supply a brand or category it has already worked out —
+// including a category that came from the CHANNEL rather than from the text, so
+// a bag posted with nothing but "Balenciaga" still reads «Balenciaga · сумка».
+export function buildTitle(text = '', hints = {}) {
   const clean = String(text).replace(/\s+/g, ' ').trim();
-  const brand = detectBrand(clean);
-  const category = detectCategory(clean);
+  const brand = 'brand' in hints ? hints.brand : detectBrand(clean);
+  const category = 'category' in hints ? hints.category : detectCategory(clean);
 
   if (brand && category) return `${brand} · ${category}`;
   if (brand) return brand;
@@ -225,18 +322,30 @@ export function buildTitle(text = '') {
 
 const capitalise = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-export function parsePostText(text = '') {
+/**
+ * @param text  the post's caption, as written
+ * @param channelTitle  the catalogue's own name — see below
+ */
+export function parsePostText(text = '', { channelTitle = '' } = {}) {
   const clean = String(text || '').trim();
   const { price, currency } = parsePrice(clean);
+  const brand = detectBrand(clean);
+  // A catalogue whose NAME is the category answers what the caption left out.
+  // Most cards read "Balenciaga / Size 33-12-12cm" and nothing else, so category
+  // was known for one post in four — while «Сумки жіночі» knew the answer all
+  // along. The channel's own title is the source, which means a catalogue added
+  // later and called «Гаманці» starts labelling wallets with no configuration:
+  // the same rule that makes the filter row grow by itself.
+  const category = detectCategory(clean) || detectCategory(channelTitle);
   return {
-    title: buildTitle(clean),
+    title: buildTitle(clean, { brand, category }),
     // The whole post stays as the body — nothing the client wrote is lost.
     body: clean.slice(0, 1000),
     price,
     currency,
     article: parseArticle(clean),
-    brand: detectBrand(clean),
-    category: detectCategory(clean),
+    brand,
+    category,
   };
 }
 
@@ -255,26 +364,26 @@ function photoIds(post) {
 
 // ── CHANNEL → APP ─────────────────────────────────────────────────────────
 
-export function ingestChannelPost(update) {
+export async function ingestChannelPost(update) {
   const post = update?.channel_post || update?.edited_channel_post;
   if (!post) return null;
   const edited = Boolean(update.edited_channel_post);
 
-  const channel = resolveChannel(post.chat);
+  const channel = await resolveChannel(post.chat);
   if (!channel || !channel.enabled) return null;
 
-  const parsed = parsePostText(post.text || post.caption || '');
+  const parsed = parsePostText(post.text || post.caption || '', { channelTitle: channel.title });
   const photos = photoIds(post);
   const createdAt = new Date((post.date || Math.floor(Date.now() / 1000)) * 1000).toISOString();
 
-  const existing = db.prepare('SELECT * FROM posts WHERE tg_message_id=? AND channel=?')
+  const existing = await db.prepare('SELECT * FROM posts WHERE tg_message_id=? AND channel=?')
     .get(post.message_id, channel.key);
 
   if (existing) {
     // An edit in the channel must show up in the app — that is the whole point
     // of "и наоборот".
     if (edited) {
-      db.prepare(`UPDATE posts SET title=?, body=?, price=COALESCE(?, price), currency=COALESCE(?, currency),
+      await db.prepare(`UPDATE posts SET title=?, body=?, price=COALESCE(?, price), currency=COALESCE(?, currency),
                   article=COALESCE(?, article), photos_json=COALESCE(?, photos_json), edited_at=? WHERE id=?`)
         .run(parsed.title, parsed.body, parsed.price, parsed.currency, parsed.article,
           photos.length ? JSON.stringify(photos) : null, new Date().toISOString(), existing.id);
@@ -285,12 +394,12 @@ export function ingestChannelPost(update) {
   // Albums arrive as several updates sharing one media_group_id. The first one
   // creates the post; the rest only add their photo, so an album is one card.
   if (post.media_group_id) {
-    const groupRow = db.prepare('SELECT * FROM posts WHERE media_group_id=? AND channel=?')
+    const groupRow = await db.prepare('SELECT * FROM posts WHERE media_group_id=? AND channel=?')
       .get(String(post.media_group_id), channel.key);
     if (groupRow) {
       const current = safeParse(groupRow.photos_json) || [];
       const merged = [...new Set([...current, ...photos])].slice(0, 10);
-      db.prepare(`UPDATE posts SET photos_json=?,
+      await db.prepare(`UPDATE posts SET photos_json=?,
                   title = CASE WHEN ? <> '' AND (title IS NULL OR title = 'Нова позиція') THEN ? ELSE title END,
                   body  = CASE WHEN ? <> '' AND (body IS NULL OR body = '') THEN ? ELSE body END,
                   price = COALESCE(price, ?), article = COALESCE(article, ?)
@@ -301,7 +410,7 @@ export function ingestChannelPost(update) {
     }
   }
 
-  const info = db.prepare(`INSERT INTO posts
+  const info = await db.prepare(`INSERT INTO posts
     (channel,tg_message_id,title,body,price,currency,image_url,article,brand,category,photos_json,media_group_id,source,status,created_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'channel','published',?)`)
     .run(
@@ -317,7 +426,7 @@ export function ingestChannelPost(update) {
 }
 
 function safeParse(s) {
-  try { return s ? JSON.parse(s) : null; } catch { return null; }
+  return asJson(s);
 }
 
 // ── APP → CHANNEL ─────────────────────────────────────────────────────────
@@ -329,7 +438,7 @@ function renderPost({ title, body, price, currency, article }) {
 }
 
 export async function publishPost({ channel, title, body, price, currency, article, photoUrl }) {
-  const ch = getChannel(channel);
+  const ch = await getChannel(channel);
   if (!ch) throw new Error('unknown channel');
   const created_at = new Date().toISOString();
   const text = renderPost({ title, body, price, currency, article });
@@ -345,7 +454,7 @@ export async function publishPost({ channel, title, body, price, currency, artic
     tg_message_id = Math.floor(90000 + Math.abs(hash(title + created_at)) % 9999);
   }
 
-  const info = db.prepare(`INSERT INTO posts
+  const info = await db.prepare(`INSERT INTO posts
     (channel,tg_message_id,title,body,price,currency,image_url,article,source,status,created_at)
     VALUES (?,?,?,?,?,?,?,?, 'app','published',?)`)
     .run(ch.key, tg_message_id, title, body || '', price || null, currency || 'USD',
@@ -356,7 +465,7 @@ export async function publishPost({ channel, title, body, price, currency, artic
 
 export async function sendToUser(tgUserId, text, extra = {}) {
   if (!liveMode()) return { simulated: true, text };
-  return tg('sendMessage', { chat_id: tgUserId, text, parse_mode: 'HTML', ...extra });
+  return await tg('sendMessage', { chat_id: tgUserId, text, parse_mode: 'HTML', ...extra });
 }
 
 // ── private chat: /start → the button that opens the Mini App ─────────────
@@ -379,7 +488,7 @@ export async function handleMessage(update) {
     'Бонуси клубу теж тут: знижка на день народження та бонус за покупку.';
 
   if (!liveMode()) return { simulated: true, body };
-  return tg('sendMessage', {
+  return await tg('sendMessage', {
     chat_id: msg.chat.id,
     text: body,
     parse_mode: 'HTML',
@@ -411,12 +520,12 @@ export async function configureBot(publicUrl) {
 
 export async function webhookInfo() {
   if (!liveMode()) return { skipped: 'no token' };
-  return tg('getWebhookInfo', {});
+  return await tg('getWebhookInfo', {});
 }
 
 export async function botInfo() {
   if (!liveMode()) return { skipped: 'no token' };
-  return tg('getMe', {});
+  return await tg('getMe', {});
 }
 
 // Is the bot able to RECEIVE this channel's posts?
@@ -458,7 +567,7 @@ export async function checkChannelAccess(usernameOrId) {
 
 export async function setWebhook(publicUrl) {
   if (!liveMode() || !publicUrl) return { skipped: true };
-  return tg('setWebhook', {
+  return await tg('setWebhook', {
     url: `${publicUrl.replace(/\/$/, '')}/telegram/webhook`,
     allowed_updates: ['channel_post', 'edited_channel_post', 'message'],
     secret_token: process.env.TELEGRAM_WEBHOOK_SECRET || undefined,
@@ -474,9 +583,12 @@ function hash(s) {
   return h;
 }
 
-// Legacy export kept so older imports keep resolving; prefer listChannels().
+// Legacy export kept so older imports keep resolving; prefer (await listChannels()).
 export const CHANNELS = new Proxy({}, {
-  get: (_t, prop) => (typeof prop === 'string' ? getChannel(prop) : undefined),
-  ownKeys: () => listChannels({ includeDisabled: true }).map((c) => c.key),
+  get: async (_t, prop) => (typeof prop === 'string' ? await getChannel(prop) : undefined),
+  // Proxy traps cannot be async, and ownKeys must return a real array — the
+  // channel list is not reachable synchronously any more. Anything that needs the
+  // keys should call listChannels() itself.
+  ownKeys: () => [],
   getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
 });

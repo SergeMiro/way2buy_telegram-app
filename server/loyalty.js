@@ -25,9 +25,9 @@ const FALLBACK_CASHBACK = {
   mode: 'fixed', value: 100, min_order_usd: 2000, cap_usd: 300,
 };
 
-export function cashbackRule() {
+export async function cashbackRule() {
   try {
-    return getRule('cashback') || FALLBACK_CASHBACK;
+    return await getRule('cashback') || FALLBACK_CASHBACK;
   } catch {
     return FALLBACK_CASHBACK;
   }
@@ -163,28 +163,28 @@ export function computeSnapshot(agg, now = Date.now(), rule = FALLBACK_CASHBACK)
 
 // ── DB-backed snapshots ────────────────────────────────────────────────────
 
-export function loyaltyFor(customerId, now = Date.now()) {
+export async function loyaltyFor(customerId, now = Date.now()) {
   const id = Number(customerId);
-  const batch = snapshotBatch([id], now);
-  return batch[id] || computeSnapshot(null, now, cashbackRule());
+  const batch = await snapshotBatch([id], now);
+  return batch[id] || computeSnapshot(null, now, await cashbackRule());
 }
 
 // N+1-safe batch snapshot: EXACTLY 2 aggregate queries regardless of how many
 // customers are asked for. The qualifying-order counters are computed inside
 // the same aggregate via CASE WHEN, so changing the rule threshold does not
 // add a query.
-export function snapshotBatch(customerIds, now = Date.now()) {
+export async function snapshotBatch(customerIds, now = Date.now()) {
   const ids = [...new Set((customerIds || []).map(Number).filter((n) => Number.isFinite(n)))];
   const out = {};
   if (ids.length === 0) return out;
 
-  const rule = cashbackRule();
+  const rule = await cashbackRule();
   const minOrder = Number(rule.min_order_usd ?? 0);
   const placeholders = ids.map(() => '?').join(',');
 
-  const purchaseRows = db.prepare(
+  const purchaseRows = await db.prepare(
     `SELECT customer_id AS cid,
-            substr(created_at, 1, 7) AS ym,
+            to_char(created_at, 'YYYY-MM') AS ym,
             COALESCE(SUM(amount_usd), 0) AS s,
             COUNT(*) AS n,
             SUM(CASE WHEN amount_usd >= ? THEN 1 ELSE 0 END) AS qn,
@@ -195,7 +195,7 @@ export function snapshotBatch(customerIds, now = Date.now()) {
       GROUP BY customer_id, ym`
   ).all(minOrder, minOrder, ...ids);
 
-  const redeemRows = db.prepare(
+  const redeemRows = await db.prepare(
     `SELECT customer_id AS cid, COALESCE(SUM(amount_usd), 0) AS s
        FROM redemptions
       WHERE customer_id IN (${placeholders})
@@ -230,6 +230,8 @@ export function snapshotBatch(customerIds, now = Date.now()) {
 
 // What one specific order earns — used when a purchase is recorded so the admin
 // sees the bonus immediately, and by the tests.
-export function cashbackForOrder(orderUsd, rule = cashbackRule()) {
-  return computeDiscount(rule, orderUsd);
+// `rule` is resolved in the body rather than as a parameter default: a default
+// cannot contain await, and await cashbackRule() is a database read now.
+export async function cashbackForOrder(orderUsd, rule = null) {
+  return computeDiscount(rule ?? (await cashbackRule()), orderUsd);
 }

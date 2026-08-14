@@ -26,7 +26,7 @@ if (!liveMode()) {
   process.exit(1);
 }
 
-init();
+await init();
 
 const line = (s = '') => console.log(s);
 const ok = (s) => console.log(`  ✓ ${s}`);
@@ -60,7 +60,7 @@ async function setup(url) {
 // Being able to getChat means it is a member/admin; that is also when we learn
 // the numeric chat_id, which is what makes private channels work.
 async function channels() {
-  const rows = listChannels(); // enabled only — disabled ones are history
+  const rows = await listChannels(); // enabled only — disabled ones are history
   const me = await botInfo();
   let admin = 0;
   const missing = [];
@@ -71,7 +71,7 @@ async function channels() {
     try {
       const info = await checkChannelAccess(target);
       if (!c.chatId && info.id) {
-        db.prepare('UPDATE channels SET chat_id=? WHERE key=?').run(String(info.id), c.key);
+        await db.prepare('UPDATE channels SET chat_id=? WHERE key=?').run(String(info.id), c.key);
       }
       if (info.isAdmin) {
         admin += 1;
@@ -118,19 +118,19 @@ async function unhook() {
 // is the cleanest way to tell them apart without a flag column. Hidden, not
 // deleted: the demo data is still there if a screenshot needs it.
 async function demoOff() {
-  const info = db.prepare(
+  const info = await db.prepare(
     `UPDATE posts SET status='hidden'
       WHERE status='published' AND photos_json IS NULL
         AND (image_url IS NULL OR length(image_url) <= 8)`
   ).run();
-  const left = db.prepare("SELECT COUNT(*) n FROM posts WHERE status='published'").get().n;
+  const left = (await db.prepare("SELECT COUNT(*) n FROM posts WHERE status='published'").get()).n;
   line(`сховано демо-позицій: ${info.changes}`);
   line(`лишилось у вітрині: ${left} (справжні пости з каналів)`);
 }
 
 // Bring them back.
 async function demoOn() {
-  const info = db.prepare("UPDATE posts SET status='published' WHERE status='hidden'").run();
+  const info = await db.prepare("UPDATE posts SET status='published' WHERE status='hidden'").run();
   line(`повернуто у вітрину: ${info.changes}`);
 }
 
@@ -138,18 +138,18 @@ async function demoOn() {
 // parser improves: the raw text is kept in `body`, so nothing is lost and the
 // vitrine can be rebuilt from it.
 async function reparse() {
-  const rows = db.prepare("SELECT id, body, title FROM posts WHERE source='channel'").all();
+  const rows = await db.prepare("SELECT id, body, title FROM posts WHERE source='channel'").all();
   const upd = db.prepare('UPDATE posts SET title=?, brand=?, category=?, article=COALESCE(article, ?) WHERE id=?');
   let changed = 0;
   for (const r of rows) {
     const parsed = parsePostText(r.body || r.title || '');
     if (parsed.title !== r.title || parsed.brand || parsed.category) {
-      upd.run(parsed.title, parsed.brand, parsed.category, parsed.article, r.id);
+      await upd.run(parsed.title, parsed.brand, parsed.category, parsed.article, r.id);
       if (parsed.title !== r.title) changed += 1;
     }
   }
   line(`переоброблено ${rows.length} постів, назв змінено: ${changed}`);
-  for (const r of db.prepare("SELECT title, brand, category FROM posts WHERE source='channel' ORDER BY id DESC LIMIT 8").all()) {
+  for (const r of await db.prepare("SELECT title, brand, category FROM posts WHERE source='channel' ORDER BY id DESC LIMIT 8").all()) {
     ok(`${r.title}${r.brand ? ` · ${r.brand}` : ''}${r.category ? ` · ${r.category}` : ''}`);
   }
 }

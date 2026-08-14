@@ -152,16 +152,22 @@
   --w2b-font-body:    'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --w2b-font-mono:    ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', monospace;
 
-  --w2b-fs-2xs:  11px;
+  /* The scale is tuned for a 390px phone, which is the only screen this app
+     ever opens on. Everything above `base` was pulled in one step: a 24px
+     serif heading and a 48px number are magazine sizes, and on a Mini App they
+     spent a third of the first screen on furniture instead of on merchandise.
+     Display sizes are now reserved for the two things that deserve one — the
+     name of the vitrine and the amount of money. */
+  --w2b-fs-2xs:  10px;
   --w2b-fs-xs:   12px;
   --w2b-fs-sm:   13px;
   --w2b-fs-base: 15px;
-  --w2b-fs-md:   17px;
-  --w2b-fs-lg:   20px;
-  --w2b-fs-xl:   24px;
-  --w2b-fs-2xl:  30px;
-  --w2b-fs-3xl:  38px;
-  --w2b-fs-display: 48px;
+  --w2b-fs-md:   16px;
+  --w2b-fs-lg:   18px;
+  --w2b-fs-xl:   21px;
+  --w2b-fs-2xl:  26px;
+  --w2b-fs-3xl:  32px;
+  --w2b-fs-display: 40px;
 
   --w2b-lh-tight: 1.1;
   --w2b-lh-snug:  1.3;
@@ -209,9 +215,9 @@
   --w2b-tg-secondary-bg:var(--tg-theme-secondary-bg-color, var(--w2b-surface-2));
 }
 
-/* Smooth, GPU-cheap ring animation when @property is supported (progressive
-   enhancement; ignored elsewhere, ring still renders at its static value). */
-@property --w2b-ring-pct {
+/* Smooth, GPU-cheap progress animation when @property is supported (progressive
+   enhancement; ignored elsewhere, the bar still renders at its static value). */
+@property --w2b-meter-pct {
   syntax: '<percentage>';
   inherits: true;
   initial-value: 0%;

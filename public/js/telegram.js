@@ -5,11 +5,16 @@
    whether we are inside the Telegram client or in a plain browser (demo).
 
    Identity:
-     • inside Telegram → initDataUnsafe.user.id (in production the server will
-       re-derive this from a validated initData HMAC; the client shape is
-       already correct, so nothing here changes when that lands).
+     • inside Telegram → initDataUnsafe.user.id for what to DISPLAY, and the
+       raw signed `initData` string for what to PROVE. The server re-derives
+       the id from the HMAC on that string and trusts nothing else — see
+       server/auth.js — so `initData` is the credential and `userId` is only
+       a label. Never treat *Unsafe as authority; the name says so.
      • plain browser   → ?tgid=… , else the last picked demo profile
-       (localStorage), else the first seeded customer.
+       (localStorage), else NOBODY. There is no invented id: on a production
+       deployment an unsigned claim is refused, so a made-up one would turn a
+       browser visit into a page of errors. app.js picks a seeded profile only
+       once the server has confirmed it is running as a demo.
 
    Exposes: window.W2B.tg
 ============================================================================ */
@@ -23,14 +28,20 @@
   var LS_KEY = 'w2b:demo-tgid';
   var params = new URLSearchParams(window.location.search);
 
+  // Outside Telegram: only an identity somebody actually asked for. There is no
+  // hardcoded fallback any more, because with signed launches required in
+  // production a made-up id is not a demo, it is a request that gets refused —
+  // and a shop that answers 401 to a plain browser looks broken rather than
+  // closed. The demo's own profile is chosen by app.js once the server has said
+  // it IS a demo.
   function readDemoId() {
     var fromUrl = params.get('tgid');
     if (fromUrl) return fromUrl;
     try {
       var saved = window.localStorage.getItem(LS_KEY);
       if (saved) return saved;
-    } catch (e) { /* private mode — fall through to the default */ }
-    return '100000001'; // first seeded customer
+    } catch (e) { /* private mode — no saved profile */ }
+    return '';
   }
 
   var userId = inTelegram ? String(wa.initDataUnsafe.user.id) : readDemoId();
@@ -58,6 +69,10 @@
     // and the server is the authority either way (requireAdmin).
     isDemo: !inTelegram,
     userId: userId,
+    // The signed launch payload, verbatim. api.js sends it on every request and
+    // the server checks its HMAC. Empty outside Telegram — which is exactly why
+    // a plain browser cannot reach the cabinet in production.
+    initData: inTelegram ? wa.initData : '',
 
     name: inTelegram
       ? [wa.initDataUnsafe.user.first_name, wa.initDataUnsafe.user.last_name].filter(Boolean).join(' ')

@@ -1,10 +1,13 @@
 /* ============================================================================
    api.js — the JSON client.
 
-   Every request carries the caller's identity the way the server expects it:
-   `tgid` as a query param on GET, in the body on POST. Admin routes additionally
-   need `admin=1` while the app runs in open-demo mode (no ADMIN_TG_IDS set) —
-   the server still decides, this only asks.
+   Every request carries the caller's identity twice: as PROOF in the
+   `X-Telegram-Init-Data` header — Telegram's signed launch payload, which the
+   server verifies by HMAC — and as the legacy `tgid` claim, which the server
+   only falls back to while Mini Apps opened on an older bundle are still
+   running. Admin routes additionally need `admin=1` while the app runs in
+   open-demo mode (no ADMIN_TG_IDS set) — the server still decides, this only
+   asks, and in production it asks in vain without the signature.
 
    Exposes: window.W2B.api
 ============================================================================ */
@@ -20,9 +23,33 @@
     return p.toString();
   }
 
+  // The vitrine's selection → query params. Empty values are dropped rather
+  // than sent as "", because the server reads an empty channel as "everything"
+  // and an empty brand as "no brand filter" — sending both would be ambiguous.
+  function selection(sel) {
+    var s = sel || {};
+    var out = {};
+    // A search spans every catalogue: the chip is deliberately not applied,
+    // because someone typing "kelly" wants the bag wherever it lives.
+    if (s.q) out.q = s.q;
+    else if (s.channel && s.channel !== 'all') out.channel = s.channel;
+    if (!out.channel) out.kind = 'catalog';
+    if (s.brand) out.brand = s.brand;
+    if (s.category) out.category = s.category;
+    if (s.cursor) out.cursor = s.cursor;
+    if (s.limit) out.limit = s.limit;
+    return out;
+  }
+
   async function request(method, path, body, query) {
     var url = path + (path.indexOf('?') === -1 ? '?' : '&') + qs(query);
     var init = { method: method, headers: {} };
+    // The proof of identity, on every call. A header rather than a parameter:
+    // it rides along on GET and POST alike, and it never lands in an access log
+    // the way `?initData=…` would. The `tgid` beside it stays for now — the
+    // server prefers the signature and only falls back while older bundles are
+    // still open in somebody's Telegram (server/auth.js explains the window).
+    if (tg.initData) init.headers['X-Telegram-Init-Data'] = tg.initData;
     if (body !== undefined) {
       init.headers['content-type'] = 'application/json';
       var payload = Object.assign({ tgid: tg.userId }, body);
@@ -57,15 +84,20 @@
     get: function (path, query) { return request('GET', path, undefined, query); },
     post: function (path, body) { return request('POST', path, body || {}); },
     patch: function (path, body) { return request('PATCH', path, body || {}); },
+    del: function (path) { return request('DELETE', path, undefined); },
 
     // ── read models ──
     config: function () { return request('GET', '/api/config'); },
     me: function () { return request('GET', '/api/me'); },
-    feed: function (channel) { return request('GET', '/api/feed', undefined, channel && channel !== 'all' ? { channel: channel } : {}); },
     // kind='catalog' → all catalogues at once; kind='main' → the channel feed.
     feedKind: function (kind) { return request('GET', '/api/feed', undefined, { kind: kind }); },
-    // Search spans every catalogue, whatever chip is selected.
-    feedSearch: function (q) { return request('GET', '/api/feed', undefined, { kind: 'catalog', q: q }); },
+    // The vitrine: one call for every combination of chip, search, brand,
+    // category and page. `cursor` comes back as `nextCursor` from the previous
+    // page — keyset paging, so a post published mid-scroll cannot shift the
+    // window and show the same card twice.
+    vitrine: function (sel) { return request('GET', '/api/feed', undefined, selection(sel)); },
+    // What is worth offering as a filter for that same selection.
+    facets: function (sel) { return request('GET', '/api/facets', undefined, selection(sel)); },
     catalogs: function () { return request('GET', '/api/catalogs'); },
     purchases: function () { return request('GET', '/api/purchases'); },
     discounts: function () { return request('GET', '/api/discounts'); },
@@ -140,9 +172,35 @@
       posts: function (channel) { return request('GET', '/api/admin/posts', undefined, channel ? { channel: channel } : {}); },
       updatePost: function (id, patch) { return request('PATCH', '/api/admin/posts/' + id, patch); },
 
+      // ── the campaign builder (super admin only; the server decides) ──
+      presets: function () { return request('GET', '/api/admin/presets'); },
+      // How many customers a set of conditions reaches right now, before
+      // anything is saved.
+      previewAudience: function (audience) {
+        return request('POST', '/api/admin/campaigns/preview', { audience: audience });
+      },
+
+      // ── the team ──
+      team: function () { return request('GET', '/api/admin/team'); },
+      addMember: function (form) { return request('POST', '/api/admin/team', form); },
+      setMember: function (tgId, patch) { return request('PATCH', '/api/admin/team/' + encodeURIComponent(tgId), patch); },
+      removeMember: function (tgId) { return request('DELETE', '/api/admin/team/' + encodeURIComponent(tgId)); },
+
       // ── channels + the scheduler tick ──
       channels: function () { return request('GET', '/api/admin/channels'); },
       updateChannel: function (key, patch) { return request('PATCH', '/api/admin/channels/' + encodeURIComponent(key), patch); },
+      // One call reads a few pages of the channel and reconciles them, then says
+      // where it stopped. The caller repeats it while `done` is false — a whole
+      // channel is thousands of pages and a serverless function has seconds.
+      // Adding a catalogue: one @username, no deploy.
+      addChannel: function (form) { return request('POST', '/api/admin/channels', form); },
+      // Which channel the «Канал» tab shows. One at a time.
+      setMainChannel: function (key) {
+        return request('POST', '/api/admin/channels/' + encodeURIComponent(key) + '/main', {});
+      },
+      syncChannel: function (key, opts) {
+        return request('POST', '/api/admin/channels/' + encodeURIComponent(key) + '/sync', opts || {});
+      },
       tick: function () { return request('POST', '/api/admin/tick', {}); },
     },
   };

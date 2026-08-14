@@ -94,13 +94,13 @@ const FALLBACK_RULE = {
   mode: 'fixed', value: 50, min_order_usd: 500, valid_days: 30,
 };
 
-export function birthdayRule() {
-  return getRule('birthday') || FALLBACK_RULE;
+export async function birthdayRule() {
+  return await getRule('birthday') || FALLBACK_RULE;
 }
 
-function logClaim({ customerId, claimed, onFile, year, verdict, promoCodeId = null, note = null }) {
+async function logClaim({ customerId, claimed, onFile, year, verdict, promoCodeId = null, note = null }) {
   try {
-    db.prepare(`INSERT INTO birthday_claims
+    await db.prepare(`INSERT INTO birthday_claims
       (customer_id,claimed_birthday,on_file_birthday,year,verdict,promo_code_id,note,created_at)
       VALUES (?,?,?,?,?,?,?,?)`)
       .run(customerId, claimed, onFile, year, verdict, promoCodeId, note, iso(Date.now()));
@@ -117,32 +117,32 @@ const genCode = (customerId) =>
 // The single entry point. `customer` is a full row from `customers`.
 // Returns { ok, verdict, message, discount?, promo?, window? } — never throws
 // for business reasons, only for programming errors.
-export function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now() }) {
-  const rule = birthdayRule();
+export async function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now() }) {
+  const rule = await birthdayRule();
   const year = new Date(now).getUTCFullYear();
   const onFile = customer.birthday || null;
   const onFileMmdd = onFile ? mmddOf(onFile) : null;
 
   if (!rule.enabled) {
-    logClaim({ customerId: customer.id, claimed: birthdayInput || null, onFile, year, verdict: 'disabled' });
+    await logClaim({ customerId: customer.id, claimed: birthdayInput || null, onFile, year, verdict: 'disabled' });
     return { ok: false, verdict: 'disabled', message: 'Знижка на день народження зараз вимкнена.' };
   }
 
   // The client may omit the date when we already have one on file.
   const parsed = birthdayInput ? parseBirthday(birthdayInput) : (onFile ? parseBirthday(onFile) : null);
   if (!parsed) {
-    logClaim({ customerId: customer.id, claimed: birthdayInput || null, onFile, year, verdict: 'invalid_date' });
+    await logClaim({ customerId: customer.id, claimed: birthdayInput || null, onFile, year, verdict: 'invalid_date' });
     return { ok: false, verdict: 'invalid_date', message: 'Вкажіть дату народження у форматі ДД.ММ.РРРР.' };
   }
   const claimedMmdd = mmdd(parsed);
 
   // ── the check Maryna asked for: do we already have a date on file? ──
   if (onFileMmdd && onFileMmdd !== claimedMmdd) {
-    logClaim({
+    await logClaim({
       customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'mismatch',
       note: `у базі ${onFileMmdd}, у заявці ${claimedMmdd}`,
     });
-    notifyAdmins({
+    await notifyAdmins({
       kind: 'bday_mismatch',
       title: '⚠️ Дата народження не збігається',
       body: `${customer.name}: у базі ${onFileMmdd}, у заявці ${claimedMmdd}. Знижку не видано.`,
@@ -158,21 +158,21 @@ export function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now(
   // First claim → record the date. From now on it is the source of truth.
   if (!onFileMmdd) {
     const stored = parsed.year ? `${parsed.year}-${claimedMmdd}` : `1900-${claimedMmdd}`;
-    db.prepare('UPDATE customers SET birthday=?, birthday_source=?, birthday_recorded_at=? WHERE id=?')
+    await db.prepare('UPDATE customers SET birthday=?, birthday_source=?, birthday_recorded_at=? WHERE id=?')
       .run(stored, 'claim', iso(now), customer.id);
     customer.birthday = stored;
   }
 
   // One granted discount per calendar year.
-  const already = db.prepare(
+  const already = await db.prepare(
     "SELECT id, created_at FROM birthday_claims WHERE customer_id=? AND year=? AND verdict='granted'"
   ).get(customer.id, year);
   if (already) {
-    logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'already_claimed' });
+    await logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'already_claimed' });
     return {
       ok: false,
       verdict: 'already_claimed',
-      message: `Знижку на день народження вже отримано цього року (${already.created_at.slice(0, 10)}).`,
+      message: `Знижку на день народження вже отримано цього року (${iso(already.created_at).slice(0, 10)}).`,
     };
   }
 
@@ -180,7 +180,7 @@ export function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now(
   const validDays = rule.valid_days ?? 30;
   const win = birthdayWindow(parsed, now, validDays);
   if (!win.open) {
-    logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'out_of_window' });
+    await logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'out_of_window' });
     return {
       ok: false,
       verdict: 'out_of_window',
@@ -192,7 +192,7 @@ export function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now(
   // ── grant ──
   const preview = computeDiscount(rule, null);
   const code = genCode(customer.id);
-  const info = db.prepare(`INSERT INTO promo_codes
+  const info = await db.prepare(`INSERT INTO promo_codes
     (customer_id,code,percent,mode,amount_usd,min_order_usd,rule_key,reason,status,created_at,expires_at)
     VALUES (?,?,?,?,?,?,?,?, 'active',?,?)`).run(
     customer.id,
@@ -208,11 +208,11 @@ export function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now(
   );
   const promoId = Number(info.lastInsertRowid);
 
-  logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'granted', promoCodeId: promoId });
+  await logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'granted', promoCodeId: promoId });
 
   const amountLabel = rule.mode === 'percent' ? `${rule.value}%` : `$${rule.value}`;
   const minLabel = rule.min_order_usd ? ` від замовлення $${rule.min_order_usd}` : '';
-  notifyCustomer({
+  await notifyCustomer({
     customerId: customer.id,
     kind: 'birthday',
     title: 'Вітаємо з днем народження! 🎂',
@@ -232,12 +232,12 @@ export function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now(
 }
 
 // What the client should see on the birthday card before they tap it.
-export function birthdayStatus(customer, now = Date.now()) {
-  const rule = birthdayRule();
+export async function birthdayStatus(customer, now = Date.now()) {
+  const rule = await birthdayRule();
   const year = new Date(now).getUTCFullYear();
   const parsed = customer?.birthday ? parseBirthday(customer.birthday) : null;
   const granted = customer
-    ? db.prepare("SELECT id, created_at FROM birthday_claims WHERE customer_id=? AND year=? AND verdict='granted'").get(customer.id, year)
+    ? await db.prepare("SELECT id, created_at FROM birthday_claims WHERE customer_id=? AND year=? AND verdict='granted'").get(customer.id, year)
     : null;
 
   const base = {
@@ -261,22 +261,22 @@ export function birthdayStatus(customer, now = Date.now()) {
 
 // ── reads for the admin panel ─────────────────────────────────────────────
 
-export function claimsFor(customerId, { limit = 20 } = {}) {
-  return db.prepare(
+export async function claimsFor(customerId, { limit = 20 } = {}) {
+  return await db.prepare(
     `SELECT id, claimed_birthday, on_file_birthday, year, verdict, promo_code_id, note, created_at
        FROM birthday_claims WHERE customer_id=? ORDER BY created_at DESC LIMIT ?`
   ).all(customerId, clamp(limit, 20, 100));
 }
 
-export function allClaims({ limit = 50, verdict = null } = {}) {
+export async function allClaims({ limit = 50, verdict = null } = {}) {
   const lim = clamp(limit, 50, 200);
   const rows = verdict
-    ? db.prepare(
+    ? await db.prepare(
         `SELECT bc.*, c.name, c.tg_user_id FROM birthday_claims bc
            JOIN customers c ON c.id = bc.customer_id
           WHERE bc.verdict=? ORDER BY bc.created_at DESC LIMIT ?`
       ).all(verdict, lim)
-    : db.prepare(
+    : await db.prepare(
         `SELECT bc.*, c.name, c.tg_user_id FROM birthday_claims bc
            JOIN customers c ON c.id = bc.customer_id
           ORDER BY bc.created_at DESC LIMIT ?`
@@ -297,10 +297,10 @@ export function allClaims({ limit = 50, verdict = null } = {}) {
 
 // Clients whose birthday window opens today — the scheduler uses this to send
 // "your birthday discount is available" without waiting for them to ask.
-export function birthdaysOpeningToday(now = Date.now()) {
+export async function birthdaysOpeningToday(now = Date.now()) {
   const d = new Date(now);
   const key = `${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-  return db.prepare(
+  return await db.prepare(
     `SELECT * FROM customers WHERE birthday IS NOT NULL AND substr(birthday, 6, 5) = ?`
   ).all(key);
 }

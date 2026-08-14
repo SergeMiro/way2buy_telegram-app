@@ -4,16 +4,16 @@ import assert from 'node:assert/strict';
 import { migrate } from '../server/db.js';
 import { computeDiscount, getRule, updateRule, listRules, RuleValidationError } from '../server/rules.js';
 
-migrate();
+await migrate();
 
-test('default rules match what Maryna approved on 31.07.2026', () => {
-  const cashback = getRule('cashback');
+test('default rules match what Maryna approved on 31.07.2026', async () => {
+  const cashback = await getRule('cashback');
   assert.equal(cashback.mode, 'fixed');
   assert.equal(cashback.value, 100);
   assert.equal(cashback.min_order_usd, 2000, 'a SINGLE order of $2000 qualifies');
   assert.equal(cashback.cap_usd, 300, 'unspent balance capped at $300');
 
-  const bday = getRule('birthday');
+  const bday = await getRule('birthday');
   assert.equal(bday.mode, 'fixed');
   assert.equal(bday.value, 50);
   assert.equal(bday.min_order_usd, 500, '$50 off an order of $500+');
@@ -54,32 +54,34 @@ test('invalid orders are refused, not treated as zero-discount', () => {
   assert.equal(computeDiscount(rule, 'abc').reason, 'invalid_order');
 });
 
-test('admin can switch a rule between $ and % and back', () => {
-  updateRule('birthday', { mode: 'percent', value: 15 }, 'admin-1');
-  let r = getRule('birthday');
+test('admin can switch a rule between $ and % and back', async () => {
+  await updateRule('birthday', { mode: 'percent', value: 15 }, 'admin-1');
+  let r = await getRule('birthday');
   assert.equal(r.mode, 'percent');
   assert.equal(computeDiscount(r, 1000).amountUsd, 150);
 
-  updateRule('birthday', { mode: 'fixed', value: 50 }, 'admin-1');
-  r = getRule('birthday');
+  await updateRule('birthday', { mode: 'fixed', value: 50 }, 'admin-1');
+  r = await getRule('birthday');
   assert.equal(computeDiscount(r, 1000).amountUsd, 50);
 });
 
-test('a percent above 90 is rejected — that is a $ typed into a % field', () => {
-  assert.throws(() => updateRule('cashback', { mode: 'percent', value: 150 }), RuleValidationError);
+test('a percent above 90 is rejected — that is a $ typed into a % field', async () => {
+  // rejects, not throws: updateRule reads and writes the database now, so the
+  // validation error arrives as a rejected promise.
+  await assert.rejects(() => updateRule('cashback', { mode: 'percent', value: 150 }), RuleValidationError);
   // …and the rule is left untouched.
-  assert.equal(getRule('cashback').mode, 'fixed');
+  assert.equal((await getRule('cashback')).mode, 'fixed');
 });
 
-test('unknown patch fields are ignored rather than crashing the panel', () => {
-  const before = getRule('cashback');
-  const after = updateRule('cashback', { somethingNew: true, value: 100 });
+test('unknown patch fields are ignored rather than crashing the panel', async () => {
+  const before = await getRule('cashback');
+  const after = await updateRule('cashback', { somethingNew: true, value: 100 });
   assert.equal(after.value, 100);
-  assert.equal(getRule('cashback').mode, before.mode);
+  assert.equal((await getRule('cashback')).mode, before.mode);
 });
 
-test('every rule renders a Ukrainian summary for the admin panel', () => {
-  for (const r of listRules()) {
+test('every rule renders a Ukrainian summary for the admin panel', async () => {
+  for (const r of await listRules()) {
     assert.ok(r.summary.length > 5, `${r.key} has no summary`);
   }
 });
