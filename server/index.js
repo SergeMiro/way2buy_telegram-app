@@ -25,6 +25,8 @@ import * as scheduler from './scheduler.js';
 import * as polling from './polling.js';
 import { adminAlerts } from './notify.js';
 import { identify } from './auth.js';
+import * as roles from './roles.js';
+import * as presets from './presets.js';
 import { asJson } from './sql.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -111,19 +113,40 @@ app.use((req, res, next) => {
 const tgid = (req) => (req.w2b ? req.w2b.id : '');
 const signedIn = (req) => Boolean(req.w2b && req.w2b.verified);
 const findCustomer = async (id) => await db.prepare('SELECT * FROM customers WHERE tg_user_id=?').get(id);
-const isAdmin = (req) => {
-  const id = tgid(req);
+// ── authorisation ──────────────────────────────────────────────────────────
+// Authentication answered "who". This answers "what may they do", and the two
+// are kept apart: a valid signature makes you a person, not an administrator.
+//
+// Roles live in the database (roles.js) so the owner can appoint somebody
+// without a deploy, and every route names the CAPABILITY it needs rather than a
+// role — 'discounts.manage', not 'is super admin'. That way the matrix is
+// readable in one place and a new route cannot quietly inherit rights by being
+// added to the wrong group.
+const roleOf = async (req) => {
   // The zero-config demo has no bot token, so there is no signature to check —
   // and nothing behind the door but seeded data. Production never reaches this
   // branch: DEMO is false the moment ADMIN_TG_IDS names anybody.
-  if (DEMO) return String(req.query.admin || req.body?.admin || '') === '1' || ADMIN_IDS.includes(id);
-  return signedIn(req) && ADMIN_IDS.includes(id);
+  if (DEMO && String(req.query.admin || req.body?.admin || '') === '1') return 'super';
+  if (!signedIn(req)) return null;
+  return await roles.roleOf(tgid(req));
 };
-const requireAdmin = (req, res, next) => (isAdmin(req) ? next() : res.status(403).json({ error: 'admin only' }));
+
+const requirePermission = (capability) => async (req, res, next) => {
+  if (DEMO && String(req.query.admin || req.body?.admin || '') === '1') return next();
+  if (!signedIn(req)) return res.status(403).json({ error: 'admin only' });
+  if (!(await roles.can(tgid(req), capability))) {
+    // The capability is named in the refusal on purpose: a manager who taps
+    // something they may not have should be able to say WHICH right they are
+    // missing, and so should the log.
+    return res.status(403).json({ error: 'not allowed', need: capability });
+  }
+  return next();
+};
 
 const now = () => new Date().toISOString();
 const badRequest = (res, e) => {
-  const validation = e instanceof rules.RuleValidationError || e instanceof campaigns.CampaignValidationError;
+  const validation = e instanceof rules.RuleValidationError || e instanceof campaigns.CampaignValidationError
+    || e instanceof roles.RoleError;
   return res.status(validation ? 400 : 500).json({ error: String(e.message || e) });
 };
 
@@ -167,10 +190,16 @@ app.get('/api/config', async (req, res) => {
 // ── me / register ────────────────────────────────────────────────────────
 app.get('/api/me', async (req, res) => {
   const c = await findCustomer(tgid(req));
-  if (!c) return res.json({ registered: false, admin: isAdmin(req) });
+  const role = await roleOf(req);
+  // `admin` stays a boolean for older bundles; `role` and `can` are what the
+  // cabinet draws itself from, so a manager is never shown a section that would
+  // then refuse her.
+  const who = { role, can: roles.capabilitiesOf(role) };
+  if (!c) return res.json({ registered: false, admin: Boolean(role), ...who });
   res.json({
     registered: true,
-    admin: isAdmin(req),
+    admin: Boolean(role),
+    ...who,
     customer: await customerCard(c),
     birthday: await birthday.birthdayStatus(c),
     cartCount: await cart.cartCount(c.id),
@@ -436,7 +465,7 @@ app.get('/api/demo/profiles', async (req, res) => {
 });
 
 // ── ADMIN: clients ───────────────────────────────────────────────────────
-app.get('/api/admin/customers', requireAdmin, async (req, res) => {
+app.get('/api/admin/customers', requirePermission('customers.read'), async (req, res) => {
   const rows = await db.prepare('SELECT * FROM customers ORDER BY created_at DESC LIMIT 500').all();
   const snaps = await snapshotBatch(rows.map((r) => r.id));
   res.json({
@@ -448,7 +477,7 @@ app.get('/api/admin/customers', requireAdmin, async (req, res) => {
 
 // Correcting a birthday is deliberately an admin-only action: the stored date
 // is what every future discount request is verified against.
-app.post('/api/admin/customers/:id/birthday', requireAdmin, async (req, res) => {
+app.post('/api/admin/customers/:id/birthday', requirePermission('customers.write'), async (req, res) => {
   const parsed = birthday.parseBirthday(req.body?.birthday);
   if (!parsed) return res.status(400).json({ error: 'invalid birthday' });
   const stored = `${parsed.year || 1900}-${birthday.mmdd(parsed)}`;
@@ -458,16 +487,16 @@ app.post('/api/admin/customers/:id/birthday', requireAdmin, async (req, res) => 
   res.json({ ok: true, birthday: stored });
 });
 
-app.get('/api/admin/birthday-claims', requireAdmin, async (req, res) => {
+app.get('/api/admin/birthday-claims', requirePermission('customers.read'), async (req, res) => {
   res.json({ claims: await birthday.allClaims({ limit: req.query.limit, verdict: req.query.verdict || null }) });
 });
 
 // ── ADMIN: bonus rules — the $ ⇄ % switch ────────────────────────────────
-app.get('/api/admin/rules', requireAdmin, async (req, res) => {
+app.get('/api/admin/rules', requirePermission('discounts.manage'), async (req, res) => {
   res.json({ rules: await rules.listRules(), holidays: await rules.listHolidays(), activeHolidays: await rules.activeHolidays() });
 });
 
-app.patch('/api/admin/rules/:key', requireAdmin, async (req, res) => {
+app.patch('/api/admin/rules/:key', requirePermission('discounts.manage'), async (req, res) => {
   try {
     const updated = await rules.updateRule(req.params.key, req.body || {}, tgid(req) || null);
     if (!updated) return res.status(404).json({ error: 'not found' });
@@ -475,11 +504,11 @@ app.patch('/api/admin/rules/:key', requireAdmin, async (req, res) => {
   } catch (e) { badRequest(res, e); }
 });
 
-app.get('/api/admin/holidays', requireAdmin, async (req, res) => {
+app.get('/api/admin/holidays', requirePermission('discounts.manage'), async (req, res) => {
   res.json({ holidays: await rules.listHolidays(), active: await rules.activeHolidays() });
 });
 
-app.patch('/api/admin/holidays/:id', requireAdmin, async (req, res) => {
+app.patch('/api/admin/holidays/:id', requirePermission('discounts.manage'), async (req, res) => {
   try {
     const updated = await rules.updateHoliday(Number(req.params.id), req.body || {}, tgid(req) || null);
     if (!updated) return res.status(404).json({ error: 'not found' });
@@ -487,14 +516,14 @@ app.patch('/api/admin/holidays/:id', requireAdmin, async (req, res) => {
   } catch (e) { badRequest(res, e); }
 });
 
-app.post('/api/admin/holidays', requireAdmin, async (req, res) => {
+app.post('/api/admin/holidays', requirePermission('discounts.manage'), async (req, res) => {
   try {
     res.json({ ok: true, holiday: await rules.createHoliday(req.body || {}) });
   } catch (e) { badRequest(res, e); }
 });
 
 // ── ADMIN: sales, cost and profit ────────────────────────────────────────
-app.post('/api/admin/purchase', requireAdmin, async (req, res) => {
+app.post('/api/admin/purchase', requirePermission('purchases.write'), async (req, res) => {
   const { customerId, title, amount, currency, channel, invoiceRef, costUsd, discountUsd } = req.body || {};
   if (!customerId || !amount) return res.status(400).json({ error: 'customerId & amount required' });
   const cur = currency || 'USD';
@@ -517,7 +546,7 @@ app.post('/api/admin/purchase', requireAdmin, async (req, res) => {
   });
 });
 
-app.post('/api/admin/purchases/:id/cost', requireAdmin, async (req, res) => {
+app.post('/api/admin/purchases/:id/cost', requirePermission('purchases.write'), async (req, res) => {
   try {
     const result = await profit.setCost(Number(req.params.id), { costUsd: req.body?.costUsd, note: req.body?.note || null });
     if (!result) return res.status(404).json({ error: 'not found' });
@@ -525,20 +554,20 @@ app.post('/api/admin/purchases/:id/cost', requireAdmin, async (req, res) => {
   } catch (e) { res.status(400).json({ error: String(e.message || e) }); }
 });
 
-app.get('/api/admin/profit', requireAdmin, async (req, res) => {
+app.get('/api/admin/profit', requirePermission('profit.read'), async (req, res) => {
   res.json(await profit.stats({ from: req.query.from || null, to: req.query.to || null, limit: req.query.limit }));
 });
 
-app.get('/api/admin/pending-costs', requireAdmin, async (req, res) => {
+app.get('/api/admin/pending-costs', requirePermission('profit.read'), async (req, res) => {
   res.json({ pending: await profit.pendingCosts(Date.now(), { graceHours: Number(req.query.graceHours) || 24 }) });
 });
 
 // ── ADMIN: inquiries (Dasha's queue) + popularity ────────────────────────
-app.get('/api/admin/inquiries', requireAdmin, async (req, res) => {
+app.get('/api/admin/inquiries', requirePermission('inquiries.read'), async (req, res) => {
   res.json({ inquiries: await cart.listInquiries({ status: req.query.status || null, limit: req.query.limit }) });
 });
 
-app.patch('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
+app.patch('/api/admin/inquiries/:id', requirePermission('inquiries.write'), async (req, res) => {
   try {
     const ok = await cart.setInquiryStatus(Number(req.params.id), { status: req.body?.status, by: tgid(req) || null });
     if (!ok) return res.status(404).json({ error: 'not found' });
@@ -548,7 +577,7 @@ app.patch('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
 
 // period=month|year|all, or explicit from/to — the same endpoint answers both
 // "какие сумки популярны в этом месяце" and "за год".
-app.get('/api/admin/popular', requireAdmin, async (req, res) => {
+app.get('/api/admin/popular', requirePermission('popular.read'), async (req, res) => {
   const opts = {
     period: req.query.period || 'month',
     from: req.query.from || null,
@@ -567,7 +596,7 @@ app.get('/api/admin/popular', requireAdmin, async (req, res) => {
 // розмір 38", not "Chanel · взуття". The parser guesses; this is where a human
 // corrects the guess. The original text is never overwritten (it stays in
 // `body`), so a correction is always reversible.
-app.get('/api/admin/posts', requireAdmin, async (req, res) => {
+app.get('/api/admin/posts', requirePermission('catalog.read'), async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 200);
   const rows = req.query.channel && req.query.channel !== 'all'
     ? await db.prepare('SELECT * FROM posts WHERE channel=? ORDER BY created_at DESC LIMIT ?').all(req.query.channel, limit)
@@ -576,7 +605,7 @@ app.get('/api/admin/posts', requireAdmin, async (req, res) => {
   res.json({ posts: rows.map((p) => shapePost(p, channels)) });
 });
 
-app.patch('/api/admin/posts/:id', requireAdmin, async (req, res) => {
+app.patch('/api/admin/posts/:id', requirePermission('catalog.write'), async (req, res) => {
   const id = Number(req.params.id);
   const post = await db.prepare('SELECT * FROM posts WHERE id=?').get(id);
   if (!post) return res.status(404).json({ error: 'not found' });
@@ -610,7 +639,7 @@ app.patch('/api/admin/posts/:id', requireAdmin, async (req, res) => {
 });
 
 // ── ADMIN: channels ──────────────────────────────────────────────────────
-app.get('/api/admin/channels', requireAdmin, async (req, res) => {
+app.get('/api/admin/channels', requirePermission('channels.read'), async (req, res) => {
   const counts = new Map(
     (await db.prepare(`SELECT channel,
         count(*) FILTER (WHERE status = 'published') published,
@@ -635,7 +664,7 @@ app.get('/api/admin/channels', requireAdmin, async (req, res) => {
 // budget on a serverless host. The client repeats the call while `done` is false;
 // the cursor is also stored on the channel, so closing the browser mid-backfill
 // loses nothing.
-app.post('/api/admin/channels/:key/sync', requireAdmin, async (req, res) => {
+app.post('/api/admin/channels/:key/sync', requirePermission('channels.sync'), async (req, res) => {
   const row = await db.prepare('SELECT * FROM channels WHERE key=?').get(req.params.key);
   if (!row) return res.status(404).json({ error: 'not found' });
   if (!row.username) {
@@ -660,7 +689,7 @@ app.post('/api/admin/channels/:key/sync', requireAdmin, async (req, res) => {
 // That matters as the shop grows: ten more channels are coming, and none of them
 // should need a developer. The channel is read once here, so a typo or a private
 // channel is refused now rather than failing on every sync afterwards.
-app.post('/api/admin/channels', requireAdmin, async (req, res) => {
+app.post('/api/admin/channels', requirePermission('channels.manage'), async (req, res) => {
   const { username, title, emoji } = req.body || {};
   if (!username) return res.status(400).json({ error: 'потрібен @username каналу' });
   try {
@@ -678,7 +707,7 @@ app.post('/api/admin/channels', requireAdmin, async (req, res) => {
 // Which channel the «Канал» tab shows. A switch rather than a setting, because
 // it is going to be flipped from the test channel to the real one and back, and
 // that must not be a deploy.
-app.post('/api/admin/channels/:key/main', requireAdmin, async (req, res) => {
+app.post('/api/admin/channels/:key/main', requirePermission('channels.manage'), async (req, res) => {
   try {
     const { main, demoted } = await sync.setMainChannel(req.params.key);
     res.json({ ok: true, channel: await getChannel(main.key), demoted });
@@ -687,7 +716,7 @@ app.post('/api/admin/channels/:key/main', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/api/admin/channels/:key', requireAdmin, async (req, res) => {
+app.patch('/api/admin/channels/:key', requirePermission('channels.manage'), async (req, res) => {
   const { enabled, title, emoji, kind } = req.body || {};
   const existing = await getChannel(req.params.key);
   if (!existing) return res.status(404).json({ error: 'not found' });
@@ -697,7 +726,7 @@ app.patch('/api/admin/channels/:key', requireAdmin, async (req, res) => {
 });
 
 // ── ADMIN: posting, promos, campaigns, reports ───────────────────────────
-app.post('/api/admin/post', requireAdmin, async (req, res) => {
+app.post('/api/admin/post', requirePermission('posts.publish'), async (req, res) => {
   try {
     const { channel, title, body, price, currency, article, photoUrl } = req.body || {};
     if (!channel || !title) return res.status(400).json({ error: 'channel & title required' });
@@ -710,7 +739,7 @@ app.post('/api/admin/post', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/admin/promo', requireAdmin, async (req, res) => {
+app.post('/api/admin/promo', requirePermission('discounts.manage'), async (req, res) => {
   const { customerId, mode = 'percent', value, percent, reason, days, minOrderUsd } = req.body || {};
   const amount = Number(value ?? percent ?? 10);
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'value must be positive' });
@@ -737,17 +766,38 @@ app.post('/api/admin/promo', requireAdmin, async (req, res) => {
   res.json({ ok: true, code });
 });
 
-app.get('/api/admin/campaigns', requireAdmin, async (req, res) => {
-  res.json(await campaigns.list({ status: req.query.status, limit: req.query.limit }));
+// ── the campaign builder ───────────────────────────────────────────────────
+// The ready-made campaigns, with their dates already resolved for the coming
+// occurrence — so a card can say «20 груд — 8 січ» before anything is created.
+app.get('/api/admin/presets', requirePermission('discounts.manage'), async (req, res) => {
+  res.json({ presets: presets.listPresets(), conditions: campaigns.CONDITIONS });
 });
 
-app.post('/api/admin/campaigns', requireAdmin, async (req, res) => {
+// How many customers a set of conditions reaches RIGHT NOW, before saving. This
+// is what keeps the builder honest: an audience of nobody is a campaign that
+// looks like it worked and gave away nothing.
+app.post('/api/admin/campaigns/preview', requirePermission('discounts.manage'), async (req, res) => {
   try {
-    res.json({ ok: true, campaign: await campaigns.create({ ...req.body, createdBy: tgid(req) || null }) });
+    res.json(await campaigns.previewAudience(req.body?.audience ?? null));
   } catch (e) { badRequest(res, e); }
 });
 
-app.patch('/api/admin/campaigns/:id', requireAdmin, async (req, res) => {
+app.get('/api/admin/campaigns', requirePermission('discounts.manage'), async (req, res) => {
+  res.json(await campaigns.list({ status: req.query.status, limit: req.query.limit }));
+});
+
+app.post('/api/admin/campaigns', requirePermission('discounts.manage'), async (req, res) => {
+  try {
+    // A preset fills the form; anything the owner changed on top of it wins.
+    const base = req.body?.preset ? presets.expandPreset(req.body.preset) : {};
+    if (req.body?.preset && !base) return res.status(400).json({ error: 'unknown preset' });
+    const { preset: _p, ...rest } = req.body || {};
+    const input = { ...base, ...rest, preset: req.body?.preset || null };
+    res.json({ ok: true, campaign: await campaigns.create({ ...input, createdBy: tgid(req) || null }) });
+  } catch (e) { badRequest(res, e); }
+});
+
+app.patch('/api/admin/campaigns/:id', requirePermission('discounts.manage'), async (req, res) => {
   try {
     const updated = await campaigns.update(Number(req.params.id), req.body || {});
     if (!updated) return res.status(404).json({ error: 'not found' });
@@ -755,25 +805,51 @@ app.patch('/api/admin/campaigns/:id', requireAdmin, async (req, res) => {
   } catch (e) { badRequest(res, e); }
 });
 
-app.post('/api/admin/campaigns/:id/materialize', requireAdmin, async (req, res) => {
+app.post('/api/admin/campaigns/:id/materialize', requirePermission('discounts.manage'), async (req, res) => {
   const result = await campaigns.materialize(Number(req.params.id));
   if (!result) return res.status(404).json({ error: 'not found' });
   res.json({ ok: true, ...result });
 });
 
-app.get('/api/admin/alerts', requireAdmin, async (req, res) => {
+// ── the team ───────────────────────────────────────────────────────────────
+// Who works here, and how far in they get. Only a super admin may look at this
+// or change it — appointing people is the one power that can hand away every
+// other one.
+app.get('/api/admin/team', requirePermission('team.manage'), async (req, res) => {
+  res.json({ team: await roles.listTeam(), roles: roles.ROLES, permissions: roles.PERMISSIONS });
+});
+
+app.post('/api/admin/team', requirePermission('team.manage'), async (req, res) => {
+  try {
+    res.json({ ok: true, team: await roles.addMember({ ...req.body, by: tgid(req) }) });
+  } catch (e) { badRequest(res, e); }
+});
+
+app.patch('/api/admin/team/:tgId', requirePermission('team.manage'), async (req, res) => {
+  try {
+    res.json({ ok: true, team: await roles.setMember({ ...req.body, tgId: req.params.tgId, by: tgid(req) }) });
+  } catch (e) { badRequest(res, e); }
+});
+
+app.delete('/api/admin/team/:tgId', requirePermission('team.manage'), async (req, res) => {
+  try {
+    res.json({ ok: true, team: await roles.removeMember(req.params.tgId) });
+  } catch (e) { badRequest(res, e); }
+});
+
+app.get('/api/admin/alerts', requirePermission('alerts.read'), async (req, res) => {
   res.json({ alerts: await adminAlerts({ limit: req.query.limit }) });
 });
 
 // Scheduler status + a manual/cron-callable (await tick (serverless hosts have no
 // long-lived process, so the same jobs are reachable over HTTP)).
-app.get('/api/admin/scheduler', requireAdmin, (req, res) => res.json({ ...scheduler.status(), polling: polling.status() }));
-app.post('/api/admin/tick', requireAdmin, async (req, res) => res.json(await scheduler.tick()));
+app.get('/api/admin/scheduler', requirePermission('settings.manage'), (req, res) => res.json({ ...scheduler.status(), polling: polling.status() }));
+app.post('/api/admin/tick', requirePermission('settings.manage'), async (req, res) => res.json(await scheduler.tick()));
 
-app.get('/api/admin/report', requireAdmin, async (req, res) => {
+app.get('/api/admin/report', requirePermission('reports.read'), async (req, res) => {
   res.json(await buildReport(req.query.period === 'week' ? 'week' : 'day'));
 });
-app.post('/api/admin/report/send', requireAdmin, async (req, res) => {
+app.post('/api/admin/report/send', requirePermission('reports.read'), async (req, res) => {
   res.json(await sendReport(req.body?.period === 'week' ? 'week' : 'day'));
 });
 
@@ -809,7 +885,7 @@ app.post('/telegram/webhook', async (req, res) => {
 
 // Bot / webhook diagnostics for the owner: "is the bot really an admin of this
 // channel?" answered without waiting for someone to await post.
-app.get('/api/admin/telegram', requireAdmin, async (req, res) => {
+app.get('/api/admin/telegram', requirePermission('settings.manage'), async (req, res) => {
   try {
     const [me, hook] = await Promise.all([await botInfo(), await webhookInfo()]);
     const channels = await listChannels({ includeDisabled: true });

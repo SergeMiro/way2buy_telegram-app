@@ -18,11 +18,46 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { TIERS, tierFor } from './loyalty.js';
+import { mmddOf, birthdayWindow } from './birthday.js';
 import { asJson } from './sql.js';
 
 // ── constants ──────────────────────────────────────────────────────────────
 export const CAMPAIGN_TYPES = ['birthday', 'holiday', 'vip', 'generic'];
-const AUDIENCE_KEYS = ['tier', 'minSpentUsd', 'city', 'sourceChannel', 'tgIds'];
+
+// ── the conditions a campaign can be aimed with ────────────────────────────
+//
+// Every condition present must hold — they are ANDed, always, with no operator
+// to choose. That is a decision about the person using this, not a limitation:
+// «клієнти з 3+ покупками АБО тратою від $5000, але НЕ з Києва» is a sentence
+// nobody composes correctly in a form, and a wrong audience is money given to
+// the wrong people. Anything that genuinely needs OR is two campaigns, which is
+// also two things you can read afterwards and tell apart.
+//
+// Each key is one plain question about a customer, so the cabinet can print the
+// whole audience as a list of sentences and the owner can check it by reading.
+export const CONDITIONS = {
+  // who they are
+  tier:            'Рівень клієнта',
+  city:            'Місто',
+  sourceChannel:   'Купував з каталогу',
+  tgIds:           'Конкретні клієнти (Telegram id)',
+  joinedWithinDays: 'У клубі не довше, ніж (днів)',
+  // what they have spent
+  minSpentUsd:     'Сума покупок від, $',
+  maxSpentUsd:     'Сума покупок до, $',
+  // how often they buy
+  minPurchases:    'Покупок від',
+  maxPurchases:    'Покупок до',
+  firstOrder:      'Ще жодної покупки (перше замовлення)',
+  boughtWithinDays: 'Купував за останні (днів)',
+  minPurchasesInWindow: '…і саме стільки разів за цей період',
+  dormantDays:     'Не купував уже (днів)',
+  // the calendar of the person, as opposed to the calendar of the shop —
+  // the shop's dates are the campaign window (startsAt / endsAt)
+  birthdayWithinDays: 'День народження протягом (днів)',
+  hasBirthday:     'Дата народження відома',
+};
+const AUDIENCE_KEYS = Object.keys(CONDITIONS);
 const TIER_KEYS = TIERS.map((t) => t.key); // silver | gold | platinum
 // Card variants map 1:1 onto campaign types; `emoji` matches the design tokens.
 const VARIANT_EMOJI = { birthday: '🎂', holiday: '🎉', vip: '💎', generic: '🏷️' };
@@ -59,6 +94,33 @@ function validatePercent(percent) {
   if (!Number.isInteger(percent)) bad('percent must be an integer');
   if (percent < 1 || percent > 90) bad('percent must be between 1 and 90');
   return percent;
+}
+
+// A campaign is either a percentage or a sum of money, the same toggle every
+// other discount in this app has. `percent` is still written for older rows and
+// older clients; when the campaign is a fixed sum it is 0 there and the truth is
+// in mode/value, which is why nothing reads `percent` alone any more.
+function validateMoney(input = {}) {
+  const hasNew = input.mode !== undefined || input.value !== undefined;
+  const minOrderUsd = input.minOrderUsd == null && input.min_order_usd == null
+    ? 0
+    : Number(input.minOrderUsd ?? input.min_order_usd);
+  if (!Number.isFinite(minOrderUsd) || minOrderUsd < 0) bad('minOrderUsd must be a number >= 0');
+
+  if (!hasNew) {
+    const p = validatePercent(input.percent);
+    return { mode: 'percent', value: p, percent: p, minOrderUsd };
+  }
+  const mode = input.mode === 'fixed' ? 'fixed' : 'percent';
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value <= 0) bad('value must be a positive number');
+  if (mode === 'percent') {
+    const p = validatePercent(Math.round(value));
+    return { mode, value: p, percent: p, minOrderUsd };
+  }
+  // A fixed campaign has no meaningful percentage; 0 is the honest value and
+  // discountsFor() reads mode first, so nothing renders «0%».
+  return { mode, value, percent: 0, minOrderUsd };
 }
 
 function validateType(type) {
@@ -109,7 +171,85 @@ export function validateAudience(audience) {
     if (list.some((v) => !v)) bad('audience.tgIds entries must be non-empty');
     out.tgIds = list;
   }
+
+  // ── the conditions added for the campaign builder ────────────────────────
+  const num = (key, { min = 0, integer = false } = {}) => {
+    const v = audience[key];
+    if (v === undefined || v === null || v === '') return;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < min) bad(`audience.${key} must be a number >= ${min}`);
+    if (integer && !Number.isInteger(n)) bad(`audience.${key} must be a whole number`);
+    out[key] = n;
+  };
+  const bool = (key) => {
+    const v = audience[key];
+    if (v === undefined || v === null) return;
+    if (typeof v !== 'boolean') bad(`audience.${key} must be true or false`);
+    // `false` on a flag means "no opinion", not "the opposite". Storing it would
+    // make an empty checkbox into a filter nobody asked for — except
+    // hasBirthday, where "we do not know the date" is a real audience.
+    if (v || key === 'hasBirthday') out[key] = v;
+  };
+
+  num('maxSpentUsd');
+  num('minPurchases', { integer: true });
+  num('maxPurchases', { integer: true });
+  num('boughtWithinDays', { min: 1, integer: true });
+  num('minPurchasesInWindow', { min: 1, integer: true });
+  num('dormantDays', { min: 1, integer: true });
+  num('birthdayWithinDays', { min: 0, integer: true });
+  num('joinedWithinDays', { min: 1, integer: true });
+  bool('firstOrder');
+  bool('hasBirthday');
+
+  // Contradictions are refused rather than silently resolving to nobody. An
+  // audience of zero people is a campaign that appears to work and gives away
+  // nothing, which is the kind of failure that is noticed a season later.
+  if (out.minSpentUsd != null && out.maxSpentUsd != null && out.maxSpentUsd < out.minSpentUsd) {
+    bad('audience: «сума покупок до» менша за «від»');
+  }
+  if (out.minPurchases != null && out.maxPurchases != null && out.maxPurchases < out.minPurchases) {
+    bad('audience: «покупок до» менше за «покупок від»');
+  }
+  if (out.firstOrder && (out.minPurchases > 0 || out.minSpentUsd > 0 || out.boughtWithinDays != null)) {
+    bad('audience: «перше замовлення» не поєднується з умовами про попередні покупки');
+  }
+  if (out.boughtWithinDays != null && out.dormantDays != null) {
+    bad('audience: «купував за останні N днів» суперечить «не купував уже N днів»');
+  }
+  if (out.minPurchasesInWindow != null && out.boughtWithinDays == null) {
+    bad('audience: вкажіть період для «саме стільки разів»');
+  }
+
   return Object.keys(out).length ? out : null;
+}
+
+/** The audience as sentences, for the cabinet to print and the owner to check
+ *  by reading. Order is stable so the same audience always reads the same. */
+export function describeAudience(audience) {
+  const a = validateAudience(audience);
+  if (!a) return ['усі клієнти'];
+  const out = [];
+  if (a.firstOrder) out.push('ще жодної покупки — перше замовлення');
+  if (a.minPurchases != null) out.push(`покупок від ${a.minPurchases}`);
+  if (a.maxPurchases != null) out.push(`покупок до ${a.maxPurchases}`);
+  if (a.minSpentUsd != null) out.push(`витратив від $${a.minSpentUsd}`);
+  if (a.maxSpentUsd != null) out.push(`витратив до $${a.maxSpentUsd}`);
+  if (a.boughtWithinDays != null) {
+    out.push(a.minPurchasesInWindow != null
+      ? `${a.minPurchasesInWindow}+ покупок за останні ${a.boughtWithinDays} дн.`
+      : `купував за останні ${a.boughtWithinDays} дн.`);
+  }
+  if (a.dormantDays != null) out.push(`не купував ${a.dormantDays}+ дн.`);
+  if (a.birthdayWithinDays != null) out.push(`день народження протягом ${a.birthdayWithinDays} дн.`);
+  if (a.hasBirthday === true) out.push('дата народження відома');
+  if (a.hasBirthday === false) out.push('дата народження невідома');
+  if (a.joinedWithinDays != null) out.push(`у клубі не довше ${a.joinedWithinDays} дн.`);
+  if (a.tier) out.push(`рівень ${a.tier}`);
+  if (a.city) out.push(`місто ${a.city}`);
+  if (a.sourceChannel) out.push(`купував з каталогу «${a.sourceChannel}»`);
+  if (a.tgIds) out.push(`лише ${a.tgIds.length} обраних клієнтів`);
+  return out;
 }
 
 // ── status derivation (pure, from the window) ──────────────────────────────
@@ -146,12 +286,12 @@ export async function create(input = {}, opts = {}) {
   const {
     name, type, percent, audience, holidayId,
     startsAt, endsAt, recurring, windowDays, promoValidDays,
-    source, createdBy,
+    source, createdBy, preset,
   } = input;
 
   if (typeof name !== 'string' || !name.trim()) bad('name is required');
   validateType(type);
-  validatePercent(percent);
+  const money = validateMoney(input);
   const cleanAudience = validateAudience(audience);
 
   const startsIso = startsAt != null ? toIso(startsAt) : null;
@@ -163,12 +303,16 @@ export async function create(input = {}, opts = {}) {
   const status = desiredStatus({ starts_at: startsIso, ends_at: endsIso }, nowMs);
 
   const info = await db.prepare(`INSERT INTO campaigns
-    (name,type,percent,audience_json,holiday_id,starts_at,ends_at,recurring,window_days,promo_valid_days,status,source,created_by,created_at,updated_at)
-    VALUES (@name,@type,@percent,@audience_json,@holiday_id,@starts_at,@ends_at,@recurring,@window_days,@promo_valid_days,@status,@source,@created_by,@created_at,@updated_at)`)
+    (name,type,percent,mode,value,min_order_usd,preset,audience_json,holiday_id,starts_at,ends_at,recurring,window_days,promo_valid_days,status,source,created_by,created_at,updated_at)
+    VALUES (@name,@type,@percent,@mode,@value,@min_order_usd,@preset,@audience_json,@holiday_id,@starts_at,@ends_at,@recurring,@window_days,@promo_valid_days,@status,@source,@created_by,@created_at,@updated_at)`)
     .run({
       name: name.trim(),
       type,
-      percent,
+      percent: money.percent,
+      mode: money.mode,
+      value: money.value,
+      min_order_usd: money.minOrderUsd,
+      preset: preset ? String(preset) : null,
       audience_json: cleanAudience ? JSON.stringify(cleanAudience) : null,
       holiday_id: holidayId != null ? Number(holidayId) : null,
       starts_at: startsIso,
@@ -200,7 +344,19 @@ export async function update(id, patch = {}, opts = {}) {
     sets.name = patch.name.trim();
   }
   if (patch.type !== undefined) sets.type = validateType(patch.type);
-  if (patch.percent !== undefined) sets.percent = validatePercent(patch.percent);
+  if (patch.percent !== undefined || patch.mode !== undefined || patch.value !== undefined) {
+    const money = validateMoney({ ...current, mode: patch.mode ?? current.mode, value: patch.value ?? current.value,
+      percent: patch.percent ?? current.percent, minOrderUsd: patch.minOrderUsd ?? current.min_order_usd });
+    sets.percent = money.percent;
+    sets.mode = money.mode;
+    sets.value = money.value;
+    sets.min_order_usd = money.minOrderUsd;
+  } else if (patch.minOrderUsd !== undefined) {
+    const n = Number(patch.minOrderUsd);
+    if (!Number.isFinite(n) || n < 0) bad('minOrderUsd must be a number >= 0');
+    sets.min_order_usd = n;
+  }
+  if (patch.preset !== undefined) sets.preset = patch.preset ? String(patch.preset) : null;
   if (patch.audience !== undefined) {
     const clean = validateAudience(patch.audience);
     sets.audience_json = clean ? JSON.stringify(clean) : null;
@@ -281,9 +437,11 @@ export async function reconcileStatus(now) {
 //   city          → customers.city exact match
 //   sourceChannel → has ≥1 purchase with that source_channel
 //   tgIds         → direct tg_user_id list
-export async function resolveAudience(audience) {
+export async function resolveAudience(audience, now = Date.now()) {
   const a = validateAudience(audience);
-  const customers = await db.prepare('SELECT id, tg_user_id, city FROM customers').all();
+  const customers = await db.prepare(
+    'SELECT id, tg_user_id, city, birthday, created_at FROM customers'
+  ).all();
   if (!a) return customers.map((c) => c.id);
 
   let result = customers;
@@ -301,30 +459,107 @@ export async function resolveAudience(audience) {
     result = result.filter((c) => chSet.has(c.id));
   }
 
-  if (a.tier || a.minSpentUsd != null) {
-    // One aggregate over purchases → spend map (customers with none default 0).
-    const spendRows = await db.prepare(
-      "SELECT customer_id, COALESCE(SUM(amount_usd),0) total FROM purchases WHERE status='confirmed' GROUP BY customer_id",
+  // One aggregate for spend, count and recency together — the three questions
+  // that used to be one query are still one query. Never a per-customer loop.
+  const needsHistory = a.tier || a.minSpentUsd != null || a.maxSpentUsd != null
+    || a.minPurchases != null || a.maxPurchases != null || a.firstOrder || a.dormantDays != null;
+  if (needsHistory) {
+    const rows = await db.prepare(
+      `SELECT customer_id,
+              COUNT(*)                        AS n,
+              COALESCE(SUM(amount_usd), 0)    AS total,
+              MAX(created_at)                 AS last_at
+         FROM purchases WHERE status='confirmed' GROUP BY customer_id`
     ).all();
-    const spend = new Map(spendRows.map((r) => [r.customer_id, r.total]));
+    const hist = new Map(rows.map((r) => [r.customer_id, {
+      n: Number(r.n) || 0,
+      total: Number(r.total) || 0,
+      lastMs: r.last_at ? Date.parse(r.last_at) : null,
+    }]));
     result = result.filter((c) => {
-      const total = spend.get(c.id) || 0;
-      if (a.tier && tierFor(total).key !== a.tier) return false;
-      if (a.minSpentUsd != null && total < a.minSpentUsd) return false;
+      const h = hist.get(c.id) || { n: 0, total: 0, lastMs: null };
+      if (a.firstOrder && h.n > 0) return false;
+      if (a.tier && tierFor(h.total).key !== a.tier) return false;
+      if (a.minSpentUsd != null && h.total < a.minSpentUsd) return false;
+      if (a.maxSpentUsd != null && h.total > a.maxSpentUsd) return false;
+      if (a.minPurchases != null && h.n < a.minPurchases) return false;
+      if (a.maxPurchases != null && h.n > a.maxPurchases) return false;
+      if (a.dormantDays != null) {
+        // Somebody who has never bought is not dormant, they are new — the
+        // win-back campaign is not for them, and «перше замовлення» is.
+        if (h.lastMs == null) return false;
+        if (now - h.lastMs < a.dormantDays * DAY) return false;
+      }
       return true;
+    });
+  }
+
+  // «Купував за останні N днів», and optionally how many times. One more
+  // aggregate, bounded by the window rather than by the number of customers.
+  if (a.boughtWithinDays != null) {
+    const since = new Date(now - a.boughtWithinDays * DAY).toISOString();
+    const rows = await db.prepare(
+      "SELECT customer_id, COUNT(*) AS n FROM purchases WHERE status='confirmed' AND created_at >= ? GROUP BY customer_id"
+    ).all(since);
+    const need = a.minPurchasesInWindow != null ? a.minPurchasesInWindow : 1;
+    const recent = new Map(rows.map((r) => [r.customer_id, Number(r.n) || 0]));
+    result = result.filter((c) => (recent.get(c.id) || 0) >= need);
+  }
+
+  if (a.hasBirthday !== undefined) {
+    result = result.filter((c) => Boolean(mmddOf(c.birthday)) === a.hasBirthday);
+  }
+
+  if (a.birthdayWithinDays != null) {
+    result = result.filter((c) => {
+      const days = daysUntilBirthday(c.birthday, now);
+      return days != null && days <= a.birthdayWithinDays;
+    });
+  }
+
+  if (a.joinedWithinDays != null) {
+    result = result.filter((c) => {
+      const t = c.created_at ? Date.parse(c.created_at) : null;
+      return t != null && now - t <= a.joinedWithinDays * DAY;
     });
   }
 
   return result.map((c) => c.id);
 }
 
+const DAY = 86400000;
+
+// How many days until this customer's next birthday, 0 meaning today. Null when
+// no date is on file. Leap-day and year-end wrap-around are birthdayWindow's
+// problem, and it already solves them.
+function daysUntilBirthday(stored, now) {
+  const mmdd = mmddOf(stored);
+  if (!mmdd) return null;
+  const [month, day] = mmdd.split('-').map(Number);
+  if (!month || !day) return null;
+  // A one-day window, not a zero-day one. birthdayWindow treats validDays as a
+  // length, so 0 makes the window the single instant of midnight — and anybody
+  // asked after midnight on their own birthday came back as "in 365 days".
+  const w = birthdayWindow({ month, day }, now, 1);
+  if (w.open) return 0;
+  return Math.max(0, Math.ceil((w.startsAt - now) / DAY));
+}
+
 // ── preview ─────────────────────────────────────────────────────────────────
 // Audience size for a campaign, without materializing any promos.
-export async function preview(campaignId) {
+export async function preview(campaignId, now = Date.now()) {
   const c = shapeCampaign(await getRawById(campaignId));
   if (!c) return null;
-  const ids = await resolveAudience(c.audience);
-  return { campaignId: c.id, count: ids.length };
+  const ids = await resolveAudience(c.audience, now);
+  return { campaignId: c.id, count: ids.length, audience: describeAudience(c.audience) };
+}
+
+/** How many customers an audience would reach RIGHT NOW, before anything is
+ *  saved. This is what makes the builder honest: the owner sees «27 клієнтів»
+ *  under the conditions before pressing the button, not after. */
+export async function previewAudience(audience, now = Date.now()) {
+  const ids = await resolveAudience(audience, now);
+  return { count: ids.length, audience: describeAudience(audience) };
 }
 
 // ── code generation (matches the existing /api/admin/promo pattern) ─────────
@@ -344,7 +579,7 @@ export async function materialize(campaignId, now) {
   if (!campaign) return null;
 
   const shaped = shapeCampaign(campaign);
-  const ids = await resolveAudience(shaped.audience);
+  const ids = await resolveAudience(shaped.audience, toMs(now) ?? Date.now());
 
   const nowMs = toMs(now) ?? Date.now();
   const createdAt = toIso(now);
@@ -357,12 +592,15 @@ export async function materialize(campaignId, now) {
   await db.transaction(async (tx) => {
     const ins = tx.prepare(
       `INSERT INTO promo_codes
-         (customer_id, code, percent, reason, status, created_at, expires_at, campaign_id)
-       VALUES (?,?,?,?,'active',?,?,?)
+         (customer_id, code, percent, mode, amount_usd, min_order_usd, reason, status, created_at, expires_at, campaign_id)
+       VALUES (?,?,?,?,?,?,?,'active',?,?,?)
        ON CONFLICT DO NOTHING`,
     );
+    const mode = campaign.mode || 'percent';
+    const amountUsd = mode === 'fixed' ? Number(campaign.value || 0) : null;
     for (const cid of ids) {
-      const info = await ins.run(cid, genCode(), campaign.percent, campaign.name, createdAt, expiresAt, campaign.id);
+      const info = await ins.run(cid, genCode(), campaign.percent, mode, amountUsd,
+        Number(campaign.min_order_usd || 0), campaign.name, createdAt, expiresAt, campaign.id);
       if (info.changes === 1) created += 1; else alreadyExisted += 1;
     }
   });

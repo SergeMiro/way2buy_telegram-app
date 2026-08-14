@@ -84,6 +84,7 @@
     get: function (path, query) { return request('GET', path, undefined, query); },
     post: function (path, body) { return request('POST', path, body || {}); },
     patch: function (path, body) { return request('PATCH', path, body || {}); },
+    del: function (path) { return request('DELETE', path, undefined); },
 
     // ── read models ──
     config: function () { return request('GET', '/api/config'); },
@@ -170,6 +171,20 @@
       // ── catalogue cards: fix what the parser guessed ──
       posts: function (channel) { return request('GET', '/api/admin/posts', undefined, channel ? { channel: channel } : {}); },
       updatePost: function (id, patch) { return request('PATCH', '/api/admin/posts/' + id, patch); },
+
+      // ── the campaign builder (super admin only; the server decides) ──
+      presets: function () { return request('GET', '/api/admin/presets'); },
+      // How many customers a set of conditions reaches right now, before
+      // anything is saved.
+      previewAudience: function (audience) {
+        return request('POST', '/api/admin/campaigns/preview', { audience: audience });
+      },
+
+      // ── the team ──
+      team: function () { return request('GET', '/api/admin/team'); },
+      addMember: function (form) { return request('POST', '/api/admin/team', form); },
+      setMember: function (tgId, patch) { return request('PATCH', '/api/admin/team/' + encodeURIComponent(tgId), patch); },
+      removeMember: function (tgId) { return request('DELETE', '/api/admin/team/' + encodeURIComponent(tgId)); },
 
       // ── channels + the scheduler tick ──
       channels: function () { return request('GET', '/api/admin/channels'); },

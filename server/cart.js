@@ -378,7 +378,8 @@ export async function sendInquiry({ customer, message = '', now = Date.now() }) 
   await notifyAdmins({ kind: 'inquiry', title, body, bodyHtml, dedupeKey: `inquiry:${inquiryId}` });
   // Dasha gets the same message as a DM. Separate ids so support can be someone
   // who is not an admin of the panel; anyone on both lists is not sent twice.
-  const dashaIds = supportIds().filter((id) => !adminIds().includes(id));
+  const alerted = await adminIds();
+  const dashaIds = supportIds().filter((id) => !alerted.includes(id));
   for (const id of dashaIds) {
     void Promise.resolve(await sendToUser(id, `<b>${escapeHtml(title)}</b>\n${bodyHtml}`)).catch(() => {});
   }

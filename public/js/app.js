@@ -46,6 +46,9 @@
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
       inquiries: [], popular: null, popularPeriod: 'month', posts: [],
       channels: [],
+      // The campaign builder: the ready-made presets, the conditions currently
+      // being composed, and how many customers they reach right now.
+      presets: [], team: [], draft: null, reach: null,
       // Per-channel sync progress, keyed by channel: { running, note, error }.
       // A deep backfill is many calls, so the admin needs to see it moving.
       sync: {},
@@ -64,6 +67,15 @@
   // Who the client is writing to. A name in the interface is a setting, not a
   // string literal: during the test everything routes to Serhiy, in production
   // to Dasha. Ukrainian needs the dative ("написати Даші / Сергію").
+  // What this person may do, straight from the server (/api/me → `can`). The
+  // cabinet draws itself from this, so a manager is never shown a section that
+  // would then refuse her — and the server checks it again anyway, because a
+  // hidden button is a courtesy, not a lock.
+  function can(capability) {
+    var list = (state.me && state.me.can) || [];
+    return list.indexOf(capability) !== -1;
+  }
+
   function support() {
     return (state.config && state.config.support) || { name: 'Менеджер', dative: 'менеджеру', username: '' };
   }
@@ -907,14 +919,22 @@
     return html;
   }
 
+  // Every tab says which right it needs. The bar is then built from what this
+  // person actually holds, so a manager's cabinet has no doors that open onto a
+  // refusal — and «Акції» and «Команда» simply do not exist for her.
   var ADMIN_TABS = [
-    { key: 'bonuses', label: 'Бонуси' },
-    { key: 'inquiries', label: 'Заявки' },
-    { key: 'popular', label: 'Популярне' },
-    { key: 'profit', label: 'Прибуток' },
-    { key: 'customers', label: 'Клієнти' },
-    { key: 'content', label: 'Контент' },
+    { key: 'inquiries', label: 'Заявки',     need: 'inquiries.read' },
+    { key: 'promos',    label: 'Акції',      need: 'discounts.manage' },
+    { key: 'bonuses',   label: 'Бонуси',     need: 'discounts.manage' },
+    { key: 'popular',   label: 'Популярне',  need: 'popular.read' },
+    { key: 'profit',    label: 'Прибуток',   need: 'profit.read' },
+    { key: 'customers', label: 'Клієнти',    need: 'customers.read' },
+    { key: 'content',   label: 'Контент',    need: 'catalog.read' },
+    { key: 'team',      label: 'Команда',    need: 'team.manage' },
   ];
+  var visibleAdminTabs = function () {
+    return ADMIN_TABS.filter(function (t) { return can(t.need); });
+  };
 
   // ── Заявки: what Dasha and Maryna both work from ──────────────────────────
   function adminInquiriesHtml(a) {
@@ -1030,6 +1050,250 @@
     }
 
     return html;
+  }
+
+  // ── Акції: the campaign builder ───────────────────────────────────────────
+  //
+  // Two ways in, and the order matters. A preset is one tap that fills the whole
+  // form — dates, audience, a sensible discount — because nobody launching a
+  // Christmas sale wants to think in conditions. Composing from scratch is the
+  // second door, for the cases no preset covers.
+  //
+  // Every condition present must hold; they are ANDed with no operator to
+  // choose. «3+ покупки АБО $5000, але не з Києва» is a sentence nobody fills in
+  // correctly, and a wrong audience is money given to the wrong people.
+  var CONDITION_FIELDS = [
+    { key: 'firstOrder',           type: 'check', label: 'Ще жодної покупки (перше замовлення)' },
+    { key: 'minPurchases',         type: 'num',   label: 'Покупок від' },
+    { key: 'maxPurchases',         type: 'num',   label: 'Покупок до' },
+    { key: 'minSpentUsd',          type: 'num',   label: 'Сума покупок від, $' },
+    { key: 'maxSpentUsd',          type: 'num',   label: 'Сума покупок до, $' },
+    { key: 'boughtWithinDays',     type: 'num',   label: 'Купував за останні, днів' },
+    { key: 'minPurchasesInWindow', type: 'num',   label: '…і стільки разів за цей період' },
+    { key: 'dormantDays',          type: 'num',   label: 'Не купував уже, днів' },
+    { key: 'birthdayWithinDays',   type: 'num',   label: 'День народження протягом, днів' },
+    { key: 'joinedWithinDays',     type: 'num',   label: 'У клубі не довше, днів' },
+    { key: 'hasBirthday',          type: 'check', label: 'Лише ті, чия дата народження відома' },
+    { key: 'city',                 type: 'text',  label: 'Місто' },
+  ];
+
+  function adminPromosHtml(a) {
+    var html = '<div class="section-title">Готові акції</div>';
+
+    var groups = {};
+    (a.presets || []).forEach(function (p) {
+      (groups[p.group] = groups[p.group] || []).push(p);
+    });
+    var keys = Object.keys(groups);
+    if (!keys.length) return html + '<div class="empty">Завантаження…</div>';
+
+    keys.forEach(function (g) {
+      html += '<div class="fsheet__label">' + esc(g) + '</div><div class="presets">';
+      html += groups[g].map(function (p) {
+        var when = p.startsAt
+          ? dateShort(p.startsAt) + (p.endsAt ? ' — ' + dateShort(p.endsAt) : ' — без кінця')
+          : 'з моменту запуску';
+        return '<button class="preset" type="button" data-preset="' + esc(p.key) + '">' +
+          '<span class="preset__emoji" aria-hidden="true">' + esc(p.emoji) + '</span>' +
+          '<span class="preset__name">' + esc(p.name) + '</span>' +
+          '<span class="preset__when">' + esc(when) + '</span>' +
+          '<span class="preset__why">' + esc(p.why) + '</span>' +
+        '</button>';
+      }).join('') + '</div>';
+    });
+
+    html += '<div class="section-title">Запущені акції</div>';
+    html += (a.campaigns || []).length
+      ? a.campaigns.map(function (c) {
+          var label = c.mode === 'fixed' ? usd(c.value) : (c.value || c.percent) + '%';
+          var when = c.starts_at ? dateShort(c.starts_at) : '—';
+          when += ' → ' + (c.ends_at ? dateShort(c.ends_at) : '∞');
+          return '<div class="row">' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(c.name) + ' · ' + esc(label) + '</div>' +
+              '<div class="row__sub">' + esc(c.status) + ' · ' + esc(when) +
+                (c.preset ? ' · шаблон' : '') + '</div>' +
+            '</div>' +
+            '<button class="btn btn--ghost btn--sm" data-materialize="' + c.id + '">Видати</button>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Акцій ще немає.</div>';
+
+    return html;
+  }
+
+  // The builder itself. `draft` is the campaign being composed; the reach line
+  // under the conditions is the point of the whole screen — the owner sees «27
+  // клієнтів» BEFORE saving, not after, because an audience of nobody is a
+  // campaign that looks like it ran and gave away nothing.
+  function campaignSheetHtml(d, reach) {
+    var chan = (state.config && state.config.channels) || [];
+    var field = function (f) {
+      var v = d.audience[f.key];
+      if (f.type === 'check') {
+        return '<label class="inline"><input type="checkbox" data-cond="' + esc(f.key) + '"' +
+          (v ? ' checked' : '') + ' /> <span class="muted">' + esc(f.label) + '</span></label>';
+      }
+      return '<label class="field"><span class="field__label">' + esc(f.label) + '</span>' +
+        '<input class="field__input" data-cond="' + esc(f.key) + '" ' +
+        (f.type === 'num' ? 'type="number" min="0" ' : '') +
+        'value="' + esc(v == null ? '' : v) + '" /></label>';
+    };
+
+    return '<form class="stack" id="campaignForm">' +
+      '<label class="field"><span class="field__label">Назва акції</span>' +
+        '<input class="field__input" name="name" required value="' + esc(d.name || '') + '" /></label>' +
+      '<div class="form-grid">' +
+        '<label class="field"><span class="field__label">Тип знижки</span>' +
+          '<select class="field__select" name="mode">' +
+            '<option value="percent"' + (d.mode !== 'fixed' ? ' selected' : '') + '>% — відсоток</option>' +
+            '<option value="fixed"' + (d.mode === 'fixed' ? ' selected' : '') + '>$ — фіксована сума</option>' +
+          '</select></label>' +
+        '<label class="field"><span class="field__label">Розмір</span>' +
+          '<input class="field__input" name="value" type="number" step="0.01" min="0.01" required ' +
+            'value="' + esc(d.value == null ? '' : d.value) + '" /></label>' +
+      '</div>' +
+      '<div class="form-grid">' +
+        '<label class="field"><span class="field__label">Мін. замовлення, $</span>' +
+          '<input class="field__input" name="minOrderUsd" type="number" min="0" value="' + esc(d.minOrderUsd || 0) + '" /></label>' +
+        '<label class="field"><span class="field__label">Промокод діє, днів</span>' +
+          '<input class="field__input" name="promoValidDays" type="number" min="1" value="' + esc(d.promoValidDays || 14) + '" /></label>' +
+      '</div>' +
+      '<div class="form-grid">' +
+        '<label class="field"><span class="field__label">Початок</span>' +
+          '<input class="field__input" name="startsAt" type="date" value="' + esc((d.startsAt || '').slice(0, 10)) + '" /></label>' +
+        '<label class="field"><span class="field__label">Кінець</span>' +
+          '<input class="field__input" name="endsAt" type="date" value="' + esc((d.endsAt || '').slice(0, 10)) + '" /></label>' +
+      '</div>' +
+      '<p class="field__hint">Порожній кінець — акція без дати завершення.</p>' +
+
+      '<div class="section-title">Кому</div>' +
+      '<div class="reach" id="reach">' + reachHtml(reach) + '</div>' +
+      CONDITION_FIELDS.map(field).join('') +
+      (chan.length
+        ? '<label class="field"><span class="field__label">Купував з каталогу</span>' +
+            '<select class="field__select" data-cond="sourceChannel">' +
+              '<option value="">— будь-який —</option>' +
+              chan.map(function (c) {
+                return '<option value="' + esc(c.key) + '"' +
+                  (d.audience.sourceChannel === c.key ? ' selected' : '') + '>' + esc(c.title) + '</option>';
+              }).join('') +
+            '</select></label>'
+        : '') +
+
+      '<button class="btn btn--primary" type="submit">Створити акцію</button>' +
+    '</form>';
+  }
+
+  function reachHtml(reach) {
+    if (!reach) return '<span class="reach__count">…</span>';
+    if (reach.error) return '<span class="reach__count reach__count--bad">' + esc(reach.error) + '</span>';
+    var n = reach.count;
+    return '<span class="reach__count' + (n === 0 ? ' reach__count--bad' : '') + '">' +
+        n + ' ' + plural(n, ['клієнт', 'клієнти', 'клієнтів']) + '</span>' +
+      '<span class="reach__terms">' + (reach.audience || []).map(esc).join(' · ') + '</span>';
+  }
+
+  // Read the conditions back out of the form. An empty box is not a condition:
+  // it is the absence of one, which is why blanks are dropped rather than sent
+  // as zero — `minPurchases: 0` would match everybody and read as deliberate.
+  function draftAudienceFromDom() {
+    var out = {};
+    var nodes = document.querySelectorAll('[data-cond]');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var key = el.getAttribute('data-cond');
+      if (el.type === 'checkbox') { if (el.checked) out[key] = true; continue; }
+      var v = String(el.value || '').trim();
+      if (!v) continue;
+      out[key] = el.type === 'number' ? Number(v) : v;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  var reachTimer = null;
+  async function repaintReach() {
+    var host = document.getElementById('reach');
+    if (!host) return;
+    var audience = draftAudienceFromDom();
+    if (state.admin.draft) state.admin.draft.audience = audience || {};
+    clearTimeout(reachTimer);
+    reachTimer = setTimeout(async function () {
+      try {
+        host.innerHTML = reachHtml(await api.admin.previewAudience(audience));
+      } catch (e) {
+        host.innerHTML = reachHtml({ error: e.message });
+      }
+    }, 250);
+  }
+
+  async function openCampaignSheet(presetKey) {
+    var p = (state.admin.presets || []).filter(function (x) { return x.key === presetKey; })[0];
+    state.admin.draft = p
+      ? {
+          preset: p.key, name: p.name, type: p.type,
+          mode: p.suggest.mode, value: p.suggest.value,
+          minOrderUsd: p.suggest.minOrderUsd, promoValidDays: p.suggest.promoValidDays,
+          startsAt: p.startsAt, endsAt: p.endsAt,
+          audience: p.audience || {},
+        }
+      : { preset: null, name: '', type: 'generic', mode: 'percent', value: 10,
+          minOrderUsd: 0, promoValidDays: 14, startsAt: null, endsAt: null, audience: {} };
+
+    openSheet(p ? p.emoji + ' ' + p.name : 'Своя акція', campaignSheetHtml(state.admin.draft, null));
+    await repaintReach();
+  }
+
+  // ── Команда: who works here ───────────────────────────────────────────────
+  function adminTeamHtml(a) {
+    var html = '<div class="section-title">Команда</div>' +
+      '<div class="panel"><p class="panel__note">Супер-адмін бачить і змінює все: акції, бонуси, ' +
+        'прибуток, налаштування і склад команди. Адмін працює з клієнтами — заявки, картки ' +
+        'каталогу, покупки, синхронізація каналів — але не бачить собівартості й не призначає ' +
+        'знижок.</p>' +
+        '<div class="inline"><button class="btn btn--ghost btn--sm" data-action="add-member">Додати людину</button></div>' +
+      '</div>';
+
+    html += (a.team || []).map(function (m) {
+      return '<div class="row">' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(m.name || ('#' + m.tgId)) +
+            ' · ' + (m.role === 'super' ? 'супер-адмін' : 'адмін') + '</div>' +
+          '<div class="row__sub">id ' + esc(m.tgId) +
+            (m.enabled ? '' : ' · вимкнено') +
+            (m.locked ? ' · задано на сервері' : '') + '</div>' +
+        '</div>' +
+        (m.locked ? '<span class="pill">незмінний</span>' :
+          '<div class="row__actions">' +
+            '<button class="btn btn--ghost btn--sm" data-member-role="' + esc(m.tgId) + '" ' +
+              'data-role="' + (m.role === 'super' ? 'admin' : 'super') + '">' +
+              (m.role === 'super' ? 'Зробити адміном' : 'Зробити супер-адміном') + '</button>' +
+            (m.enabled
+              ? '<button class="btn btn--ghost btn--sm" data-member-off="' + esc(m.tgId) + '">Вимкнути</button>'
+              : '<button class="btn btn--ghost btn--sm" data-member-on="' + esc(m.tgId) + '">Увімкнути</button>') +
+          '</div>') +
+      '</div>';
+    }).join('');
+
+    return html;
+  }
+
+  function sheetAddMember() {
+    openSheet('Додати людину',
+      '<form class="stack" id="memberForm">' +
+        '<label class="field"><span class="field__label">Telegram id</span>' +
+          '<input class="field__input" name="tgId" required inputmode="numeric" placeholder="387442030" /></label>' +
+        '<label class="field"><span class="field__label">Імʼя</span>' +
+          '<input class="field__input" name="name" placeholder="Даша" /></label>' +
+        '<label class="field"><span class="field__label">Роль</span>' +
+          '<select class="field__select" name="role">' +
+            '<option value="admin">Адмін — клієнти, каталог, покупки</option>' +
+            '<option value="super">Супер-адмін — усе, разом з акціями й командою</option>' +
+          '</select></label>' +
+        '<p class="field__hint">Id можна дізнатись через @userinfobot. Людина має хоча б раз ' +
+          'відкрити бота, інакше повідомлення до неї не дійдуть.</p>' +
+        '<button class="btn btn--primary" type="submit">Додати</button>' +
+      '</form>');
   }
 
   // ── Бонуси: the $ ⇄ % switch for both rules and every holiday ─────────────
@@ -1298,17 +1562,25 @@
     var html = topbarHtml() + '<div class="stack">';
 
     html += '<div class="panel"><div class="panel__head">' +
-        '<div class="panel__title">Кабінет</div>' +
+        '<div class="panel__title">Кабінет' +
+          (state.me && state.me.role === 'super' ? ' · супер-адмін' : (state.me && state.me.role ? ' · адмін' : '')) +
+        '</div>' +
         '<span class="pill' + (state.config.live ? ' pill--ok' : ' pill--warn') + '">' +
           (state.config.live ? 'Telegram LIVE' : 'DEMO — публікації симулюються') + '</span>' +
       '</div>' +
       '<div class="inline">' +
-        '<button class="btn btn--primary" data-action="new-post">Опублікувати товар</button>' +
-        '<button class="btn btn--ghost" data-action="new-purchase">Додати покупку</button>' +
-        '<button class="btn btn--ghost" data-action="new-campaign">Нова кампанія</button>' +
+        (can('posts.publish') ? '<button class="btn btn--primary" data-action="new-post">Опублікувати товар</button>' : '') +
+        (can('purchases.write') ? '<button class="btn btn--ghost" data-action="new-purchase">Додати покупку</button>' : '') +
+        (can('discounts.manage') ? '<button class="btn btn--ghost" data-action="new-campaign">Нова акція</button>' : '') +
       '</div></div>';
 
-    html += '<div class="seg">' + ADMIN_TABS.map(function (t) {
+    var tabs = visibleAdminTabs();
+    // Somebody whose current tab is not in their list (a role changed under
+    // them) lands on the first one they do have rather than on an empty panel.
+    if (!tabs.some(function (t) { return t.key === a.adminTab; })) {
+      a.adminTab = tabs.length ? tabs[0].key : null;
+    }
+    html += '<div class="seg">' + tabs.map(function (t) {
       return '<button class="seg__btn' + (a.adminTab === t.key ? ' is-active' : '') +
         '" data-admin-tab="' + t.key + '">' + esc(t.label) + '</button>';
     }).join('') + '</div>';
@@ -1318,7 +1590,10 @@
     else if (a.adminTab === 'popular') html += adminPopularHtml(a);
     else if (a.adminTab === 'customers') html += adminCustomersHtml(a);
     else if (a.adminTab === 'content') html += adminContentHtml(a);
-    else html += adminBonusesHtml(a);
+    else if (a.adminTab === 'promos') html += adminPromosHtml(a);
+    else if (a.adminTab === 'team') html += adminTeamHtml(a);
+    else if (a.adminTab === 'bonuses') html += adminBonusesHtml(a);
+    else html += '<div class="empty">Тут для вас поки нічого немає.</div>';
 
     return html + '</div>';
   }
@@ -1690,25 +1965,38 @@
     } else if (tab === 'admin') {
       // One round-trip per panel, all in parallel; a failing panel must not
       // blank the whole cabinet, so each result is taken defensively.
-      var a = await Promise.all([
-        api.admin.customers(), api.admin.campaigns(), api.admin.rules(),
-        api.admin.profit(), api.admin.pendingCosts(), api.admin.birthdayClaims(),
+      // Only what this role is allowed to read, and each panel taken on its
+      // own: Promise.all rejects as a group, so one 403 used to blank the whole
+      // cabinet — which is exactly what a manager would have seen, since half
+      // of these are the owner's.
+      var take = function (allowed, call, apply) {
+        if (!allowed) return Promise.resolve();
+        return call().then(apply).catch(function () { /* one panel, not the cabinet */ });
+      };
+      await Promise.all([
+        take(can('customers.read'), api.admin.customers, function (r) { state.admin.customers = r.customers || []; }),
+        take(can('customers.read'), api.admin.birthdayClaims, function (r) { state.admin.claims = r.claims || []; }),
+        take(can('discounts.manage'), api.admin.campaigns, function (r) { state.admin.campaigns = r.campaigns || []; }),
+        take(can('discounts.manage'), api.admin.rules, function (r) {
+          state.admin.rules = r.rules || []; state.admin.holidays = r.holidays || [];
+        }),
+        take(can('profit.read'), api.admin.profit, function (r) { state.admin.profit = r || null; }),
+        take(can('profit.read'), api.admin.pendingCosts, function (r) { state.admin.pendingCosts = r.pending || []; }),
       ]);
-      state.admin.customers = a[0].customers || [];
-      state.admin.campaigns = a[1].campaigns || [];
-      state.admin.rules = a[2].rules || [];
-      state.admin.holidays = a[2].holidays || [];
-      state.admin.profit = a[3] || null;
-      state.admin.pendingCosts = a[4].pending || [];
-      state.admin.claims = a[5].claims || [];
-      if (state.admin.adminTab === 'popular') await loadPopular();
-      if (state.admin.adminTab === 'content') {
+      if (state.admin.adminTab === 'popular' && can('popular.read')) await loadPopular();
+      if (state.admin.adminTab === 'content' && can('catalog.read')) {
         var content = await Promise.all([api.admin.posts(), api.admin.channels()]);
         state.admin.posts = content[0].posts || [];
         state.admin.channels = content[1].channels || [];
       }
-      if (state.admin.adminTab === 'inquiries') {
+      if (state.admin.adminTab === 'inquiries' && can('inquiries.read')) {
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+      }
+      if (state.admin.adminTab === 'promos' && can('discounts.manage')) {
+        state.admin.presets = (await api.admin.presets()).presets || [];
+      }
+      if (state.admin.adminTab === 'team' && can('team.manage')) {
+        state.admin.team = (await api.admin.team()).team || [];
       }
     }
   }
@@ -2100,6 +2388,14 @@
           state.admin.channels = content[1].channels || [];
           $app.innerHTML = renderAdmin();
         }
+        if (key === 'promos') {
+          state.admin.presets = (await api.admin.presets()).presets || [];
+          $app.innerHTML = renderAdmin();
+        }
+        if (key === 'team') {
+          state.admin.team = (await api.admin.team()).team || [];
+          $app.innerHTML = renderAdmin();
+        }
       } catch (err) { toast(err.message, 'error'); }
       return;
     }
@@ -2118,6 +2414,38 @@
 
     var cust = t.closest('[data-customer]');
     if (cust && !t.closest('[data-action]')) { sheetCustomer(cust.getAttribute('data-customer')); return; }
+
+    var presetBtn = t.closest('[data-preset]');
+    if (presetBtn) { await openCampaignSheet(presetBtn.getAttribute('data-preset')); return; }
+
+    var memberRole = t.closest('[data-member-role]');
+    if (memberRole) {
+      try {
+        state.admin.team = (await api.admin.setMember(memberRole.getAttribute('data-member-role'),
+          { role: memberRole.getAttribute('data-role') })).team;
+        await go('admin', { keepScroll: true });
+        toast('Роль змінено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+    var memberOff = t.closest('[data-member-off]');
+    if (memberOff) {
+      try {
+        state.admin.team = (await api.admin.removeMember(memberOff.getAttribute('data-member-off'))).team;
+        await go('admin', { keepScroll: true });
+        toast('Доступ вимкнено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+    var memberOn = t.closest('[data-member-on]');
+    if (memberOn) {
+      try {
+        state.admin.team = (await api.admin.setMember(memberOn.getAttribute('data-member-on'), { enabled: true })).team;
+        await go('admin', { keepScroll: true });
+        toast('Доступ увімкнено');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
 
     var mat = t.closest('[data-materialize]');
     if (mat) {
@@ -2145,7 +2473,8 @@
     if (name === 'notifications') { sheetNotifications(); return; }
     if (name === 'new-post') { sheetNewPost(); return; }
     if (name === 'add-channel') { sheetAddChannel(); return; }
-    if (name === 'new-campaign') { sheetNewCampaign(); return; }
+    if (name === 'new-campaign') { await openCampaignSheet(null); return; }
+    if (name === 'add-member') { sheetAddMember(); return; }
     if (name === 'new-holiday') { sheetNewHoliday(); return; }
     if (name === 'new-purchase') { sheetNewPurchase(action.getAttribute('data-customer')); return; }
     // Claiming with a date already on file: the server verifies it and either
@@ -2173,10 +2502,18 @@
 
   // Dynamic search: 220 ms after the last keystroke, only the vitrine repaints.
   document.addEventListener('input', function (e) {
-    if (e.target.id !== 'searchInput') return;
-    state.search = e.target.value.trim();
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(refreshVitrine, 220);
+    if (e.target.id === 'searchInput') {
+      state.search = e.target.value.trim();
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(refreshVitrine, 220);
+      return;
+    }
+    // The reach line under the conditions, recomputed as they are typed. This
+    // is the whole honesty of the builder: the number is there BEFORE saving.
+    if (e.target.hasAttribute && e.target.hasAttribute('data-cond')) void repaintReach();
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.hasAttribute && e.target.hasAttribute('data-cond')) void repaintReach();
   });
 
   document.addEventListener('submit', async function (e) {
@@ -2197,6 +2534,32 @@
         toast(added.created
           ? 'Каталог «' + added.channel.title + '» додано — тепер синхронізуйте'
           : 'Такий канал уже був: «' + added.channel.title + '»');
+      } else if (form.id === 'campaignForm') {
+        var draft = state.admin.draft || {};
+        var created = await api.admin.createCampaign({
+          preset: draft.preset || null,
+          name: data.name,
+          type: draft.type || 'generic',
+          mode: data.mode,
+          value: Number(data.value),
+          minOrderUsd: Number(data.minOrderUsd || 0),
+          promoValidDays: Number(data.promoValidDays || 14),
+          // A date input gives a bare day; the end of the window means the end
+          // of that day, not its first second.
+          startsAt: data.startsAt ? data.startsAt + 'T00:00:00.000Z' : null,
+          endsAt: data.endsAt ? data.endsAt + 'T23:59:59.000Z' : null,
+          audience: draftAudienceFromDom(),
+        });
+        closeSheet();
+        state.admin.draft = null;
+        await go('admin');
+        toast('Акцію створено — «Видати», щоб роздати промокоди');
+        void created;
+      } else if (form.id === 'memberForm') {
+        state.admin.team = (await api.admin.addMember(data)).team;
+        closeSheet();
+        await go('admin');
+        toast('Додано');
       } else if (form.id === 'joinForm') {
         await api.register({
           name: data.name, phone: data.phone, address: data.address,

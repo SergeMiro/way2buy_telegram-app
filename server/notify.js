@@ -8,11 +8,15 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { sendToUser, liveMode } from './telegram.js';
+import { alertIds } from './roles.js';
 
 const now = () => new Date().toISOString();
 
-export const adminIds = () =>
-  (process.env.ADMIN_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+// Who gets an owner-level alert. This used to read ADMIN_TG_IDS directly; roles
+// are data now (see roles.js), so appointing somebody is a tap in the cabinet
+// rather than a deploy — and the environment variable survives underneath as the
+// bootstrap that cannot lock the owner out.
+export const adminIds = () => alertIds();
 
 // Returns the notification id when a NEW row was written, null when the
 // dedupe key had already been used (i.e. nothing to deliver).
@@ -63,7 +67,7 @@ export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, de
   const id = await writeRow({ customerId: null, kind, title, body, dedupeKey });
   if (!id) return null;
   const text = `<b>${escapeHtml(title)}</b>\n${bodyHtml || escapeHtml(body)}`;
-  for (const tgId of adminIds()) {
+  for (const tgId of await adminIds()) {
     void dm(tgId, text, id);
   }
   return id;
