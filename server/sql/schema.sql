@@ -683,6 +683,11 @@ begin
     'discount_rules', 'holidays', 'campaigns', 'promo_codes', 'birthday_claims',
     'inquiries', 'cart_items', 'cart_events', 'notifications',
     'ai_conversations', 'ai_messages', 'ai_proposals', 'scheduler_lock',
+    -- `admins` is the roster of who may run the shop. A table left out of this
+    -- list keeps Supabase's default grants, which hand the public anon key full
+    -- read and write — and this is the last table in the database that should
+    -- have them.
+    'admins',
     'heartbeat'
   ]
   loop
