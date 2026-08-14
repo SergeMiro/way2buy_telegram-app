@@ -39,13 +39,26 @@ const round2 = (n) => Math.round(n * 100) / 100;
 export const supportIds = () =>
   (process.env.SUPPORT_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
 
-// Who the client is writing to. Ukrainian needs the dative case for "написати
-// Даші / Сергію", and a name is not something to hardcode: during the test the
-// inquiries go to Serhiy, in production to Dasha.
+// Who the client is writing to — and it is ONE person, always the same one.
+//
+// This is a face, not a routing table. A client who has just handed over a wish
+// list wants to know a named human has it; «ваш запит зареєстровано» from
+// nobody in particular is how a shop reads as a form. So the app shows Dasha,
+// with her photograph, everywhere — while the message itself also reaches
+// Maryna, who is the owner and needs to see demand, and whom the client has no
+// reason to be told about. Nothing in the client's screens is derived from the
+// recipient list; the two live apart on purpose (see sendInquiry).
+//
+// Ukrainian needs the dative case for «написати Даші / Сергію», and a name is
+// not something to hardcode: during the test the inquiries land with Serhiy.
 export const support = () => ({
   name: process.env.SUPPORT_NAME || 'Даша',
   dative: process.env.SUPPORT_NAME_DATIVE || process.env.SUPPORT_NAME || 'Даші',
   username: (process.env.SUPPORT_USERNAME || '').replace(/^@/, ''),
+  role: process.env.SUPPORT_ROLE || 'менеджер Way2Buy',
+  // A photograph is the whole point of the confirmation card. Empty is handled:
+  // the client falls back to initials rather than to a broken image.
+  photo: process.env.SUPPORT_PHOTO_URL || '',
 });
 
 const FX = { USD: 1, EUR: 1.08, UAH: 1 / 41 };
@@ -239,15 +252,66 @@ function draftMessage(items) {
 
 const shortName = (c) => (c.name || `#${c.id}`).trim();
 
+// A direct link to the post the client tapped.
+//
+// Whoever answers this inquiry has to see the ITEM, not a title a parser
+// guessed off a caption — «Сумка» and «Prada · окуляри» name a dozen things
+// each, and the article code is only useful to someone already holding the
+// catalogue. A public channel links by @username, which opens for anybody; a
+// private one links by its numeric /c/ form, which opens for members — and
+// everyone who receives this message is a member of every channel in it.
+export function tgPostUrl({ username, chatId, messageId }) {
+  if (!messageId) return null;
+  if (username) return `https://t.me/${String(username).replace(/^@/, '')}/${messageId}`;
+  const priv = String(chatId || '').match(/^-100(\d+)$/);
+  return priv ? `https://t.me/c/${priv[1]}/${messageId}` : null;
+}
+
+// One query for the whole basket rather than one per item: a fitting room can
+// hold a dozen things and the database is a hundred milliseconds away.
+async function attachPostLinks(items) {
+  const ids = items.map((i) => i.postId).filter((id) => id != null);
+  if (!ids.length) return items;
+
+  const rows = await db.prepare(
+    `SELECT p.id, p.tg_message_id, c.username, c.chat_id
+       FROM posts p LEFT JOIN channels c ON c.key = p.channel
+      WHERE p.id IN (${ids.map(() => '?').join(',')})`
+  ).all(...ids);
+
+  const byId = new Map(rows.map((r) => [Number(r.id), r]));
+  return items.map((i) => {
+    const r = byId.get(Number(i.postId));
+    return {
+      ...i,
+      url: r ? tgPostUrl({ username: r.username, chatId: r.chat_id, messageId: r.tg_message_id }) : null,
+    };
+  });
+}
+
+const itemLabel = (i) =>
+  `${i.title || 'Позиція'}${i.article ? ` · арт. ${i.article}` : ''}`;
+
+// Two renderings of one list. The stored/plain one keeps the URL on its own
+// line, because the cabinet shows this as text; the DM one puts the link on the
+// title, because Telegram will render it and a wall of raw URLs is unreadable.
 function itemLine(i) {
-  return `• ${i.title || 'Позиція'}${i.article ? ` · арт. ${i.article}` : ''}` +
-    `${i.channel ? ` · ${i.channel}` : ''}`;
+  return `• ${itemLabel(i)}${i.channel ? ` · ${i.channel}` : ''}${i.url ? `\n  ${i.url}` : ''}`;
+}
+
+function itemLineHtml(i) {
+  const label = escapeHtml(itemLabel(i));
+  return `• ${i.url ? `<a href="${escapeHtml(i.url)}">${label}</a>` : label}` +
+    (i.channel ? ` · ${escapeHtml(i.channel)}` : '');
 }
 
 // Send the fitting room as one inquiry. Returns { ok, inquiryId, message } and
 // never throws for business reasons.
 export async function sendInquiry({ customer, message = '', now = Date.now() }) {
-  const items = await listCart(customer.id);
+  // The links are resolved once, here, and travel with the stored inquiry — so
+  // the cabinet can offer them months later even if the post has since been
+  // hidden or the channel renamed.
+  const items = await attachPostLinks(await listCart(customer.id));
   if (!items.length) return { ok: false, error: 'empty_cart', message: 'Примірочна порожня.' };
 
   const raw = await db.prepare("SELECT price, currency FROM cart_items WHERE customer_id=? AND status='active'").all(customer.id);
@@ -278,31 +342,45 @@ export async function sendInquiry({ customer, message = '', now = Date.now() }) 
   }
 
   // ── exactly the wording Maryna asked for ──
+  //
+  // Assembled twice from one source: `body` is the record — it is what the
+  // cabinet renders, as text — and `bodyHtml` is the message, where each item
+  // is a tap through to the post it came from.
   const who = support();
   const title = `🛍️ Клієнт ${shortName(customer)} цікавиться товаром`;
-  const body =
-    `Клієнт ${shortName(customer)} цікавиться товаром:\n${items.map(itemLine).join('\n')}\n` +
-    (clientText
-      ? `\nі задав питання адміністратору ${who.dative}:\n«${clientText}»`
-      : '\nПитання не додав — просить ціну та наявність.') +
-    // The coupon is stated either way: an unusable one still matters, because
-    // Maryna is the person who sets the price the minimum is measured against.
-    (promo
-      ? promo.usable
-        ? `\n\nЗнижка клієнта: ${promo.label} (${promo.code}) — застосована`
-        : `\n\nЗнижка клієнта: ${promo.label} (${promo.code})` +
-          (promo.minOrderUsd ? ` — діє від замовлення $${promo.minOrderUsd}, врахуйте при розрахунку` : '')
-      : '') +
-    (customer.phone ? `\n\n📞 ${customer.phone}` : '') +
-    (customer.tg_user_id ? `\nTG id ${customer.tg_user_id}` : '');
 
-  // Maryna (admins) get it in the admin alert feed + DM.
-  await notifyAdmins({ kind: 'inquiry', title, body, dedupeKey: `inquiry:${inquiryId}` });
-  // Dasha gets the same text as a DM. Separate ids so support can be someone
-  // who is not an admin of the panel.
+  // One text, two escapings — never two texts. If the wording of the record and
+  // the wording of the message can drift apart, one day they will.
+  const tail = (esc) => {
+    const q = esc ? escapeHtml : (s) => s;
+    return (clientText
+      ? `\nі задав питання адміністратору ${q(who.dative)}:\n«${q(clientText)}»`
+      : '\nПитання не додав — просить ціну та наявність.') +
+      // The coupon is stated either way: an unusable one still matters, because
+      // Maryna is the person who sets the price the minimum is measured against.
+      (promo
+        ? promo.usable
+          ? `\n\nЗнижка клієнта: ${q(promo.label)} (${q(promo.code)}) — застосована`
+          : `\n\nЗнижка клієнта: ${q(promo.label)} (${q(promo.code)})` +
+            (promo.minOrderUsd ? ` — діє від замовлення $${promo.minOrderUsd}, врахуйте при розрахунку` : '')
+        : '') +
+      (customer.phone ? `\n\n📞 ${q(customer.phone)}` : '') +
+      (customer.tg_user_id ? `\nTG id ${q(String(customer.tg_user_id))}` : '');
+  };
+
+  const lead = `Клієнт ${shortName(customer)} цікавиться товаром:`;
+  const body = `${lead}\n${items.map(itemLine).join('\n')}\n${tail(false)}`;
+  const bodyHtml = `${escapeHtml(lead)}\n${items.map(itemLineHtml).join('\n')}\n${tail(true)}`;
+
+  // Maryna (admins) get it in the admin alert feed + DM. The client is never
+  // told this happened — nothing in the response or in their notification feed
+  // names an admin, and the confirmation they see credits Dasha alone.
+  await notifyAdmins({ kind: 'inquiry', title, body, bodyHtml, dedupeKey: `inquiry:${inquiryId}` });
+  // Dasha gets the same message as a DM. Separate ids so support can be someone
+  // who is not an admin of the panel; anyone on both lists is not sent twice.
   const dashaIds = supportIds().filter((id) => !adminIds().includes(id));
   for (const id of dashaIds) {
-    void Promise.resolve(await sendToUser(id, `<b>${escapeHtml(title)}</b>\n${escapeHtml(body)}`)).catch(() => {});
+    void Promise.resolve(await sendToUser(id, `<b>${escapeHtml(title)}</b>\n${bodyHtml}`)).catch(() => {});
   }
 
   // The client's own confirmation, in their language, with no jargon.

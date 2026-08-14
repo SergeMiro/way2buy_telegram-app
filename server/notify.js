@@ -53,11 +53,18 @@ export async function notifyCustomer({ customerId, kind, title, body = '', promo
 
 // Notify the owner/admins. Stored with customer_id = NULL so it never shows in
 // a client's feed; surfaced by /api/admin/alerts.
-export async function notifyAdmins({ kind, title, body = '', dedupeKey }) {
+//
+// `bodyHtml` is optional and exists for one reason: a Telegram DM can carry
+// links and the admin panel cannot. The row keeps the plain `body` — it is
+// rendered as text in the cabinet, where markup would show up as markup — while
+// the DM gets the same message with its item titles turned into taps. The
+// caller is responsible for escaping anything it interpolates into bodyHtml.
+export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, dedupeKey }) {
   const id = await writeRow({ customerId: null, kind, title, body, dedupeKey });
   if (!id) return null;
+  const text = `<b>${escapeHtml(title)}</b>\n${bodyHtml || escapeHtml(body)}`;
   for (const tgId of adminIds()) {
-    void dm(tgId, `<b>${escapeHtml(title)}</b>\n${escapeHtml(body)}`, id);
+    void dm(tgId, text, id);
   }
   return id;
 }

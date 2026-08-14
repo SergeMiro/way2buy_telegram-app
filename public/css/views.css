@@ -872,6 +872,101 @@
 }
 .btn--send { width: 100%; padding: 14px; font-size: var(--w2b-fs-xs); }
 
+/* ── the confirmation card: a person, not a receipt ───────────────────────────
+   A wish list has just left the client's hands and they cannot see where it
+   went. A name over a photograph answers that; «заявку надіслано» does not.
+
+   The avatar is a CIRCLE, and that is not an inconsistency with the square
+   corners everywhere else. Square is for furniture — panels, chips, buttons.
+   A portrait is a portrait: cropping a face into a rectangle is one of the
+   things that makes a shop look like a database. */
+.sheet--center { align-items: center; padding: var(--w2b-space-4); }
+.sheet--center .sheet__panel {
+  max-width: 340px;
+  padding: var(--w2b-space-6) var(--w2b-space-5) var(--w2b-space-5);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  box-shadow: var(--w2b-shadow-3);
+  animation: w2b-thanks-in var(--w2b-dur-slow) var(--w2b-ease-out);
+}
+/* No drag handle: this is not something you pull, it is something you read. */
+.sheet--center .sheet__panel::before { display: none; }
+@keyframes w2b-thanks-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+.thanks { text-align: center; }
+.thanks__avatar {
+  position: relative;
+  width: 76px; height: 76px;
+  margin: 0 auto var(--w2b-space-3);
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--w2b-surface-3);
+  /* A hairline held one pixel off the photograph — the way a framed portrait
+     sits inside its mount, rather than a border drawn onto the face. */
+  box-shadow: 0 0 0 1px var(--w2b-surface-1), 0 0 0 2px var(--w2b-line-strong);
+}
+/* Absolutely positioned, and that is not laziness — it is the only form that
+   holds. The parent is a grid (to centre the initials fallback), and inside a
+   grid area a percentage height on a replaced element is treated as indefinite:
+   a 200×300 portrait with `height: 100%` computed to 76×114 and the circle
+   clipped a band across the middle of it, chin and forehead gone. `inset: 0`
+   against a positioned parent is a definite 76×76 in every engine. */
+.thanks__photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Faces sit above the middle of a standing photograph; a dead-centre crop of
+     one is a picture of a collarbone. */
+  object-position: 50% 38%;
+}
+.thanks__initials {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-xl);
+  color: var(--w2b-text-muted);
+  letter-spacing: 0.04em;
+}
+.thanks__name {
+  font-family: var(--w2b-font-display);
+  font-size: var(--w2b-fs-lg);
+  line-height: 1.2;
+}
+.thanks__role {
+  margin-top: 2px;
+  font-size: var(--w2b-fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  color: var(--w2b-text-subtle);
+}
+.thanks__text {
+  margin: var(--w2b-space-4) 0 0;
+  font-size: var(--w2b-fs-sm);
+  line-height: var(--w2b-lh-body);
+  color: var(--w2b-text-muted);
+}
+.thanks__note {
+  margin-top: var(--w2b-space-3);
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  border: 1px solid var(--w2b-line);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text);
+}
+.thanks .btn { width: 100%; margin-top: var(--w2b-space-4); }
+.thanks__direct {
+  display: inline-block;
+  margin-top: var(--w2b-space-3);
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-subtle);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* ── empty state: a line of prose, centred, no box ────────────────────────── */
 .empty {
   padding: var(--w2b-space-8) var(--w2b-space-4);

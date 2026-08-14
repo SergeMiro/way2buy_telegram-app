@@ -146,14 +146,51 @@
     toast._t = setTimeout(function () { $toast.hidden = true; }, 2600);
   }
 
-  function openSheet(title, html) {
-    $sheetPanel.innerHTML = '<div class="sheet__title">' + esc(title) + '</div>' + html;
+  function openSheet(title, html, opts) {
+    var o = opts || {};
+    $sheetPanel.innerHTML = (title ? '<div class="sheet__title">' + esc(title) + '</div>' : '') + html;
+    // A form slides up from the bottom edge; a message from a person belongs in
+    // the middle of the screen, where a face is not something you scroll to.
+    $sheet.classList.toggle('sheet--center', Boolean(o.center));
     $sheet.hidden = false;
   }
 
   function closeSheet() {
     $sheet.hidden = true;
+    $sheet.classList.remove('sheet--center');
     $sheetPanel.innerHTML = '';
+  }
+
+  // The confirmation after an inquiry is sent.
+  //
+  // A client has just handed over a wish list and cannot see where it went. What
+  // answers that is a name and a face: «Даша звʼяжеться з вами» over a
+  // photograph reads as a person who will write back, where «заявку надіслано»
+  // reads as a form that swallowed it. Nothing here names anybody else — who
+  // ELSE receives the message is the shop's business, not the client's.
+  function thanksHtml(res) {
+    var s = support();
+    var initials = String(s.name || '?').trim().split(/\s+/).slice(0, 2)
+      .map(function (w) { return w.charAt(0); }).join('');
+    var face = s.photo
+      ? '<img class="thanks__photo" src="' + esc(s.photo) + '" alt="' + esc(s.name) + '" />'
+      : '<span class="thanks__initials">' + esc(initials.toUpperCase()) + '</span>';
+
+    return '<div class="thanks">' +
+      '<div class="thanks__avatar">' + face + '</div>' +
+      '<div class="thanks__name">' + esc(s.name) + '</div>' +
+      (s.role ? '<div class="thanks__role">' + esc(s.role) + '</div>' : '') +
+      '<p class="thanks__text">Дякуємо! Ваш запит уже в роботі — ' + esc(s.name) +
+        ' звʼяжеться з вами найближчим часом.</p>' +
+      (res && res.promo
+        ? '<div class="thanks__note">Вашу знижку ' + esc(res.promo.label) + ' враховано</div>'
+        : '') +
+      '<button class="btn btn--primary" type="button" data-close>Добре</button>' +
+      (s.username
+        ? '<a class="thanks__direct" href="https://t.me/' + esc(s.username) + '" ' +
+          'target="_blank" rel="noopener">Написати ' + esc(s.dative) + ' напряму</a>'
+        : '') +
+    '</div>';
   }
 
   $sheet.addEventListener('click', function (e) {
@@ -885,8 +922,14 @@
     if (!a.inquiries.length) return html + '<div class="empty">Заявок ще немає.</div>';
 
     return html + a.inquiries.map(function (q) {
+      // The same link the DM carries. Whoever answers should be one tap from
+      // the post, not from a title a parser guessed. Inquiries stored before
+      // links existed simply render as text.
       var items = (q.items || []).map(function (i) {
-        return '• ' + esc(i.title || 'Позиція') + (i.article ? ' · арт. ' + esc(i.article) : '');
+        var label = esc(i.title || 'Позиція') + (i.article ? ' · арт. ' + esc(i.article) : '');
+        return '• ' + (i.url
+          ? '<a href="' + esc(i.url) + '" target="_blank" rel="noopener">' + label + '</a>'
+          : label);
       }).join('<br/>');
       var STATUS = { new: ['🆕', 'нова'], answered: ['💬', 'відповіли'], closed: ['✅', 'закрита'] };
       var s = STATUS[q.status] || ['•', q.status];
@@ -2168,13 +2211,7 @@
         // cover the text.
         tg.haptic('success');
         paintCartBadge(0);
-        openSheet('Готово 💛',
-          '<div class="stack">' +
-            '<div class="panel"><p class="panel__note">' + esc(support().name) +
-              ' звʼяжеться з вами дуже скоро — ваш запит уже видно' +
-              (ires.promo ? ' і вашу знижку ' + esc(ires.promo.label) : '') + '.</p></div>' +
-            '<button class="btn btn--primary" type="button" data-close>Зрозуміло</button>' +
-          '</div>');
+        openSheet('', thanksHtml(ires), { center: true });
         await go('cart', { keepScroll: true });
       } else if (form.id === 'birthdayForm') {
         // First claim: the date is recorded now and checked on every later one.
