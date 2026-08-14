@@ -147,6 +147,161 @@
     $sheetPanel.innerHTML = '';
   }
 
+  /* ── product image loupe ──────────────────────────────────────────────────
+     A short hold opens a 2x detail exactly around the point under the finger.
+     Event delegation keeps it working after every view/search repaint. */
+  function initImageLoupe() {
+    var loupe = document.createElement('div');
+    loupe.className = 'product-loupe';
+    loupe.setAttribute('aria-hidden', 'true');
+    loupe.innerHTML = '<div class="product-loupe__viewport">' +
+      '<img class="product-loupe__image" alt="" draggable="false" />' +
+      '</div>';
+    document.body.appendChild(loupe);
+
+    var loupeImage = loupe.querySelector('.product-loupe__image');
+    var holdTimer = null;
+    var target = null;
+    var media = null;
+    var pointerId = null;
+    var startX = 0;
+    var startY = 0;
+    var lastX = 0;
+    var lastY = 0;
+    var active = false;
+    var suppressContextMenuUntil = 0;
+    var HOLD_MS = 260;
+    var MOVE_TOLERANCE = 11;
+    var LOUPE_SIZE = 152;
+    var VIEWPORT_SIZE = 138;
+    var ZOOM = 2;
+
+    function zoomMediaFromEvent(eventTarget) {
+      var image = eventTarget && eventTarget.closest && eventTarget.closest(
+        '.tile__media img, .post__thumb img, .fit-row__thumb img'
+      );
+      if (!image) return null;
+      return { image: image, media: image.closest('.tile__media, .post__thumb, .fit-row__thumb') };
+    }
+
+    function paintedImageBox(image, frame) {
+      var naturalWidth = image.naturalWidth || frame.width;
+      var naturalHeight = image.naturalHeight || frame.height;
+      var fit = window.getComputedStyle(image).objectFit || 'fill';
+      var drawWidth = frame.width;
+      var drawHeight = frame.height;
+
+      if (fit === 'cover' || fit === 'contain') {
+        var scaleX = frame.width / naturalWidth;
+        var scaleY = frame.height / naturalHeight;
+        var scale = fit === 'cover' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+        drawWidth = naturalWidth * scale;
+        drawHeight = naturalHeight * scale;
+      }
+
+      return {
+        width: drawWidth,
+        height: drawHeight,
+        left: (frame.width - drawWidth) / 2,
+        top: (frame.height - drawHeight) / 2,
+      };
+    }
+
+    function paintLoupe(clientX, clientY) {
+      if (!target || !media) return;
+
+      var rect = media.getBoundingClientRect();
+      var box = paintedImageBox(target, rect);
+      var localX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+      var localY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+      var imageX = localX - box.left;
+      var imageY = localY - box.top;
+      var centre = VIEWPORT_SIZE / 2;
+
+      loupeImage.style.width = (box.width * ZOOM) + 'px';
+      loupeImage.style.height = (box.height * ZOOM) + 'px';
+      loupeImage.style.left = (centre - imageX * ZOOM) + 'px';
+      loupeImage.style.top = (centre - imageY * ZOOM) + 'px';
+
+      var left = Math.max(8, Math.min(window.innerWidth - LOUPE_SIZE - 8, clientX - LOUPE_SIZE / 2));
+      var top = clientY - LOUPE_SIZE - 28;
+      var flipped = top < 8;
+      if (flipped) top = Math.min(window.innerHeight - LOUPE_SIZE - 8, clientY + 30);
+
+      loupe.style.left = left + 'px';
+      loupe.style.top = Math.max(8, top) + 'px';
+      loupe.classList.toggle('is-flipped', flipped);
+    }
+
+    function showLoupe() {
+      holdTimer = null;
+      if (!target || !media) return;
+      active = true;
+      suppressContextMenuUntil = Date.now() + 1000;
+      loupeImage.src = target.currentSrc || target.src;
+      paintLoupe(lastX, lastY);
+      loupe.classList.add('is-visible');
+      document.body.classList.add('is-zooming');
+      tg.haptic('light');
+    }
+
+    function resetLoupe() {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      if (active) {
+        loupe.classList.remove('is-visible', 'is-flipped');
+        document.body.classList.remove('is-zooming');
+      }
+      active = false;
+      target = null;
+      media = null;
+      pointerId = null;
+    }
+
+    document.addEventListener('pointerdown', function (e) {
+      if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      var found = zoomMediaFromEvent(e.target);
+      if (!found) return;
+
+      clearTimeout(holdTimer);
+      target = found.image;
+      media = found.media;
+      pointerId = e.pointerId;
+      startX = lastX = e.clientX;
+      startY = lastY = e.clientY;
+      holdTimer = setTimeout(showLoupe, HOLD_MS);
+    }, { passive: true });
+
+    document.addEventListener('pointermove', function (e) {
+      if (e.pointerId !== pointerId || !target) return;
+      lastX = e.clientX;
+      lastY = e.clientY;
+
+      if (!active && Math.hypot(lastX - startX, lastY - startY) > MOVE_TOLERANCE) {
+        resetLoupe();
+        return;
+      }
+      if (active) {
+        e.preventDefault();
+        paintLoupe(lastX, lastY);
+      }
+    }, { passive: false });
+
+    document.addEventListener('pointerup', function (e) {
+      if (e.pointerId === pointerId) resetLoupe();
+    }, { passive: true });
+    document.addEventListener('pointercancel', resetLoupe, { passive: true });
+    window.addEventListener('blur', resetLoupe);
+    window.addEventListener('scroll', function () {
+      if (!active) resetLoupe();
+    }, { passive: true });
+    document.addEventListener('contextmenu', function (e) {
+      if (zoomMediaFromEvent(e.target) && Date.now() < suppressContextMenuUntil) e.preventDefault();
+    });
+  }
+
+  initImageLoupe();
+
   $sheet.addEventListener('click', function (e) {
     if (e.target.hasAttribute('data-close')) closeSheet();
   });
