@@ -11,6 +11,7 @@
 
   var tg = window.W2B.tg;
   var api = window.W2B.api;
+  var i18n = window.W2B.i18n;
 
   var $app = document.getElementById('app');
   var $nav = document.getElementById('nav');
@@ -97,12 +98,12 @@
 
   function usd(n) {
     var v = Math.round(Number(n || 0) * 100) / 100;
-    return '$' + (Number.isInteger(v) ? v.toLocaleString('uk-UA') : v.toFixed(2));
+    return '$' + (Number.isInteger(v) ? v.toLocaleString(i18n.languageTag()) : v.toFixed(2));
   }
 
   function money(amount, currency) {
     if (amount == null) return '';
-    var n = Number(amount).toLocaleString('uk-UA');
+    var n = Number(amount).toLocaleString(i18n.languageTag());
     if (currency === 'USD') return '$' + n;
     if (currency === 'EUR') return '€' + n;
     return n + ' ₴';
@@ -112,7 +113,7 @@
     if (!iso) return '';
     var d = new Date(iso);
     if (isNaN(d)) return '';
-    return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short' });
+    return d.toLocaleDateString(i18n.languageTag(), { day: 'numeric', month: 'short' });
   }
 
   function timeAgo(iso) {
@@ -120,12 +121,12 @@
     var diff = Date.now() - new Date(iso).getTime();
     if (isNaN(diff)) return '';
     var min = Math.floor(diff / 60000);
-    if (min < 1) return 'щойно';
-    if (min < 60) return min + ' хв';
+    if (min < 1) return i18n.translate('щойно');
+    if (min < 60) return min + ' ' + i18n.translate('хв');
     var h = Math.floor(min / 60);
-    if (h < 24) return h + ' год';
+    if (h < 24) return h + ' ' + i18n.translate('год');
     var d = Math.floor(h / 24);
-    if (d < 7) return d + ' дн';
+    if (d < 7) return d + ' ' + i18n.translate('дн');
     return dateShort(iso);
   }
 
@@ -133,23 +134,25 @@
   function untilText(iso) {
     var ms = new Date(iso).getTime() - Date.now();
     if (isNaN(ms)) return '';
-    if (ms <= 0) return 'Термін вичерпано';
+    if (ms <= 0) return i18n.translate('Термін вичерпано');
     var totalMin = Math.floor(ms / 60000);
     var d = Math.floor(totalMin / 1440);
     var h = Math.floor((totalMin % 1440) / 60);
     var m = totalMin % 60;
-    if (d > 0) return d + ' ' + plural(d, ['день', 'дні', 'днів']) + (h ? ' ' + h + ' год' : '');
-    if (h > 0) return h + ' год' + (m ? ' ' + m + ' хв' : '');
-    return m + ' хв';
+    if (d > 0) return d + ' ' + plural(d, ['день', 'дні', 'днів']) +
+      (h ? ' ' + h + ' ' + i18n.translate('год') : '');
+    if (h > 0) return h + ' ' + i18n.translate('год') + (m ? ' ' + m + ' ' + i18n.translate('хв') : '');
+    return m + ' ' + i18n.translate('хв');
   }
 
   function plural(n, forms) {
+    if (i18n.locale() === 'en') return i18n.translate(n === 1 ? forms[0] : forms[2]);
     var a = Math.abs(n) % 100;
     var b = a % 10;
-    if (a > 10 && a < 20) return forms[2];
-    if (b > 1 && b < 5) return forms[1];
-    if (b === 1) return forms[0];
-    return forms[2];
+    if (a > 10 && a < 20) return i18n.translate(forms[2]);
+    if (b > 1 && b < 5) return i18n.translate(forms[1]);
+    if (b === 1) return i18n.translate(forms[0]);
+    return i18n.translate(forms[2]);
   }
 
   function toast(msg, kind) {
@@ -515,6 +518,12 @@
         '<div class="topbar__sub">' + esc(sub) + '</div>' +
       '</div>' +
       '<div class="topbar__aside">' +
+        '<div class="locale" role="group" aria-label="Мова інтерфейсу">' +
+          '<button class="locale__btn' + (i18n.locale() === 'en' ? ' is-active' : '') +
+            '" type="button" data-locale="en" aria-pressed="' + (i18n.locale() === 'en') + '">EN</button>' +
+          '<button class="locale__btn' + (i18n.locale() === 'ru' ? ' is-active' : '') +
+            '" type="button" data-locale="ru" aria-pressed="' + (i18n.locale() === 'ru') + '">RU</button>' +
+        '</div>' +
         (c && c.loyalty && tiersOn ? tierBadge(c.loyalty) : '') +
         '<button class="bell" type="button" data-action="notifications" aria-label="Повідомлення">' +
           '<svg viewBox="0 0 24 24" aria-hidden="true">' +
@@ -1831,7 +1840,8 @@
         '<label class="field"><span class="field__label">Канал</span>' +
           '<select class="field__select" name="channel">' +
             state.config.channels.map(function (c) {
-              return '<option value="' + esc(c.key) + '">' + esc(c.flag + ' ' + c.title) + '</option>';
+              return '<option value="' + esc(c.key) + '">' +
+                esc(((c.flag || c.emoji || '') + ' ' + c.title).trim()) + '</option>';
             }).join('') +
           '</select></label>' +
         '<label class="field"><span class="field__label">Назва</span>' +
@@ -2409,6 +2419,13 @@
   document.addEventListener('click', async function (e) {
     var t = e.target;
 
+    var localeButton = t.closest('[data-locale]');
+    if (localeButton) {
+      i18n.setLocale(localeButton.getAttribute('data-locale'));
+      tg.haptic('light');
+      return;
+    }
+
     var copyBtn = t.closest('[data-copy]');
     if (copyBtn) {
       var code = copyBtn.getAttribute('data-copy');
@@ -2928,6 +2945,16 @@
   });
 
   /* ── boot ───────────────────────────────────────────────────────────────── */
+
+  document.addEventListener('w2b:localechange', function () {
+    closeSheet();
+    if (state.config && VIEWS[state.tab]) {
+      $app.innerHTML = VIEWS[state.tab]();
+      revealCards();
+      paintCartBadge(state.cartCount);
+    }
+    i18n.localize(document);
+  });
 
   async function boot() {
     tg.ready();

@@ -15,6 +15,7 @@
   'use strict';
 
   var tg = window.W2B.tg;
+  var i18n = window.W2B.i18n;
 
   function qs(extra) {
     var p = new URLSearchParams(extra || {});
@@ -44,6 +45,9 @@
   async function request(method, path, body, query) {
     var url = path + (path.indexOf('?') === -1 ? '?' : '&') + qs(query);
     var init = { method: method, headers: {} };
+    // Tell the API which language the customer selected. Current JSON models
+    // stay language-neutral; localized server messages can honor this header.
+    if (i18n) init.headers['Accept-Language'] = i18n.languageTag();
     // The proof of identity, on every call. A header rather than a parameter:
     // it rides along on GET and POST alike, and it never lands in an access log
     // the way `?initData=…` would. The `tgid` beside it stays for now — the

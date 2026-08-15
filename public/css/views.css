@@ -1442,6 +1442,31 @@ body {
   font-weight: 600;
   letter-spacing: 0.1em;
 }
+.topbar__aside { gap: 7px; }
+.locale {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--w2b-line);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.58);
+}
+.locale__btn {
+  min-width: 29px;
+  height: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--w2b-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.locale__btn.is-active {
+  color: var(--w2b-on-primary);
+  background: var(--w2b-primary);
+  box-shadow: 0 3px 8px rgba(40, 29, 34, 0.14);
+}
 .bell {
   width: 40px;
   height: 40px;

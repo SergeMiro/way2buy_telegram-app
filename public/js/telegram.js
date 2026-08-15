@@ -78,6 +78,7 @@
       ? [wa.initDataUnsafe.user.first_name, wa.initDataUnsafe.user.last_name].filter(Boolean).join(' ')
       : null,
     username: inTelegram ? wa.initDataUnsafe.user.username || null : null,
+    languageCode: inTelegram ? wa.initDataUnsafe.user.language_code || null : null,
 
     setUserId: function (id) {
       tg.userId = String(id);
