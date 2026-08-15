@@ -34,6 +34,9 @@
     catalogTotal: 0,
     inStockKey: 'available',
     search: '',
+    // Registration inputs survive view changes during this launch. Sensitive
+    // delivery details stay in memory only — never in localStorage.
+    joinDraft: { name: '', address: '', phone: '', birthday: '', consent: true },
     // The vitrine's selection and what the server says can be filtered inside
     // it. Nothing here is a hardcoded list: a new catalogue full of a brand
     // nobody has posted before grows its own chip.
@@ -461,7 +464,10 @@
 
   function topbarHtml() {
     var c = state.me && state.me.customer;
-    var initials = c ? c.name.split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('') : '👤';
+    var profileName = (c && c.name) || tg.name || '';
+    var initials = profileName
+      ? profileName.split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('')
+      : '👤';
     var tiersOn = state.config && state.config.features && state.config.features.tiers;
     var sub = c && c.loyalty
       ? (tiersOn ? c.loyalty.tierName + ' · ' : '') + usd(c.loyalty.totalSpent) + ' покупок'
@@ -505,7 +511,7 @@
       '<header class="topbar">' +
       '<div class="topbar__avatar">' + esc(initials) + '</div>' +
       '<div class="topbar__meta">' +
-        '<div class="topbar__name">' + esc(c ? c.name : 'Вітаємо у Way2Buy') + '</div>' +
+        '<div class="topbar__name">' + esc(profileName || 'Вітаємо у Way2Buy') + '</div>' +
         '<div class="topbar__sub">' + esc(sub) + '</div>' +
       '</div>' +
       '<div class="topbar__aside">' +
@@ -644,6 +650,13 @@
 
   function renderJoin() {
     var cb = state.config.cashback || {};
+    var draft = state.joinDraft || {};
+    var telegramName = String(tg.name || '').trim();
+    var name = String(draft.name || telegramName);
+    var address = String(draft.address || '');
+    var phone = String(draft.phone || '');
+    var birthday = String(draft.birthday || '');
+    var consent = draft.consent !== false;
     var bdayRule = (state.config.rules || []).filter(function (r) { return r.key === 'birthday'; })[0];
     var bdayText = bdayRule
       ? 'знижка ' + discountLabel(bdayRule.mode, bdayRule.value) + ' на день народження' +
@@ -660,20 +673,31 @@
           ) + '</p>' +
         '</div>' +
         // Exactly the four fields Maryna asked for: ім'я, адреса, телефон, ДН.
-        '<form class="stack" id="joinForm">' +
-          '<label class="field"><span class="field__label">Імʼя та прізвище</span>' +
-            '<input class="field__input" name="name" required placeholder="Олена Ковальчук" /></label>' +
+        '<form class="stack" id="joinForm" autocomplete="on">' +
+          '<label class="field"><span class="field__label field__label--split">' +
+            '<span>Імʼя та прізвище</span>' +
+            (telegramName ? '<span class="field__source">З Telegram ✓</span>' : '') +
+            '</span>' +
+            '<input class="field__input" name="name" autocomplete="name" autocapitalize="words" ' +
+              'value="' + esc(name) + '" required placeholder="Ваше імʼя" /></label>' +
           '<label class="field"><span class="field__label">Адреса доставки</span>' +
-            '<input class="field__input" name="address" required placeholder="Chicago, IL, 1234 W Main St" /></label>' +
+            '<input class="field__input" name="address" autocomplete="street-address" autocapitalize="words" ' +
+              'value="' + esc(address) + '" required placeholder="Місто, вулиця, будинок, квартира" /></label>' +
           '<div class="form-grid">' +
             '<label class="field"><span class="field__label">Номер телефону</span>' +
-              '<input class="field__input" name="phone" required placeholder="+1…" /></label>' +
+              '<input class="field__input" name="phone" type="tel" inputmode="tel" autocomplete="tel" ' +
+                'value="' + esc(phone) + '" required placeholder="+1…" /></label>' +
             '<label class="field"><span class="field__label">Дата народження</span>' +
-              '<input class="field__input" name="birthday" type="date" required /></label>' +
+              '<input class="field__input" name="birthday" type="date" autocomplete="bday" ' +
+                'value="' + esc(birthday) + '" required /></label>' +
           '</div>' +
+          (telegramName
+            ? '<p class="autofill-note"><span aria-hidden="true">✓</span>' +
+                '<span>Імʼя вже заповнено. Телефон і адресу може запропонувати ваш пристрій.</span></p>'
+            : '') +
           '<p class="field__hint">Дату народження ми записуємо один раз — вона потрібна для знижки ' +
             'і надалі не змінюється без менеджера.</p>' +
-          '<label class="inline"><input type="checkbox" name="consent" checked /> ' +
+          '<label class="inline"><input type="checkbox" name="consent"' + (consent ? ' checked' : '') + ' /> ' +
             '<span class="muted">Погоджуюсь отримувати повідомлення про знижки</span></label>' +
           '<button class="btn btn--primary" type="submit">Приєднатися до клубу</button>' +
         '</form>' +
@@ -2347,6 +2371,15 @@
 
   /* ── events ─────────────────────────────────────────────────────────────── */
 
+  // Keep a registration draft when the client briefly opens a catalogue or a
+  // discount. It lives only for this page session, so a phone number or address
+  // is never left behind in persistent browser storage.
+  document.addEventListener('input', function (e) {
+    var input = e.target;
+    if (!input || !input.form || input.form.id !== 'joinForm' || !input.name) return;
+    state.joinDraft[input.name] = input.type === 'checkbox' ? input.checked : input.value;
+  });
+
   $nav.addEventListener('click', function (e) {
     var btn = e.target.closest('.nav__btn');
     if (!btn) return;
@@ -2740,7 +2773,9 @@
         await api.register({
           name: data.name, phone: data.phone, address: data.address,
           birthday: data.birthday, consent: data.consent ? 1 : 0,
+          login: tg.username || undefined,
         });
+        state.joinDraft = { name: '', address: '', phone: '', birthday: '', consent: true };
         toast('Вітаємо у клубі!');
         await go('home');
       } else if (form.id === 'inquiryForm') {

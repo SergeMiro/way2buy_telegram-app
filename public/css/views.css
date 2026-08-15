@@ -2001,3 +2001,40 @@ body.is-zooming .fit-row__thumb img { transition: none; }
 .row--sync { border-radius: 18px; }
 .row__actions { gap: 7px; }
 .row__sync { color: var(--w2b-text-muted); }
+
+.field__label--split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.field__source {
+  flex: none;
+  padding: 4px 7px;
+  color: var(--w2b-accent);
+  background: var(--w2b-accent-soft);
+  border-radius: 999px;
+  font-size: 8px;
+  letter-spacing: 0.035em;
+}
+.autofill-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -2px 2px 0;
+  color: var(--w2b-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.autofill-note > span:first-child {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  color: var(--w2b-on-primary);
+  background: var(--w2b-accent);
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+}
