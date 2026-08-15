@@ -776,22 +776,34 @@
 
   function chipsHtml() {
     var list = state.catalogs || [];
-    var stock = list.filter(function (c) { return c.inStock; });
-    var rest = list.filter(function (c) { return !c.inStock; });
+    var selected = list.filter(function (c) { return c.key === state.feedChannel; })[0];
+    var remaining = list.filter(function (c) { return !selected || c.key !== selected.key; });
+    var stock = remaining.filter(function (c) { return c.inStock; });
+    var rest = remaining.filter(function (c) { return !c.inStock; });
 
     var chip = function (c) {
       var active = state.feedChannel === c.key;
       return '<button class="chip' + (c.inStock ? ' chip--stock' : '') + (active ? ' is-active' : '') +
-        '" data-channel="' + esc(c.key) + '">' + esc(c.title) +
-        (c.count ? '<span class="chip__count">' + c.count + '</span>' : '') + '</button>';
+        '" type="button" data-channel="' + esc(c.key) + '"' +
+        (active ? ' data-clear-channel aria-label="Прибрати фільтр ' + esc(c.title) + '"' : '') + '>' +
+        '<span class="chip__label">' + esc(c.title) + '</span>' +
+        (c.count ? '<span class="chip__count">' + c.count + '</span>' : '') +
+        (active ? '<span class="chip__remove" aria-hidden="true">×</span>' : '') + '</button>';
     };
 
     return '<div class="chips">' +
+      (selected ? chip(selected) : '') +
+      (state.feedChannel === 'all'
+        ? '<button class="chip is-active" type="button" data-channel="all">Усе' +
+          (state.catalogTotal ? '<span class="chip__count">' + state.catalogTotal + '</span>' : '') +
+          '</button>'
+        : '') +
       stock.map(chip).join('') +
-      '<button class="chip' + (state.feedChannel === 'all' ? ' is-active' : '') +
-        '" data-channel="all">Усе' +
-        (state.catalogTotal ? '<span class="chip__count">' + state.catalogTotal + '</span>' : '') +
-      '</button>' +
+      (state.feedChannel === 'all'
+        ? ''
+        : '<button class="chip" type="button" data-channel="all">Усе' +
+          (state.catalogTotal ? '<span class="chip__count">' + state.catalogTotal + '</span>' : '') +
+          '</button>') +
       rest.map(chip).join('') +
     '</div>';
   }
@@ -835,13 +847,20 @@
     var f = state.facets || {};
     var section = function (kind, label, values, active) {
       if (!values || !values.length) return '';
+      // Keep the chosen value at the beginning of the grid. It remains visible
+      // when the sheet is reopened and can be removed with the same tap.
+      var ordered = values.filter(function (v) { return v.value === active; })
+        .concat(values.filter(function (v) { return v.value !== active; }));
       return '<div class="fsheet">' +
         '<div class="fsheet__label">' + esc(label) + '</div>' +
         '<div class="fsheet__grid">' +
-          values.map(function (v) {
+          ordered.map(function (v) {
             return '<button class="fchip' + (active === v.value ? ' is-active' : '') +
-              '" type="button" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '">' +
-              esc(v.value) + '<span class="fchip__count">' + v.count + '</span></button>';
+              '" type="button" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '"' +
+              (active === v.value ? ' aria-label="Прибрати фільтр ' + esc(v.value) + '"' : '') + '>' +
+              esc(v.value) + '<span class="fchip__count">' + v.count + '</span>' +
+              (active === v.value ? '<span class="fchip__remove" aria-hidden="true">×</span>' : '') +
+            '</button>';
           }).join('') +
         '</div></div>';
     };
@@ -2402,7 +2421,11 @@
 
     var chip = t.closest('[data-channel]');
     if (chip) {
-      state.feedChannel = chip.getAttribute('data-channel');
+      // The active catalogue is also its own clear button: one tap removes it.
+      state.feedChannel = chip.hasAttribute('data-clear-channel')
+        ? 'all'
+        : chip.getAttribute('data-channel');
+      tg.haptic('light');
       // Tapping a catalogue is an explicit choice — it clears an active search.
       state.search = '';
       // …and the content filters, which belonged to the previous catalogue: a
