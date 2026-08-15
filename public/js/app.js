@@ -467,33 +467,40 @@
       ? (tiersOn ? c.loyalty.tierName + ' · ' : '') + usd(c.loyalty.totalSpent) + ' покупок'
       : 'Гість';
     var unread = state.notifications.unread;
-    // The flag beside the wordmark is painted, not an emoji: a coloured OS
-    // glyph would break the monochrome storefront. Each sweep is a tapered
-    // body — thin at the start, loaded in the middle, frayed where the brush
-    // lifts — plus two bristle trails running past the end. That raggedness is
-    // what makes paint read as paint rather than as two tidy bars.
+    // The flag is painted directly over the 2 in Way2Buy, so Ukraine is part of
+    // the name instead of a separate badge. The tagline is split into words so
+    // CSS can align its two outer edges exactly with the wordmark above it.
     return '<div class="wordmark">' +
         '<div class="wordmark__row">' +
-          '<span class="wordmark__name">Way2Buy</span>' +
-          '<svg class="brush" viewBox="0 0 40 26" role="img" aria-label="Україна">' +
-            '<defs>' +
-              // Watercolour is edge behaviour, not colour: turbulence pushes the
-              // outline around so it wanders like a wet edge, a slight blur
-              // softens it, and the paint stays translucent so the paper shows
-              // through and the two washes bleed where they meet.
-              '<filter id="w2b-wc" x="-20%" y="-25%" width="140%" height="150%">' +
-                '<feTurbulence type="fractalNoise" baseFrequency="0.055" numOctaves="4" seed="9" result="n"/>' +
-                '<feDisplacementMap in="SourceGraphic" in2="n" scale="3.4" xChannelSelector="R" yChannelSelector="G"/>' +
-                '<feGaussianBlur stdDeviation="0.32"/>' +
-              '</filter>' +
-            '</defs>' +
-            '<g filter="url(#w2b-wc)">' +
-              '<path class="wash wash--blue" d="M2.6 7.4c4-1.9 8.2-2.9 12.6-2.9 3.5 0 6.9.5 10.3.7 3.9.2 7.7-.4 11.3-1.9l1.5 5.6c-3.9 1.6-8 2.3-12.2 2.1-3.5-.2-6.9-.7-10.4-.7-4.2 0-8.2.8-12.1 2.4z"/>' +
-              '<path class="wash wash--yellow" d="M2.9 14.3c4-1.9 8.2-2.9 12.6-2.9 3.5 0 6.9.5 10.3.7 3.9.2 7.7-.4 11.3-1.9l1.4 5.6c-3.9 1.6-8 2.3-12.2 2.1-3.5-.2-6.9-.7-10.4-.7-4.2 0-8.2.8-12.1 2.4z"/>' +
-            '</g>' +
-          '</svg>' +
+          '<div class="wordmark__lockup">' +
+            '<div class="wordmark__name" aria-label="Way2Buy">' +
+              '<span>Way</span>' +
+              '<span class="wordmark__two">2' +
+                '<svg class="brush" viewBox="0 0 40 26" aria-hidden="true" focusable="false">' +
+                  '<defs>' +
+                    // Watercolour is edge behaviour, not colour: turbulence pushes the
+                    // outline around so it wanders like a wet edge, a slight blur
+                    // softens it, and the paint stays translucent so the paper shows
+                    // through and the two washes bleed where they meet.
+                    '<filter id="w2b-wc" x="-20%" y="-25%" width="140%" height="150%">' +
+                      '<feTurbulence type="fractalNoise" baseFrequency="0.055" numOctaves="4" seed="9" result="n"/>' +
+                      '<feDisplacementMap in="SourceGraphic" in2="n" scale="3.4" xChannelSelector="R" yChannelSelector="G"/>' +
+                      '<feGaussianBlur stdDeviation="0.32"/>' +
+                    '</filter>' +
+                  '</defs>' +
+                  '<g filter="url(#w2b-wc)">' +
+                    '<path class="wash wash--blue" d="M2.6 7.4c4-1.9 8.2-2.9 12.6-2.9 3.5 0 6.9.5 10.3.7 3.9.2 7.7-.4 11.3-1.9l1.5 5.6c-3.9 1.6-8 2.3-12.2 2.1-3.5-.2-6.9-.7-10.4-.7-4.2 0-8.2.8-12.1 2.4z"/>' +
+                    '<path class="wash wash--yellow" d="M2.9 14.3c4-1.9 8.2-2.9 12.6-2.9 3.5 0 6.9.5 10.3.7 3.9.2 7.7-.4 11.3-1.9l1.4 5.6c-3.9 1.6-8 2.3-12.2 2.1-3.5-.2-6.9-.7-10.4-.7-4.2 0-8.2.8-12.1 2.4z"/>' +
+                  '</g>' +
+                '</svg>' +
+              '</span>' +
+              '<span>Buy</span>' +
+            '</div>' +
+            '<div class="wordmark__sub" aria-label="ваша річ уже існує">' +
+              '<span>ваша</span><span>річ</span><span>уже</span><span>існує</span>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
-        '<div class="wordmark__sub">ваша річ уже існує</div>' +
       '</div>' +
       '<header class="topbar">' +
       '<div class="topbar__avatar">' + esc(initials) + '</div>' +
