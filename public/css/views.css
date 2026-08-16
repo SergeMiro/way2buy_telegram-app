@@ -1384,6 +1384,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* The four words are separate spans with no whitespace between them, and
+     `space-between` only separates them while there is width left over to
+     distribute. In Ukrainian «ваша річ уже існує» fits and it looks deliberate;
+     in English «your piece already exists» does not, the free space runs out,
+     and the tagline renders as YOURPIECEALREADYEXISTS. A gap is the separation
+     that does not depend on there being room to spare. */
+  gap: 0.45em;
   margin-top: 0;
   color: var(--w2b-text-subtle);
   font-family: var(--w2b-font-body);
@@ -2089,3 +2096,63 @@ body.is-zooming .fit-row__thumb img { transition: none; }
   font-size: 9px;
   font-weight: 700;
 }
+
+/* ── аналітика: the gap, drawn ────────────────────────────────────────────────
+   A month is one bar, and the bar carries the ratio inside itself: the whole
+   width is what people picked up, the filled part is what they actually asked
+   about. Two numbers printed side by side do not show a ratio — the eye has to
+   divide them — and this screen exists to make one ratio obvious. */
+.months { display: flex; flex-direction: column; gap: var(--w2b-space-2); }
+.month {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  align-items: center;
+  gap: var(--w2b-space-3);
+  font-size: var(--w2b-fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.month__key { color: var(--w2b-text-subtle); letter-spacing: 0.04em; }
+.month__bar {
+  position: relative;
+  height: 10px;
+  width: var(--w2b-bar, 0%);
+  min-width: 2px;
+  border-radius: var(--w2b-radius-xs);
+  background: var(--w2b-surface-3);
+  overflow: hidden;
+}
+.month__bar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--w2b-bar-fill, 0%);
+  background: var(--w2b-primary);
+}
+.month__n { color: var(--w2b-text-muted); }
+
+/* The advice reads as sentences because somebody has to act on it. The label
+   on the left is the verb — add, check, quiet — so the list can be skimmed for
+   the one kind of finding you have time for today. */
+.tip {
+  display: flex;
+  gap: var(--w2b-space-3);
+  padding: var(--w2b-space-3);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: var(--w2b-radius-md);
+}
+.tip + .tip { margin-top: var(--w2b-space-2); }
+.tip__kind {
+  flex: none;
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: var(--w2b-radius-xs);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: var(--w2b-ls-caps);
+  background: var(--w2b-surface-3);
+  color: var(--w2b-text-muted);
+}
+.tip--stock .tip__kind { background: var(--w2b-primary); color: var(--w2b-on-primary); }
+.tip--check .tip__kind { background: var(--w2b-accent-soft); color: var(--w2b-gold-strong); }
+.tip__text { font-size: var(--w2b-fs-sm); line-height: var(--w2b-lh-body); color: var(--w2b-text); }

@@ -27,6 +27,8 @@ import { adminAlerts } from './notify.js';
 import { identify } from './auth.js';
 import * as roles from './roles.js';
 import * as presets from './presets.js';
+import * as analytics from './analytics.js';
+import * as abandoned from './abandoned.js';
 import { asJson } from './sql.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -555,18 +557,23 @@ app.post('/api/admin/holidays', requirePermission('discounts.manage'), async (re
 
 // ── ADMIN: sales, cost and profit ────────────────────────────────────────
 app.post('/api/admin/purchase', requirePermission('purchases.write'), async (req, res) => {
-  const { customerId, title, amount, currency, channel, invoiceRef, costUsd, discountUsd } = req.body || {};
+  const { customerId, title, amount, currency, channel, invoiceRef, costUsd, discountUsd, postId } = req.body || {};
   if (!customerId || !amount) return res.status(400).json({ error: 'customerId & amount required' });
+  // A sale attached to the card it came from is the only way «what KIND of
+  // thing sells» can be answered later without guessing from a title.
+  const card = postId ? await db.prepare('SELECT id, title, article, channel FROM posts WHERE id=?').get(postId) : null;
   const cur = currency || 'USD';
   const amountUsd = toUsd(Number(amount), cur);
   const hasCost = costUsd !== undefined && costUsd !== null && costUsd !== '';
 
   const info = await db.prepare(`INSERT INTO purchases
-    (customer_id,title,amount_usd,orig_amount,orig_currency,source_channel,invoice_ref,discount_usd,cost_usd,cost_entered_at,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(customerId, title || 'Покупка', amountUsd, Number(amount), cur, channel || null,
+    (customer_id,title,amount_usd,orig_amount,orig_currency,source_channel,invoice_ref,discount_usd,cost_usd,cost_entered_at,created_at,post_id,article)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(customerId, title || card?.title || 'Покупка', amountUsd, Number(amount), cur,
+      channel || card?.channel || null,
       invoiceRef || null, Number(discountUsd || 0),
-      hasCost ? Number(costUsd) : null, hasCost ? now() : null, now());
+      hasCost ? Number(costUsd) : null, hasCost ? now() : null, now(),
+      card ? card.id : null, card ? card.article : null);
   await db.prepare('INSERT INTO events (customer_id,type,meta,created_at) VALUES (?,?,?,?)').run(customerId, 'purchase', title || '', now());
 
   res.json({
@@ -868,6 +875,32 @@ app.delete('/api/admin/team/:tgId', requirePermission('team.manage'), async (req
   } catch (e) { badRequest(res, e); }
 });
 
+// ── analytics: the gap between «додав» and «спитав» ────────────────────────
+// Readable by the manager as well as the owner: knowing what clients are
+// reaching for is her job too, and none of it carries cost or margin.
+app.get('/api/admin/analytics', requirePermission('popular.read'), async (req, res) => {
+  const months = Math.min(Math.max(Number(req.query.months) || 6, 1), 24);
+  const [funnel, items, byCategory, byBrand, byChannel, tips] = await Promise.all([
+    analytics.monthlyFunnel({ months }),
+    analytics.itemFunnel({ month: req.query.month || null, limit: 25 }),
+    analytics.demandBy({ facet: 'category', months: 3 }),
+    analytics.demandBy({ facet: 'brand', months: 3 }),
+    analytics.demandBy({ facet: 'channel', months: 3 }),
+    analytics.advice({ months: 3 }),
+  ]);
+  res.json({ funnel, items, byCategory, byBrand, byChannel, advice: tips });
+});
+
+// One client's own history, in the {yyyyMMdd-HHmm: {…}} shape.
+app.get('/api/admin/customers/:id/timeline', requirePermission('customers.read'), async (req, res) => {
+  res.json(await analytics.customerTimeline(Number(req.params.id)));
+});
+
+// What the abandoned-fitting-room rule is set to, and who has already had it.
+app.get('/api/admin/abandoned', requirePermission('discounts.manage'), async (req, res) => {
+  res.json({ config: abandoned.config(), pending: await abandoned.pending() });
+});
+
 app.get('/api/admin/alerts', requirePermission('alerts.read'), async (req, res) => {
   res.json({ alerts: await adminAlerts({ limit: req.query.limit }) });
 });
@@ -875,7 +908,20 @@ app.get('/api/admin/alerts', requirePermission('alerts.read'), async (req, res) 
 // Scheduler status + a manual/cron-callable (await tick (serverless hosts have no
 // long-lived process, so the same jobs are reachable over HTTP)).
 app.get('/api/admin/scheduler', requirePermission('settings.manage'), (req, res) => res.json({ ...scheduler.status(), polling: polling.status() }));
-app.post('/api/admin/tick', requirePermission('settings.manage'), async (req, res) => res.json(await scheduler.tick()));
+// The scheduler on a serverless host has no long-lived process, so the tick is
+// an endpoint an external cron calls. A cron cannot produce a signed Telegram
+// launch, so it authenticates with a shared secret instead — and if that secret
+// is unset the route stays admin-only rather than falling open.
+const cronAllowed = (req) => {
+  const want = process.env.W2B_CRON_SECRET || '';
+  if (!want) return false;
+  const got = req.get('x-w2b-cron-secret') || req.query.secret || '';
+  return String(got) === want;
+};
+app.post('/api/admin/tick', async (req, res, next) => {
+  if (cronAllowed(req)) return res.json(await scheduler.tick());
+  return requirePermission('settings.manage')(req, res, next);
+}, async (req, res) => res.json(await scheduler.tick()));
 
 app.get('/api/admin/report', requirePermission('reports.read'), async (req, res) => {
   res.json(await buildReport(req.query.period === 'week' ? 'week' : 'day'));

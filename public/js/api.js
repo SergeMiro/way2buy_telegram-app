@@ -176,6 +176,11 @@
       posts: function (channel) { return request('GET', '/api/admin/posts', undefined, channel ? { channel: channel } : {}); },
       updatePost: function (id, patch) { return request('PATCH', '/api/admin/posts/' + id, patch); },
 
+      // ── analytics: the gap between «додав» and «спитав» ──
+      analytics: function (months) { return request('GET', '/api/admin/analytics', undefined, months ? { months: months } : {}); },
+      customerTimeline: function (id) { return request('GET', '/api/admin/customers/' + id + '/timeline'); },
+      abandoned: function () { return request('GET', '/api/admin/abandoned'); },
+
       // ── the campaign builder (super admin only; the server decides) ──
       presets: function () { return request('GET', '/api/admin/presets'); },
       // How many customers a set of conditions reaches right now, before

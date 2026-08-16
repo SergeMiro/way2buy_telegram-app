@@ -6,6 +6,7 @@
 //   1. birthday window opens today  → tell the client their discount is ready
 //   2. sale older than a day with no cost entered → remind the admin
 //   3. campaign statuses            → activate/expire on schedule
+//   4. a fitting room filled hours ago and never sent → one discount, once
 //
 //  Not a real cron: a single Node process with setInterval, which is right for
 //  a boutique with thousands of customers. On a serverless host (Vercel) there
@@ -17,6 +18,7 @@ import { birthdaysOpeningToday, birthdayStatus } from './birthday.js';
 import { remindPendingCosts } from './profit.js';
 import { notifyCustomer } from './notify.js';
 import * as campaigns from './campaigns.js';
+import { remindAbandoned } from './abandoned.js';
 
 const MINUTE = 60000;
 const INTERVAL_MS = Number(process.env.SCHEDULER_INTERVAL_MIN || 15) * MINUTE;
@@ -59,6 +61,11 @@ export async function tick(now = Date.now()) {
     result.costs = await remindPendingCosts(now);
   } catch (e) {
     result.costs = { error: String(e.message || e) };
+  }
+  try {
+    result.abandoned = await remindAbandoned(now);
+  } catch (e) {
+    result.abandoned = { error: String(e.message || e) };
   }
   try {
     result.campaigns = campaigns.reconcileStatus ? await campaigns.reconcileStatus(now) : { skipped: true };

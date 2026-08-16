@@ -53,6 +53,7 @@
       // The campaign builder: the ready-made presets, the conditions currently
       // being composed, and how many customers they reach right now.
       presets: [], team: [], draft: null, reach: null,
+      analytics: null,
       // Per-channel sync progress, keyed by channel: { running, note, error }.
       // A deep backfill is many calls, so the admin needs to see it moving.
       sync: {},
@@ -716,16 +717,29 @@
   // The photo of a post: the proxy URL when Telegram carries the file, the
   // emoji placeholder otherwise. The audience picks by picture, so this is the
   // most important element on the screen.
+  // The emoji a card falls back to. A post carries its own when it has no
+  // photograph at all; anything else gets the shopping bag.
+  function placeholderEmoji(p) {
+    var e = p && p.image_url;
+    return e && !/^[/.]|^https?:/.test(e) ? e : '🛍️';
+  }
+
   function postMediaHtml(p) {
     // Three sources of an image: a Telegram file_id (served via the proxy), an
     // imported file under /uploads, or the emoji stand-in.
     var url = (p.photoUrls && p.photoUrls[0]) ||
       (p.image_url && /^[/.]|^https?:/.test(p.image_url) ? p.image_url : null);
+    // `data-fallback` is what turns a broken photograph into the same stand-in
+    // a photoless post already uses. A Telegram file id can stop resolving, the
+    // proxy can answer 502, a phone can lose signal mid-scroll — and the
+    // browser's default answer to all three is a torn-page icon in the middle
+    // of a boutique. See the delegated error handler further down.
     return url
-      ? '<img src="' + esc(url) + '" alt="' + esc(p.title || '') + '" loading="lazy" />'
+      ? '<img src="' + esc(url) + '" alt="' + esc(p.title || '') + '" loading="lazy" ' +
+        'data-fallback="' + esc(placeholderEmoji(p)) + '" />'
       // The emoji stand-in lives in its own element so CSS can desaturate it
       // without touching the labels drawn over the photo.
-      : '<span class="ph">' + esc(p.image_url || '🛍️') + '</span>';
+      : '<span class="ph">' + esc(placeholderEmoji(p)) + '</span>';
   }
 
   function tileHtml(p) {
@@ -1037,7 +1051,9 @@
     html += c.items.map(function (i) {
       return '<div class="row">' +
         '<div class="fit-row__thumb">' +
-          (i.photo ? '<img src="' + esc(i.photo) + '" alt="" loading="lazy" />' : '<span class="ph">' + esc(i.emoji || '🛍️') + '</span>') +
+          (i.photo
+            ? '<img src="' + esc(i.photo) + '" alt="" loading="lazy" data-fallback="' + esc(i.emoji || '🛍️') + '" />'
+            : '<span class="ph">' + esc(i.emoji || '🛍️') + '</span>') +
         '</div>' +
         '<div class="row__body">' +
           '<div class="row__title">' + esc(i.title || 'Позиція') + '</div>' +
@@ -1140,6 +1156,7 @@
     { key: 'promos',    label: 'Акції',      need: 'discounts.manage' },
     { key: 'bonuses',   label: 'Бонуси',     need: 'discounts.manage' },
     { key: 'popular',   label: 'Популярне',  need: 'popular.read' },
+    { key: 'stats',     label: 'Аналітика',  need: 'popular.read' },
     { key: 'profit',    label: 'Прибуток',   need: 'profit.read' },
     { key: 'customers', label: 'Клієнти',    need: 'customers.read' },
     { key: 'content',   label: 'Контент',    need: 'catalog.read' },
@@ -1457,6 +1474,95 @@
     await repaintReach();
   }
 
+  // ── Аналітика: what the fitting room is telling us ────────────────────────
+  //
+  // One question runs through this whole screen: how many things did people
+  // pick up, and how many did they actually ask about. The difference is the
+  // only number in the shop that says «хочуть саме це» before any money moves,
+  // and it is put first because everything under it is that number sliced.
+  function adminStatsHtml(a) {
+    var s = a.analytics;
+    if (!s) return '<div class="empty">Рахуємо…</div>';
+
+    var f = s.funnel || { months: [], totals: {} };
+    var t = f.totals || {};
+    var html = '<div class="section-title">Примірочна за півроку</div>';
+
+    html += '<section class="stats">' +
+      '<div class="stat"><div class="stat__value">' + (t.added || 0) + '</div><div class="stat__label">додали</div></div>' +
+      '<div class="stat"><div class="stat__value">' + (t.sent || 0) + '</div><div class="stat__label">спитали</div></div>' +
+      '<div class="stat"><div class="stat__value">' + (t.silent || 0) + '</div><div class="stat__label">мовчки</div></div>' +
+    '</section>';
+
+    html += '<div class="panel"><p class="panel__note">' +
+      'Різниця між «додали» і «спитали» — це те, чого хочуть, але про що не написали менеджеру.' +
+      '</p></div>';
+
+    // Month by month: a bar per month, added as the full width and sent as the
+    // filled part, because the ratio is the thing and two numbers side by side
+    // do not show a ratio.
+    var max = f.months.reduce(function (m, x) { return Math.max(m, x.added); }, 0) || 1;
+    html += '<div class="section-title">По місяцях</div><div class="months">';
+    html += f.months.map(function (m) {
+      return '<div class="month">' +
+        '<span class="month__key">' + esc(m.month) + '</span>' +
+        '<span class="month__bar" style="--w2b-bar: ' + Math.round((m.added / max) * 100) + '%;' +
+          ' --w2b-bar-fill: ' + (m.added ? Math.round((m.sent / m.added) * 100) : 0) + '%"></span>' +
+        '<span class="month__n">' + m.added + ' / ' + m.sent + '</span>' +
+      '</div>';
+    }).join('') + '</div>' +
+      '<p class="field__hint">Ширина стовпчика — скільки додали, темна частина — про скільки спитали.</p>';
+
+    // The advice. Sentences, not a dashboard: this is the part somebody acts on.
+    var tips = (s.advice && s.advice.findings) || [];
+    html += '<div class="section-title">Що з цим робити</div>';
+    html += tips.length
+      ? tips.map(function (x) {
+          return '<div class="tip tip--' + esc(x.kind) + '">' +
+            '<span class="tip__kind">' + esc({ stock: 'додати', check: 'перевірити', quiet: 'тихо' }[x.kind] || x.kind) + '</span>' +
+            '<span class="tip__text">' + esc(x.text) + '</span>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Даних поки замало для висновків.</div>';
+
+    // Facets, then items. Both are "what to stock more of", at two zoom levels.
+    html += facetTableHtml('Категорії', s.byCategory);
+    html += facetTableHtml('Бренди', s.byBrand);
+
+    var items = (s.items && s.items.items) || [];
+    html += '<div class="section-title">Позиції цього місяця</div>';
+    html += items.length
+      ? items.slice(0, 15).map(function (i) {
+          return '<div class="row">' +
+            '<div class="row__body">' +
+              '<div class="row__title">' + esc(i.title || i.item) +
+                (i.article ? ' · ' + esc(i.article) : '') + '</div>' +
+              '<div class="row__sub">' + esc([i.brand, i.category, i.channel].filter(Boolean).join(' · ')) + '</div>' +
+            '</div>' +
+            '<div class="row__amount">' + i.adds + '<span>' + i.sends + ' питали</span></div>' +
+          '</div>';
+        }).join('')
+      : '<div class="empty">Цього місяця в примірочну ще нічого не додавали.</div>';
+
+    return html;
+  }
+
+  function facetTableHtml(title, data) {
+    var rows = (data && data.rows) || [];
+    if (!rows.length) return '';
+    return '<div class="section-title">' + esc(title) + '</div>' +
+      rows.slice(0, 10).map(function (r) {
+        return '<div class="row">' +
+          '<div class="row__body">' +
+            '<div class="row__title">' + esc(r.key) + '</div>' +
+            '<div class="row__sub">' + r.items + ' позицій, ' + r.people + ' клієнтів' +
+              (r.bought ? ', куплено ' + r.bought : '') + '</div>' +
+          '</div>' +
+          '<div class="row__amount">' + r.adds + '<span>' + r.sentPct + '% питали</span></div>' +
+        '</div>';
+      }).join('');
+  }
+
   // ── Команда: who works here ───────────────────────────────────────────────
   function adminTeamHtml(a) {
     var html = '<div class="section-title">Команда</div>' +
@@ -1721,7 +1827,9 @@
             (p.image_url && /^[/.]|^https?:/.test(p.image_url) ? p.image_url : null);
           return '<div class="row row--tap" data-post="' + p.id + '">' +
             '<div class="fit-row__thumb">' +
-              (thumb ? '<img src="' + esc(thumb) + '" alt="" loading="lazy" />' : '<span class="ph">🛍️</span>') +
+              (thumb
+                ? '<img src="' + esc(thumb) + '" alt="" loading="lazy" data-fallback="🛍️" />'
+                : '<span class="ph">🛍️</span>') +
             '</div>' +
             '<div class="row__body">' +
               '<div class="row__title">' + esc(p.title || 'Без назви') + '</div>' +
@@ -1803,6 +1911,7 @@
     else if (a.adminTab === 'popular') html += adminPopularHtml(a);
     else if (a.adminTab === 'customers') html += adminCustomersHtml(a);
     else if (a.adminTab === 'content') html += adminContentHtml(a);
+    else if (a.adminTab === 'stats') html += adminStatsHtml(a);
     else if (a.adminTab === 'promos') html += adminPromosHtml(a);
     else if (a.adminTab === 'team') html += adminTeamHtml(a);
     else if (a.adminTab === 'bonuses') html += adminBonusesHtml(a);
@@ -2205,6 +2314,9 @@
       }
       if (state.admin.adminTab === 'inquiries' && can('inquiries.read')) {
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+      }
+      if (state.admin.adminTab === 'stats' && can('popular.read')) {
+        state.admin.analytics = await api.admin.analytics();
       }
       if (state.admin.adminTab === 'promos' && can('discounts.manage')) {
         state.admin.presets = (await api.admin.presets()).presets || [];
@@ -2622,6 +2734,10 @@
           state.admin.channels = content[1].channels || [];
           $app.innerHTML = renderAdmin();
         }
+        if (key === 'stats') {
+          state.admin.analytics = await api.admin.analytics();
+          $app.innerHTML = renderAdmin();
+        }
         if (key === 'promos') {
           state.admin.presets = (await api.admin.presets()).presets || [];
           $app.innerHTML = renderAdmin();
@@ -2738,7 +2854,19 @@
   // The support photograph is resolved from Telegram at request time and there
   // are honest reasons it may be missing — see /api/support/photo. Captured,
   // because `error` on an <img> does not bubble.
+  // A photograph that does not arrive must look like a card without a
+  // photograph, never like a broken page. Captured, because `error` on an
+  // <img> does not bubble; and the node is REPLACED rather than hidden, so a
+  // retry cannot fire the handler again on the same element.
   document.addEventListener('error', function (e) {
+    var el = e.target;
+    if (el && el.tagName === 'IMG' && el.hasAttribute('data-fallback')) {
+      var span = document.createElement('span');
+      span.className = 'ph';
+      span.textContent = el.getAttribute('data-fallback') || '🛍️';
+      if (el.parentNode) el.parentNode.replaceChild(span, el);
+      return;
+    }
     var img = e.target;
     if (!img || !img.classList || !img.classList.contains('thanks__photo')) return;
     var host = img.parentNode;
