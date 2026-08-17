@@ -1357,23 +1357,35 @@ body {
   display: inline-block;
   padding-bottom: 17px;
 }
+/* The name is set in a script face and in LOWER CASE, so every letter runs at
+   one height instead of two capitals standing over the rest of the word. A
+   script is also why it is stretched rather than letter-spaced when it has to
+   grow (see fitWordmark in app.js): tracking a script apart breaks the strokes
+   that join its letters, and scaling keeps them joined. */
 .wordmark__name {
   display: flex;
   align-items: baseline;
   color: var(--w2b-text);
-  font-family: var(--w2b-font-display);
-  font-size: 27px;
-  font-weight: 600;
+  font-family: var(--w2b-font-script);
+  font-size: 40px;
+  font-weight: 400;
   line-height: 1;
-  letter-spacing: 0.025em;
-  text-transform: none;
+  letter-spacing: 0;
+  text-transform: lowercase;
   text-indent: 0;
+  /* Set by fitWordmark once both lines have been measured. */
+  transform-origin: left center;
+  will-change: transform;
 }
+/* The 2 stands a little shorter than the letters around it — it is a digit
+   wearing a flag, not a letter, and at full height it читається as a break in
+   the word. Baseline alignment keeps its foot on the line while the top drops. */
 .wordmark__two {
   position: relative;
   display: inline-block;
   isolation: isolate;
-  min-width: 0.54em;
+  min-width: 0.5em;
+  font-size: 0.72em;
   text-align: center;
 }
 .wordmark__sub {
@@ -1395,6 +1407,9 @@ body {
   color: var(--w2b-text-subtle);
   font-family: var(--w2b-font-body);
   font-size: 8px;
+  /* The lockup is sized to whichever of the two lines is wider (fitWordmark),
+     so this spans exactly the name above it and `space-between` puts the first
+     and last letters of both lines on the same two vertical edges. */
   font-style: normal;
   font-weight: 700;
   line-height: 1;
@@ -1402,17 +1417,22 @@ body {
   text-transform: uppercase;
   white-space: nowrap;
 }
+/* The flag sits ABOVE the 2 rather than across it: painted over the digit it
+   read as a smudge on the name, and the 2 is the shortest glyph in the word,
+   so the space over it is exactly where the flag belongs. */
 .wordmark__two .brush {
   position: absolute;
-  top: 50%;
+  top: 0;
   left: 50%;
   z-index: 2;
-  width: 23px;
-  height: 17px;
+  width: 21px;
+  height: 15px;
   max-width: none;
-  opacity: 0.86;
+  opacity: 0.9;
   pointer-events: none;
-  transform: translate(-50%, -48%) rotate(-5deg);
+  /* Close enough to the digit to belong to it: lifted clear of the stroke, not
+     floating off on its own above the word. */
+  transform: translate(-50%, -52%) rotate(-5deg);
 }
 
 .topbar {

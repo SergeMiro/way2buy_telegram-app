@@ -150,6 +150,10 @@
      Cyrillic interface copy crisp inside Telegram's compact viewport. */
   --w2b-font-display: 'Cormorant Garamond', 'Times New Roman', Georgia, serif;
   --w2b-font-body:    'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* The wordmark, and nothing else. A single-weight monoline script: its
+     lowercase runs at one height, which is the whole point of setting the name
+     in lower case — no capital W and B towering over the rest. */
+  --w2b-font-script:  'Sacramento', 'Snell Roundhand', cursive;
   --w2b-font-mono:    ui-monospace, 'SF Mono', 'JetBrains Mono', 'Roboto Mono', monospace;
 
   /* The scale is tuned for a 390px phone, which is the only screen this app

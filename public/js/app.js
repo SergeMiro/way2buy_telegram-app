@@ -483,8 +483,11 @@
     return '<div class="wordmark">' +
         '<div class="wordmark__row">' +
           '<div class="wordmark__lockup">' +
+            // Lower case, deliberately: the name is set in a script face where
+            // every lowercase letter runs at one height, and a capital W and B
+            // would be the only two things breaking that line.
             '<div class="wordmark__name" aria-label="Way2Buy">' +
-              '<span>Way</span>' +
+              '<span>way</span>' +
               '<span class="wordmark__two">2' +
                 '<svg class="brush" viewBox="0 0 40 26" aria-hidden="true" focusable="false">' +
                   '<defs>' +
@@ -504,7 +507,7 @@
                   '</g>' +
                 '</svg>' +
               '</span>' +
-              '<span>Buy</span>' +
+              '<span>buy</span>' +
             '</div>' +
             '<div class="wordmark__sub" aria-label="ваша річ уже існує">' +
               '<span>ваша</span><span>річ</span><span>уже</span><span>існує</span>' +
@@ -2497,6 +2500,9 @@
       await loadTab(tab);
       $app.innerHTML = VIEWS[tab]();
       revealCards();
+      // The wordmark is re-rendered with the view, so its two lines have to be
+      // measured against each other again.
+      scheduleFit();
     } catch (e) {
       $app.innerHTML = '<div class="empty">' + esc(e.message || 'Не вдалося завантажити') + '</div>';
     }
@@ -3077,6 +3083,76 @@
     }
   });
 
+  // ── the wordmark, measured ────────────────────────────────────────────────
+  //
+  // The name and the line under it have to be the same width, with their outer
+  // letters on the same two vertical edges. `space-between` on the lower line
+  // does half of that — but only while the line is NARROWER than the name, and
+  // it is not: «ваша річ уже існує» fits under the name, «your piece already
+  // exists» does not, and the same lockup has to hold all three languages.
+  //
+  // So the two are measured and the wider one decides. The name is then
+  // stretched horizontally to match. Stretched, not letter-spaced: this is a
+  // script, its letters join, and tracking them apart would tear the joins.
+  // The factor stays small — a few per cent — which is what "растянуть немного"
+  // asks for.
+  function fitWordmark() {
+    var lockup = document.querySelector('.wordmark__lockup');
+    if (!lockup) return;
+    var name = lockup.querySelector('.wordmark__name');
+    var sub = lockup.querySelector('.wordmark__sub');
+    if (!name || !sub) return;
+
+    // Measure both at their natural size, with any previous fit undone.
+    lockup.style.width = '';
+    name.style.width = '';
+    name.style.transform = '';
+
+    var markW = name.getBoundingClientRect().width;
+    if (!markW) return;
+
+    // The lower line's own width: the words plus the gaps between them. Read
+    // from the spans rather than from the box, because the box is already
+    // stretched to the lockup and would just report the lockup's width back.
+    var words = sub.children;
+    var gap = parseFloat(window.getComputedStyle(sub).columnGap) || 0;
+    var subW = 0;
+    for (var i = 0; i < words.length; i++) subW += words[i].getBoundingClientRect().width;
+    subW += gap * Math.max(0, words.length - 1);
+
+    var target = Math.max(markW, subW);
+    lockup.style.width = target + 'px';
+    name.style.width = markW + 'px';
+    name.style.transform = 'scaleX(' + (target / markW) + ')';
+  }
+
+  // Re-measure whenever anything that changes a width changes: a new render, a
+  // language switch, the script face arriving late, the viewport turning.
+  var fitPending = false;
+  function scheduleFit() {
+    if (fitPending) return;
+    fitPending = true;
+    requestAnimationFrame(function () { fitPending = false; fitWordmark(); });
+  }
+  window.addEventListener('resize', scheduleFit);
+
+  // The script face arrives after the first paint (`display=swap`), and until it
+  // does the name is drawn in the fallback cursive — which is WIDER. Measuring
+  // then and never again is how the lockup ended up sized to a font nobody
+  // sees, leaving the name short of its own right edge by thirty pixels.
+  //
+  // `ready` alone is not enough: it can resolve before a face this page has not
+  // asked for yet has even started loading. Asking for the face by name is what
+  // makes the promise mean "Sacramento is ready", and `loadingdone` catches any
+  // later swap on top of that.
+  if (document.fonts) {
+    if (document.fonts.load) {
+      document.fonts.load('40px Sacramento').then(scheduleFit).catch(function () { /* fallback stays */ });
+    }
+    if (document.fonts.ready) document.fonts.ready.then(scheduleFit);
+    if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', scheduleFit);
+  }
+
   /* ── boot ───────────────────────────────────────────────────────────────── */
 
   document.addEventListener('w2b:localechange', function () {
@@ -3087,6 +3163,9 @@
       paintCartBadge(state.cartCount);
     }
     i18n.localize(document);
+    // The tagline is a different length in every language, so the lockup has to
+    // be measured again — this is the switch that made it matter.
+    scheduleFit();
   });
 
   async function boot() {
