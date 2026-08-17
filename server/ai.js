@@ -14,12 +14,15 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { loyaltyFor } from './loyalty.js';
+import { alertIds } from './roles.js';
 import { sendToUser } from './telegram.js';
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 
-export async function buildSignals(period = 'day') {
-  const now = new Date('2026-07-21T20:00:00Z'); // fixed clock for a deterministic demo
+/** «2026-04-02» from either a Date (Postgres) or an ISO string (SQLite/PGlite). */
+const isoDay = (v) => (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10);
+
+export async function buildSignals(period = 'day', now = new Date()) {
   const sinceDays = period === 'week' ? 7 : 1;
   const since = new Date(now.getTime() - sinceDays * 86400000).toISOString();
 
@@ -55,11 +58,18 @@ export async function buildSignals(period = 'day') {
     .map((c) => ({ name: c.name, date: c.birthday }));
 
   // Churn risk: bought once, > 90 days ago.
+  //
+  // The aggregates are repeated in HAVING rather than referred to by their
+  // output names. SQLite accepts `HAVING n <= 1`; Postgres does not — HAVING is
+  // evaluated before the select list exists, so the alias is simply an unknown
+  // column and the whole report answered 500 in production.
   const churn = (await db.prepare(`SELECT c.name, COUNT(p.id) n, MAX(p.created_at) last
       FROM customers c JOIN purchases p ON p.customer_id=c.id
-      GROUP BY c.id HAVING n<=1 AND last < ?`)
+      GROUP BY c.id HAVING COUNT(p.id) <= 1 AND MAX(p.created_at) < ?`)
     .all(new Date(now.getTime() - 90 * 86400000).toISOString()))
-    .map((c) => ({ name: c.name, last: c.last.slice(0, 10) }));
+    // `last` is a timestamptz, which node-postgres hands back as a Date and
+    // SQLite handed back as a string. isoDay() takes either.
+    .map((c) => ({ name: c.name, last: isoDay(c.last) }));
 
   const hot = await db.prepare(`SELECT p.title, COUNT(e.id) signals
       FROM events e JOIN posts p ON p.id=e.post_id
@@ -125,8 +135,8 @@ async function renderWithGemini(signals) {
   return txt;
 }
 
-export async function buildReport(period = 'day') {
-  const signals = await buildSignals(period);
+export async function buildReport(period = 'day', now = new Date()) {
+  const signals = await buildSignals(period, now);
   let text;
   let engine = 'template';
   if (GEMINI_KEY) {
@@ -138,9 +148,13 @@ export async function buildReport(period = 'day') {
   return { engine, signals, text };
 }
 
-export async function sendReport(period = 'day') {
-  const report = await buildReport(period);
-  const admins = (process.env.ADMIN_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+export async function sendReport(period = 'day', now = new Date()) {
+  const report = await buildReport(period, now);
+  // The same recipients every other alert uses: the supers as the roles table
+  // knows them, env-bootstrapped or added from the cabinet. Reading ADMIN_TG_IDS
+  // here directly — which is what this did — meant a super Maryna appointed got
+  // the abandoned-cart alerts but never the report.
+  const admins = await alertIds();
   const results = [];
   for (const id of admins) results.push(await sendToUser(id, report.text));
   return { ...report, sentTo: admins.length, results };
