@@ -519,11 +519,16 @@
         '<div class="topbar__sub">' + esc(sub) + '</div>' +
       '</div>' +
       '<div class="topbar__aside">' +
+        // Three languages, in the order this shop's clients read them. The
+        // labels are countries rather than language codes on purpose: «UK»
+        // reads as United Kingdom to half the people who see it.
         '<div class="locale" role="group" aria-label="Мова інтерфейсу">' +
-          '<button class="locale__btn' + (i18n.locale() === 'en' ? ' is-active' : '') +
-            '" type="button" data-locale="en" aria-pressed="' + (i18n.locale() === 'en') + '">EN</button>' +
-          '<button class="locale__btn' + (i18n.locale() === 'ru' ? ' is-active' : '') +
-            '" type="button" data-locale="ru" aria-pressed="' + (i18n.locale() === 'ru') + '">RU</button>' +
+          ['uk', 'ru', 'en'].map(function (code) {
+            var on = i18n.locale() === code;
+            return '<button class="locale__btn' + (on ? ' is-active' : '') +
+              '" type="button" data-locale="' + code + '" aria-pressed="' + on + '">' +
+              { uk: 'UA', ru: 'RU', en: 'EN' }[code] + '</button>';
+          }).join('') +
         '</div>' +
         (c && c.loyalty && tiersOn ? tierBadge(c.loyalty) : '') +
         '<button class="bell" type="button" data-action="notifications" aria-label="Повідомлення">' +

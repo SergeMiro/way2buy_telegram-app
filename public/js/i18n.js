@@ -3,7 +3,15 @@
   'use strict';
 
   var STORAGE_KEY = 'w2b:locale';
-  var SUPPORTED = ['en', 'ru'];
+  // Three languages, and Ukrainian is one of them rather than merely the
+  // language the templates happen to be written in. Every entry below is a
+  // triple in exactly this order, so a locale is an INDEX into it — which is
+  // what makes switching work in every direction, including back to Ukrainian
+  // from a page that is currently showing English.
+  var SUPPORTED = ['uk', 'ru', 'en'];
+  var INDEX_OF = { uk: 0, en: 1, ru: 2 };
+  var HTML_LANG = { uk: 'uk', ru: 'ru', en: 'en-US' };
+  var BCP47 = { uk: 'uk-UA', ru: 'ru-RU', en: 'en-US' };
 
   // Ukrainian remains the authoring language in the zero-build templates. The
   // translator works on complete UI phrases (longest first), which also covers
@@ -292,6 +300,25 @@
     ['Michael Kors сумка', 'Michael Kors bag', 'Сумка Michael Kors'],
   ];
 
+  // What the app opens in.
+  //
+  // A choice made by hand wins forever — somebody who switched to English did
+  // so on purpose and must not be argued with on the next launch. Otherwise the
+  // Telegram client's own language decides, and the browser's only stands in
+  // when there is no Telegram (the demo in a plain browser).
+  //
+  // Anything that is not one of the three becomes RUSSIAN, not English: this
+  // shop's clients are Ukrainian and Russian speaking, and a Polish or German
+  // phone is far likelier to belong to somebody who reads Russian than to
+  // somebody who reads neither.
+  function normalizeCode(code) {
+    var c = String(code || '').toLowerCase();
+    if (/^uk(?:-|$)/.test(c)) return 'uk';
+    if (/^ru(?:-|$)/.test(c)) return 'ru';
+    if (/^en(?:-|$)/.test(c)) return 'en';
+    return null;
+  }
+
   function detectedLocale() {
     try {
       var saved = window.localStorage.getItem(STORAGE_KEY);
@@ -299,7 +326,11 @@
     } catch (e) { /* storage may be disabled */ }
     var telegramCode = window.W2B && window.W2B.tg && window.W2B.tg.languageCode;
     var browserCode = (navigator.languages && navigator.languages[0]) || navigator.language || '';
-    return /^ru(?:-|$)/i.test(telegramCode || browserCode) ? 'ru' : 'en';
+    // Inside Telegram the client's language is the answer, whatever it is — the
+    // browser's is not consulted as a second opinion, because a phone set to
+    // Polish with a Telegram set to Ukrainian should open in Ukrainian.
+    if (telegramCode) return normalizeCode(telegramCode) || 'ru';
+    return normalizeCode(browserCode) || 'ru';
   }
 
   var locale = detectedLocale();
@@ -309,6 +340,10 @@
   });
 
   function dynamic(text) {
+    // Ukrainian is the language these sentences are already written in, so
+    // there is nothing to assemble: the rules below translate OUT of Ukrainian
+    // and have no inverse.
+    if (locale === 'uk') return text;
     var target = locale === 'ru' ? 'ru' : 'en';
     var targetIndex = target === 'ru' ? 2 : 1;
     var term = function (value) {
@@ -409,8 +444,14 @@
     if (!clean) return input;
     // Exact phrase matching prevents short unit labels (for example Ukrainian
     // “год”) from ever altering a customer name or a product title.
+    // The lookup deliberately searches ALL three indexes: a text node may
+    // already hold English because the language was switched a moment ago, and
+    // finding its entry is what lets it go back to Ukrainian or across to
+    // Russian. Without this the static parts of the page — the navigation in
+    // index.html, which is never re-rendered — would be stuck in whichever
+    // language they were first translated into.
     var entry = indexes[0][clean] || indexes[1][clean] || indexes[2][clean];
-    var translated = entry ? entry[locale === 'ru' ? 2 : 1] : dynamic(clean);
+    var translated = entry ? entry[INDEX_OF[locale]] : dynamic(clean);
     return leading + translated + trailing;
   }
 
@@ -449,14 +490,14 @@
         if (next !== current) el.setAttribute(attr, next);
       });
     });
-    document.documentElement.lang = locale === 'ru' ? 'ru' : 'en-US';
+    document.documentElement.lang = HTML_LANG[locale];
   }
 
   function setLocale(next) {
     if (SUPPORTED.indexOf(next) === -1 || next === locale) return;
     locale = next;
     try { window.localStorage.setItem(STORAGE_KEY, locale); } catch (e) { /* ignore */ }
-    document.documentElement.lang = locale === 'ru' ? 'ru' : 'en-US';
+    document.documentElement.lang = HTML_LANG[locale];
     document.dispatchEvent(new CustomEvent('w2b:localechange', { detail: { locale: locale } }));
   }
 
@@ -470,7 +511,8 @@
   window.W2B = window.W2B || {};
   window.W2B.i18n = {
     locale: function () { return locale; },
-    languageTag: function () { return locale === 'ru' ? 'ru-RU' : 'en-US'; },
+    languageTag: function () { return BCP47[locale]; },
+    supported: function () { return SUPPORTED.slice(); },
     setLocale: setLocale,
     translate: translate,
     localize: localize,
