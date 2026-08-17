@@ -31,7 +31,7 @@
 //  cursor is also persisted on the channel row, so a deep backfill survives a
 //  closed browser and resumes where it stopped.
 // ─────────────────────────────────────────────────────────────────────────
-import { db } from './db.js';
+import { db, vacuumAnalyze } from './db.js';
 import { parsePostText } from './telegram.js';
 import { fetchChannelPage, sleep, normalizeUsername, keyFor } from './tme.js';
 
@@ -368,6 +368,12 @@ export async function syncChannel(channel, {
   await db.prepare(`UPDATE channels SET synced_at = now(),
       sync_cursor = ?, history_done = ? WHERE key = ?`)
     .run(deep ? cursor : (channel.sync_cursor ?? null), stats.historyDone, channel.key);
+
+  // A pass that moved real volume leaves the visibility map behind, and the
+  // vitrine's facet queries are index-only scans that read it — see
+  // vacuumAnalyze(). Trivial passes (the everyday «нічого нового») skip it.
+  const written = stats.added + stats.updated + stats.gone + (stats.deleted || 0);
+  if (written >= 50) await vacuumAnalyze('posts');
 
   const totals = await db.prepare(`SELECT
       count(*) FILTER (WHERE status = 'published') published,

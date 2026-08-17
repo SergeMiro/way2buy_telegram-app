@@ -229,6 +229,36 @@ export const db = {
   },
 };
 
+/**
+ * VACUUM ANALYZE a table after a write-heavy pass. Best-effort, never fatal.
+ *
+ * ANALYZE alone is not enough and that is the whole reason this exists. The
+ * facet queries («бренди», «категорії») are index-only scans, and an index-only
+ * scan is only index-only where the visibility map says the page is all-visible
+ * — which nothing but VACUUM sets. After an import of a couple thousand posts
+ * the map covers none of the new pages, so every row falls back to a heap fetch:
+ * measured on production, the brand facet ran 376 ms with a stale map and 2.2 ms
+ * right after a vacuum. Autovacuum does get there on its own (insert threshold),
+ * but "eventually" is a few minutes of a slow vitrine for whoever opens it first.
+ *
+ * VACUUM cannot run inside a transaction block, so this must never be called
+ * from db.transaction(). PGlite has no visibility map to maintain — no-op there.
+ */
+export async function vacuumAnalyze(table) {
+  // Validated before the driver check, not after: VACUUM takes no parameters, so
+  // the name is interpolated, and a guard that only runs on Postgres is a guard
+  // that never runs in the tests and fires for the first time in production.
+  if (!/^[a-z_][a-z0-9_]*$/.test(table)) throw new Error(`bad table name: ${table}`);
+  if (driverKind() !== 'pg') return false;
+  try {
+    await db.exec(`VACUUM (ANALYZE) ${table}`);
+    return true;
+  } catch (err) {
+    console.warn(`[db] vacuum ${table} skipped: ${err.message}`);
+    return false;
+  }
+}
+
 // ── migrate ───────────────────────────────────────────────────────────────
 
 /** Applies sql/schema.sql. Idempotent: every statement is CREATE … IF NOT EXISTS. */

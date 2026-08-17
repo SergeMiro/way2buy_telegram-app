@@ -11,7 +11,7 @@
 import './helpers/tmpdb.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { migrate, db } from '../server/db.js';
+import { migrate, db, vacuumAnalyze } from '../server/db.js';
 import { syncChannel, windowStart, registerChannel, setMainChannel } from '../server/sync.js';
 
 await migrate();
@@ -353,4 +353,16 @@ test('a channel nobody can read cannot become the feed', async () => {
     ON CONFLICT (key) DO NOTHING;`);
   await assert.rejects(() => setMainChannel('feed_blind'), /username/);
   await assert.rejects(() => setMainChannel('немає-такого'), /немає каналу/);
+});
+
+// VACUUM takes no bind parameters, so the table name is interpolated into the
+// statement. The guard has to hold on every driver — on PGlite the vacuum is a
+// no-op, and a check that lived behind the driver test would let a bad name
+// through here and fail for the first time in production.
+test('vacuumAnalyze refuses a table name it did not write itself', async () => {
+  await assert.rejects(() => vacuumAnalyze('posts; DROP TABLE posts'), /bad table name/);
+  await assert.rejects(() => vacuumAnalyze('public.posts'), /bad table name/);
+  await assert.rejects(() => vacuumAnalyze(''), /bad table name/);
+  // A legal name is accepted and simply does nothing on the in-process driver.
+  assert.equal(await vacuumAnalyze('posts'), false);
 });

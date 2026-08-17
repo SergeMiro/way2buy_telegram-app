@@ -562,6 +562,9 @@ create index if not exists idx_cart_events_ym_customer on cart_events (ym, actio
 -- instead of sending a second discount.
 create unique index if not exists uq_customer_grant on customer_grants (customer_id, grant_key);
 create index if not exists idx_customer_grants_key   on customer_grants (grant_key);
+-- Covers the FK: deleting a promo code has to check every grant that points at
+-- it, and without this that check is a seq scan of the whole grants table.
+create index if not exists idx_customer_grants_promo on customer_grants (promo_code_id) where promo_code_id is not null;
 create index if not exists idx_purchases_post        on purchases (post_id) where post_id is not null;
 
 create index if not exists idx_inquiries_status        on inquiries (status, created_at desc);

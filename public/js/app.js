@@ -543,16 +543,36 @@
         '<div class="topbar__sub">' + esc(sub) + '</div>' +
       '</div>' +
       '<div class="topbar__aside">' +
-        // Three languages, in the order this shop's clients read them. The
-        // labels are countries rather than language codes on purpose: «UK»
-        // reads as United Kingdom to half the people who see it.
-        '<div class="locale" role="group" aria-label="Мова інтерфейсу">' +
-          ['uk', 'ru', 'en'].map(function (code) {
-            var on = i18n.locale() === code;
-            return '<button class="locale__btn' + (on ? ' is-active' : '') +
-              '" type="button" data-locale="' + code + '" aria-pressed="' + on + '">' +
-              { uk: 'UA', ru: 'RU', en: 'EN' }[code] + '</button>';
-          }).join('') +
+        // Three languages, in the order this shop's clients read them.
+        //
+        // A real <select>, so Telegram hands it to the OS picker — a wheel on
+        // iOS, a sheet on Android — instead of us reimplementing a dropdown that
+        // would fight the WebApp's own scrolling. The control is invisible and
+        // stretched over the pill; the pill draws the short code, the picker
+        // shows the language's own name. Native <select> paints the SAME text in
+        // both places, and neither alone will do: «Українська» is too wide for a
+        // topbar that also holds a tier badge and the bell, and a list reading
+        // «UA / RU / EN» is a guessing game — «UK» in particular reads as United
+        // Kingdom to half the people who see it.
+        // The <select> is written FIRST so the focus ring can be drawn on the
+        // pill with a plain sibling combinator; being absolutely positioned, it
+        // still paints over the pill regardless of document order.
+        '<div class="locale">' +
+          '<select class="locale__select" data-locale-select aria-label="Мова інтерфейсу">' +
+            // data-i18n-skip: a language is named in its own language, always.
+            // Without it the localizer would render the list as three lines of
+            // whatever the current locale is, and nobody could find their way
+            // back from a language they cannot read — which is the one moment
+            // this control has to work.
+            [['uk', 'Українська'], ['ru', 'Русский'], ['en', 'English']].map(function (o) {
+              return '<option value="' + o[0] + '" data-i18n-skip' +
+                (i18n.locale() === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+            }).join('') +
+          '</select>' +
+          '<span class="locale__face" data-i18n-skip aria-hidden="true">' +
+            { uk: 'UA', ru: 'RU', en: 'EN' }[i18n.locale()] +
+            '<svg class="locale__chev" viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>' +
+          '</span>' +
         '</div>' +
         (c && c.loyalty && tiersOn ? tierBadge(c.loyalty) : '') +
         '<button class="bell" type="button" data-action="notifications" aria-label="Повідомлення">' +
@@ -2560,15 +2580,15 @@
     go(btn.getAttribute('data-tab'));
   });
 
+  document.addEventListener('change', function (e) {
+    var picker = e.target.closest('[data-locale-select]');
+    if (!picker) return;
+    i18n.setLocale(picker.value);
+    tg.haptic('light');
+  });
+
   document.addEventListener('click', async function (e) {
     var t = e.target;
-
-    var localeButton = t.closest('[data-locale]');
-    if (localeButton) {
-      i18n.setLocale(localeButton.getAttribute('data-locale'));
-      tg.haptic('light');
-      return;
-    }
 
     var copyBtn = t.closest('[data-copy]');
     if (copyBtn) {

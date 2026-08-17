@@ -1479,29 +1479,60 @@ body {
 }
 .topbar__aside { gap: 7px; }
 .locale {
+  position: relative;
   display: inline-flex;
-  padding: 3px;
+  border-radius: 11px;
+}
+.locale__face {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 34px;
+  padding: 0 8px 0 10px;
   border: 1px solid var(--w2b-line);
   border-radius: 11px;
   background: rgba(255, 255, 255, 0.58);
-}
-.locale__btn {
-  min-width: 29px;
-  height: 28px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--w2b-text-muted);
-  font-size: 9px;
+  color: var(--w2b-text);
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
-.locale__btn.is-active {
-  color: var(--w2b-on-primary);
-  background: var(--w2b-primary);
-  box-shadow: 0 3px 8px rgba(40, 29, 34, 0.14);
+.locale__chev {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: var(--w2b-text-subtle);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
+/* The control itself: full-size hit target, zero pixels of its own. `opacity`
+   and not `display:none` — a hidden select is not focusable and would take the
+   language switch away from the keyboard and from VoiceOver. */
+.locale__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.locale__select:focus-visible + .locale__face,
+.locale:has(.locale__select:focus-visible) .locale__face {
+  outline: 2px solid var(--w2b-focus-ring);
+  outline-offset: 2px;
+}
+.locale:active .locale__face { background: var(--w2b-surface-3); }
+/* The picker's own list is drawn by the OS, which does not inherit the page's
+   colours — say them, or a dark system theme renders white text on white. */
+.locale__select option { color: #000; background: #fff; }
 .bell {
   width: 40px;
   height: 40px;
