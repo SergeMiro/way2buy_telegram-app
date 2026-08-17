@@ -514,6 +514,7 @@
             '</div>' +
           '</div>' +
         '</div>' +
+        markPickerHtml() +
       '</div>' +
       '<header class="topbar">' +
       '<div class="topbar__avatar">' + esc(initials) + '</div>' +
@@ -2542,6 +2543,22 @@
   document.addEventListener('click', async function (e) {
     var t = e.target;
 
+    var markButton = t.closest('[data-mark]');
+    if (markButton) {
+      applyMark(markButton.getAttribute('data-mark'));
+      if (state.config && VIEWS[state.tab]) {
+        $app.innerHTML = VIEWS[state.tab]();
+        revealCards();
+        paintCartBadge(state.cartCount);
+        i18n.localize(document);
+      }
+      // A different face is a different width, so the two lines have to be
+      // measured against each other again.
+      scheduleFit();
+      tg.haptic('light');
+      return;
+    }
+
     var localeButton = t.closest('[data-locale]');
     if (localeButton) {
       i18n.setLocale(localeButton.getAttribute('data-locale'));
@@ -3083,6 +3100,53 @@
     }
   });
 
+  // ── wordmark candidates — TEMPORARY ───────────────────────────────────────
+  //
+  // Eight faces are live at once so the logo can be judged on a real phone
+  // instead of in a mock-up. The picker below is drawn ONLY for somebody who
+  // works here; a client sees one wordmark and no controls. Once a face is
+  // chosen, this list, the picker, the [data-wordmark] blocks in views.css and
+  // seven families in index.html all come out together.
+  var WORDMARK_FONTS = [
+    { key: 'sacramento', name: 'Sacramento' },
+    { key: 'parisienne', name: 'Parisienne' },
+    { key: 'greatvibes', name: 'Great Vibes' },
+    { key: 'italianno',  name: 'Italianno' },
+    { key: 'bodoni',     name: 'Bodoni Moda' },
+    { key: 'playfair',   name: 'Playfair Display' },
+    { key: 'cormorant',  name: 'Cormorant' },
+    { key: 'tenor',      name: 'Tenor Sans' },
+  ];
+  var MARK_KEY = 'w2b:wordmark';
+
+  function currentMark() {
+    try {
+      var saved = window.localStorage.getItem(MARK_KEY);
+      if (saved && WORDMARK_FONTS.some(function (f) { return f.key === saved; })) return saved;
+    } catch (e) { /* storage may be disabled */ }
+    return WORDMARK_FONTS[0].key;
+  }
+
+  function applyMark(key) {
+    document.documentElement.setAttribute('data-wordmark', key);
+    try { window.localStorage.setItem(MARK_KEY, key); } catch (e) { /* ignore */ }
+  }
+
+  function markPickerHtml() {
+    // Admins only. `role` is what the server said this person is.
+    if (!(state.me && state.me.role)) return '';
+    var now = currentMark();
+    var picked = WORDMARK_FONTS.filter(function (f) { return f.key === now; })[0];
+    return '<div class="markpick" role="group" aria-label="Шрифт логотипа">' +
+      WORDMARK_FONTS.map(function (f, i) {
+        return '<button class="markpick__btn' + (f.key === now ? ' is-active' : '') +
+          '" type="button" data-mark="' + esc(f.key) + '" title="' + esc(f.name) + '" ' +
+          'aria-pressed="' + (f.key === now) + '">' + (i + 1) + '</button>';
+      }).join('') +
+      '<span class="markpick__name" data-i18n-skip>' + esc(picked ? picked.name : '') + '</span>' +
+    '</div>';
+  }
+
   // ── the wordmark, measured ────────────────────────────────────────────────
   //
   // The name and the line under it have to be the same width, with their outer
@@ -3147,7 +3211,11 @@
   // later swap on top of that.
   if (document.fonts) {
     if (document.fonts.load) {
-      document.fonts.load('40px Sacramento').then(scheduleFit).catch(function () { /* fallback stays */ });
+      // Ask for the face that is ACTUALLY on screen — with eight candidates
+      // loaded, waiting on a hardcoded one would measure while the chosen face
+      // is still the fallback.
+      var active = (WORDMARK_FONTS.filter(function (f) { return f.key === currentMark(); })[0] || {}).name;
+      if (active) document.fonts.load('40px "' + active + '"').then(scheduleFit).catch(function () { /* fallback stays */ });
     }
     if (document.fonts.ready) document.fonts.ready.then(scheduleFit);
     if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', scheduleFit);
@@ -3170,6 +3238,8 @@
 
   async function boot() {
     tg.ready();
+    // Before anything is drawn, so the wordmark never flashes the default face.
+    applyMark(currentMark());
     try {
       state.config = await api.config();
     } catch (e) {

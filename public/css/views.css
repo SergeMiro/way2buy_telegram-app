@@ -1366,11 +1366,12 @@ body {
   display: flex;
   align-items: baseline;
   color: var(--w2b-text);
-  font-family: var(--w2b-font-script);
-  font-size: 40px;
-  font-weight: 400;
+  font-family: var(--w2b-mark-face, var(--w2b-font-script));
+  font-style: var(--w2b-mark-style, normal);
+  font-size: var(--w2b-mark-size, 40px);
+  font-weight: var(--w2b-mark-weight, 400);
   line-height: 1;
-  letter-spacing: 0;
+  letter-spacing: var(--w2b-mark-track, 0);
   text-transform: lowercase;
   text-indent: 0;
   /* Set by fitWordmark once both lines have been measured. */
@@ -1385,7 +1386,7 @@ body {
   display: inline-block;
   isolation: isolate;
   min-width: 0.5em;
-  font-size: 0.72em;
+  font-size: var(--w2b-two-scale, 0.72em);
   text-align: center;
 }
 .wordmark__sub {
@@ -1425,14 +1426,16 @@ body {
   top: 0;
   left: 50%;
   z-index: 2;
-  width: 21px;
-  height: 15px;
+  /* In em of the digit, so the flag stays in proportion whatever the wordmark
+     is set in — a fixed pixel flag looked like a sticker on the larger scripts. */
+  width: 0.78em;
+  height: 0.56em;
   max-width: none;
   opacity: 0.9;
   pointer-events: none;
   /* Close enough to the digit to belong to it: lifted clear of the stroke, not
      floating off on its own above the word. */
-  transform: translate(-50%, -52%) rotate(-5deg);
+  transform: translate(-50%, var(--w2b-flag-lift, -52%)) rotate(-5deg);
 }
 
 .topbar {
@@ -2176,3 +2179,91 @@ body.is-zooming .fit-row__thumb img { transition: none; }
 .tip--stock .tip__kind { background: var(--w2b-primary); color: var(--w2b-on-primary); }
 .tip--check .tip__kind { background: var(--w2b-accent-soft); color: var(--w2b-gold-strong); }
 .tip__text { font-size: var(--w2b-fs-sm); line-height: var(--w2b-lh-body); color: var(--w2b-text); }
+
+
+/* =============================================================================
+   WORDMARK CANDIDATES — temporary
+   -----------------------------------------------------------------------------
+   Eight faces are loaded at once so the logo can be judged on a real phone
+   rather than in a mock-up. Each variant carries its own metrics because they
+   are not interchangeable: a script and a didone with the same font-size are
+   two different sizes on the screen, and the 2 that reads as "slightly shorter"
+   in a script reads as a subscript in a serif with a small x-height.
+
+   Seven of these blocks, and seven families in index.html, come out as soon as
+   one is chosen. The picker that switches them is admin-only (app.js) — a
+   client never sees it.
+============================================================================= */
+[data-wordmark="sacramento"] {
+  --w2b-mark-face: 'Sacramento', cursive;
+  --w2b-mark-size: 40px; --w2b-two-scale: 0.72em; --w2b-flag-lift: -52%;
+}
+[data-wordmark="parisienne"] {
+  --w2b-mark-face: 'Parisienne', cursive;
+  --w2b-mark-size: 37px; --w2b-two-scale: 0.74em; --w2b-flag-lift: -46%;
+}
+[data-wordmark="greatvibes"] {
+  --w2b-mark-face: 'Great Vibes', cursive;
+  --w2b-mark-size: 35px; --w2b-two-scale: 0.70em; --w2b-flag-lift: -44%;
+}
+[data-wordmark="italianno"] {
+  --w2b-mark-face: 'Italianno', cursive;
+  --w2b-mark-size: 44px; --w2b-two-scale: 0.68em; --w2b-flag-lift: -40%;
+}
+[data-wordmark="bodoni"] {
+  --w2b-mark-face: 'Bodoni Moda', Georgia, serif;
+  --w2b-mark-style: italic; --w2b-mark-track: 0.02em;
+  --w2b-mark-size: 28px; --w2b-two-scale: 0.92em; --w2b-flag-lift: -60%;
+}
+[data-wordmark="playfair"] {
+  --w2b-mark-face: 'Playfair Display', Georgia, serif;
+  --w2b-mark-style: italic; --w2b-mark-track: 0.01em;
+  --w2b-mark-size: 28px; --w2b-two-scale: 0.92em; --w2b-flag-lift: -60%;
+}
+[data-wordmark="cormorant"] {
+  --w2b-mark-face: 'Cormorant Garamond', Georgia, serif;
+  --w2b-mark-style: italic; --w2b-mark-weight: 300; --w2b-mark-track: 0.02em;
+  --w2b-mark-size: 32px; --w2b-two-scale: 0.90em; --w2b-flag-lift: -58%;
+}
+[data-wordmark="tenor"] {
+  --w2b-mark-face: 'Tenor Sans', system-ui, sans-serif;
+  --w2b-mark-track: 0.18em;
+  --w2b-mark-size: 24px; --w2b-two-scale: 0.94em; --w2b-flag-lift: -66%;
+}
+
+/* The picker itself: a row of numbered chips under the lockup, only ever drawn
+   for somebody who works here. */
+.markpick {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  margin: 10px 0 0;
+}
+.markpick__btn {
+  min-width: 22px;
+  padding: 3px 6px;
+  border: 1px solid var(--w2b-line);
+  border-radius: 999px;
+  background: var(--w2b-surface-1);
+  color: var(--w2b-text-subtle);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.markpick__btn.is-active {
+  background: var(--w2b-primary);
+  border-color: var(--w2b-primary);
+  color: var(--w2b-on-primary);
+}
+.markpick__name {
+  width: 100%;
+  text-align: center;
+  margin-top: 2px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--w2b-text-subtle);
+}
