@@ -34,6 +34,7 @@
 import { db, vacuumAnalyze } from './db.js';
 import { parsePostText } from './telegram.js';
 import { fetchChannelPage, sleep, normalizeUsername, keyFor } from './tme.js';
+import * as photos from './photos.js';
 
 // One page is ~3 posts in an album-heavy catalogue and ~16 in a plain one, so
 // four pages is a few seconds of work — comfortably inside a serverless limit.
@@ -112,7 +113,7 @@ async function upsertBatch(rows) {
       -- Judgement calls: kept when a human has made them.
       title       = case when posts.curated then posts.title    else excluded.title    end,
       category    = case when posts.curated then posts.category else excluded.category end,
-      -- BRAND is the one field three different sources can answer for, so plain
+      -- BRAND is the one field three different sources can answer for, so a
       -- plain excluded.brand would be wrong: the caption and the channel title
       -- are both recomputed above and arrive inside excluded, but a brand read off
       -- the PHOTOGRAPH lives only in the row — and excluded.brand is null for
@@ -239,15 +240,30 @@ export async function pruneOutsideWindow(channelKey, cutoff = windowStart()) {
 
   // NOT EXISTS rather than NOT IN: a single NULL post_id makes NOT IN return no
   // rows at all, which would silently turn this into a no-op.
-  const deleted = await db.prepare(`
+  // The rows about to go, so their stored covers can go with them. Storage is
+  // 1 GB and the window is the only thing keeping it bounded: delete the posts
+  // and keep the objects, and the bucket grows forever while the catalogue does
+  // not. RETURNING first, then the objects — a failed cleanup must not keep a
+  // sold-out card in the vitrine.
+  const doomed = await db.prepare(`
     DELETE FROM posts p
      WHERE p.channel = ? AND p.source = 'channel' AND p.created_at < ?
        AND NOT EXISTS (SELECT 1 FROM cart_items  WHERE post_id = p.id)
        AND NOT EXISTS (SELECT 1 FROM cart_events WHERE post_id = p.id)
-       AND NOT EXISTS (SELECT 1 FROM events      WHERE post_id = p.id)`)
-    .run(channelKey, at);
+       AND NOT EXISTS (SELECT 1 FROM events      WHERE post_id = p.id)
+    RETURNING tg_message_id, photos_json`).all(channelKey, at);
 
-  return { retired: retired.changes, deleted: deleted.changes };
+  if (doomed.length && photos.configured()) {
+    const keys = doomed.flatMap((row) => {
+      const list = Array.isArray(row.photos_json) ? row.photos_json : [];
+      return list
+        .map((ref, i) => (photos.isStored(ref) ? photos.keyFor(channelKey, row.tg_message_id, i) : null))
+        .filter(Boolean);
+    });
+    if (keys.length) await photos.remove(keys).catch(() => 0);
+  }
+
+  return { retired: retired.changes, deleted: doomed.length };
 }
 
 /**
@@ -322,7 +338,19 @@ export async function syncChannel(channel, {
     // Deduplicate within the statement: ON CONFLICT DO UPDATE cannot touch the
     // same row twice in one command, and a page can repeat an album's id.
     const byId = new Map(posts.map((p) => [p.messageId, p]));
-    const batch = await upsertBatch([...byId.values()].map((p) => rowFor(channel, p)));
+    // Copy the covers into our own storage BEFORE writing the row, so what gets
+    // saved is a URL that will still resolve next month. The links this page
+    // just handed out are signed and Telegram rotates them — storing them as if
+    // they were permanent is what emptied the vitrine of 94% of its pictures.
+    // photos.persist never throws: if the copy fails the original link is kept,
+    // which is exactly the behaviour that existed before it.
+    const fresh = [...byId.values()];
+    for (const post of fresh) {
+      const done = await photos.persist(channel.key, post.messageId, post.photos);
+      post.photos = done.photos;
+      stats.photosStored = (stats.photosStored || 0) + done.stored;
+    }
+    const batch = await upsertBatch(fresh.map((p) => rowFor(channel, p)));
     stats.added += batch.added;
     stats.updated += batch.updated;
 

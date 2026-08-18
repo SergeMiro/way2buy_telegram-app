@@ -19,11 +19,17 @@
 //    • posts are identified by (channel, tg_message_id), which is a unique
 //      index, so the importer is idempotent by construction.
 //
-//  Photos are stored as the absolute cdn.telesco.pe URLs the page hands out.
-//  They are long-lived but not eternal — the tokens are Telegram's to rotate.
-//  A post whose photo has expired shows the emoji placeholder; the durable fix
-//  is copying the bytes into object storage, which is a bigger decision than
-//  this importer should make on its own.
+//  Photos come off the page as absolute cdn.telesco.pe URLs, and those expire —
+//  the tokens are Telegram's to rotate. This header used to end by saying the
+//  durable fix was copying the bytes into object storage, and that it was a
+//  bigger decision than the importer should make alone. It was, and it was made
+//  the hard way: by 18.08.2026 every one of the 6349 stored links had gone dead
+//  and the vitrine was showing the emoji placeholder for 94% of the shop.
+//
+//  So the links these functions return are now a SOURCE, not a destination:
+//  sync.js hands each cover to photos.js, which copies it into our own bucket
+//  before the row is written. What this file produces is still an expiring URL,
+//  and callers must treat it as one.
 // ─────────────────────────────────────────────────────────────────────────
 
 const PREVIEW = 'https://t.me/s';

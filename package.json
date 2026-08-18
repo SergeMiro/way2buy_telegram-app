@@ -14,7 +14,8 @@
     "import:tme": "node scripts/import-tme.mjs",
     "migrate": "node server/db.js",
     "migrate:from-sqlite": "node scripts/migrate-sqlite-to-postgres.mjs",
-    "brands": "node scripts/backfill-brands.mjs"
+    "brands": "node scripts/backfill-brands.mjs",
+    "photos": "node scripts/backfill-photos.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.6",
-    "better-sqlite3": "^11.8.1"
+    "better-sqlite3": "^11.8.1",
+    "sharp": "^0.35.3"
   }
 }
