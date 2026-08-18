@@ -7,6 +7,11 @@
 //   2. sale older than a day with no cost entered → remind the admin
 //   3. campaign statuses            → activate/expire on schedule
 //   4. a fitting room filled hours ago and never sent → one discount, once
+//   5. cards whose brand nothing has named yet → read the logo off the photo
+//
+//  (5) is the only job that costs money per item, so it is also the only one
+//  that works in a small batch and leaves the rest for the next tick. Without a
+//  GEMINI_API_KEY it reports itself skipped and nothing else changes.
 //
 //  Not a real cron: a single Node process with setInterval, which is right for
 //  a boutique with thousands of customers. On a serverless host (Vercel) there
@@ -19,6 +24,7 @@ import { remindPendingCosts } from './profit.js';
 import { notifyCustomer } from './notify.js';
 import * as campaigns from './campaigns.js';
 import { remindAbandoned } from './abandoned.js';
+import { backfillBrands } from './vision.js';
 
 const MINUTE = 60000;
 const INTERVAL_MS = Number(process.env.SCHEDULER_INTERVAL_MIN || 15) * MINUTE;
@@ -71,6 +77,11 @@ export async function tick(now = Date.now()) {
     result.campaigns = campaigns.reconcileStatus ? await campaigns.reconcileStatus(now) : { skipped: true };
   } catch (e) {
     result.campaigns = { error: String(e.message || e) };
+  }
+  try {
+    result.brands = await backfillBrands();
+  } catch (e) {
+    result.brands = { error: String(e.message || e) };
   }
   lastRun = result;
   await db.prepare(`INSERT INTO scheduler_lock (id, holder, heartbeat_at) VALUES (1, ?, ?)

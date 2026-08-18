@@ -207,7 +207,7 @@ export function parsePrice(text = '') {
 //
 // Within an entry the longer spelling comes first, so "Bottega Veneta" is not
 // matched as "Bottega".
-const BRANDS = [
+export const BRANDS = [
   ['Chanel'],
   ['Dior', 'Christian Dior'],
   ['Hermès', 'Hermes'],
@@ -219,14 +219,14 @@ const BRANDS = [
   ['Balenciaga'],
   ['Céline', 'Celine'],
   ['Fendi'],
-  ['Miu Miu'],
+  ['Miu Miu', 'Miumiu'],
   ['Loewe'],
   ['Chloé', 'Chloe'],
   ['Valentino'],
   ['Givenchy'],
   ['Burberry'],
   ['Versace'],
-  ['Dolce & Gabbana', 'Dolce&Gabbana', 'D&G'],
+  ['Dolce & Gabbana', 'Dolce&Gabbana', 'Dolce Gabbana', 'D&G'],
   ['Michael Kors'],
   ['Marc Jacobs'],
   ['Coach'],
@@ -235,7 +235,7 @@ const BRANDS = [
   ['Moncler'],
   ['Max Mara'],
   ['Brunello Cucinelli'],
-  ['Loro Piana'],
+  ['Loro Piana', 'Loro Piano'],
   ['Stone Island'],
   ['Canada Goose'],
   ['Cartier'],
@@ -255,6 +255,41 @@ const BRANDS = [
   ['Golden Goose'],
   ['Zara'],
   ['Massimo Dutti'],
+  // Added 2026-08-18 from the catalogues themselves. Every one of these was
+  // sitting in the vitrine with its name written plainly in the caption and no
+  // brand on the card, because the list had never heard of it — 1858 cards
+  // between them and the two causes above. The list is the vocabulary of what
+  // this shop actually sells, so it grows from the shop, not from a guess about
+  // what a luxury list ought to contain.
+  ['The Row'],
+  ['Zegna', 'Ermenegildo Zegna'],
+  ['Berluti'],
+  ['Kiton'],
+  ['Omega'],
+  ['Patek Philippe', 'Patek Philipe', 'Patek'],
+  ['Piaget'],
+  ['Graff'],
+  ['Messika'],
+  ['Montblanc', 'Mont Blanc'],
+  ['Zimmermann'],
+  ['Balmain'],
+  ['Schiaparelli'],
+  ['Maison Margiela', 'Margiela'],
+  ['Thom Browne'],
+  ['Brioni'],
+  ['Stefano Ricci'],
+  ['Santoni'],
+  ['Tod\'s', 'Tods'],
+  ['Alaïa', 'Azzedine Alaïa'],
+  ['Aquazzura'],
+  ['Gianvito Rossi'],
+  ['Paris Texas'],
+  ['Emilio Pucci', 'Pucci'],
+  ['Ralph Lauren', 'Polo Ralph Lauren'],
+  ['On Running'],
+  ['Alo', 'Alo Yoga'],
+  ['Agua by Agua Bendita', 'Agua Bendita'],
+  ['Most Romas'],
 ];
 
 // Ukrainian/Russian category words as they appear in the catalogues.
@@ -275,19 +310,63 @@ const CATEGORIES = [
   [/(парфум|аромат|духи)|\b(perfume|fragrance)\b/i, 'парфуми'],
 ];
 
+// Cyrillic letters that are drawn exactly like Latin ones. The catalogues are
+// full of them — «Нermes» with a Cyrillic Н, «Chanеl» with a Cyrillic е,
+// «Valentinо», «BERLUTІ», «Jimmy Choо» — and it is not carelessness: a caption
+// that does not literally spell a trademark is a caption that keyword filters do
+// not flag. Whatever the reason, the shop means Hermès, so the app has to read
+// it as Hermès. 76 cards in one channel hung on this single letter.
+const HOMOGLYPHS = {
+  А: 'A', В: 'B', Е: 'E', З: '3', І: 'I', К: 'K', М: 'M', Н: 'H', О: 'O',
+  Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', Ѕ: 'S', Ј: 'J',
+  а: 'a', в: 'b', е: 'e', і: 'i', к: 'k', м: 'm', о: 'o', р: 'p', с: 'c',
+  у: 'y', х: 'x', ѕ: 's', ј: 'j',
+};
+
+/**
+ * The form a caption is MATCHED in — never the form anything is displayed in.
+ *
+ * Three passes, and each one exists because of captions actually in the
+ * catalogues:
+ *   NFKC       «𝗟𝗢𝗨𝗜𝗦 𝗩𝗨𝗜𝗧𝗧𝗢N», «𝐂𝐚𝐫𝐭𝐢𝐞𝐫», «𝒁𝑰𝑴𝑴𝑬𝑹𝑴𝑨𝑵𝑵» — Telegram's
+ *              styled text is the Mathematical Alphanumeric block, and NFKC
+ *              folds every one of those variants back to plain letters.
+ *   homoglyphs the Cyrillic lookalikes above.
+ *   NFD + drop the accents, so a single «Hermès» entry answers for «Hermes»,
+ *   combining «HERMÈS» and «hermes» alike, and «Alaïa» needs no second spelling.
+ */
+export function foldForMatch(text = '') {
+  return String(text)
+    .normalize('NFKC')
+    .replace(/[\u0400-\u04FF]/g, (ch) => HOMOGLYPHS[ch] ?? ch)
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '');
+}
+
+// Compiled once. The list is long enough now that rebuilding ~90 regexes for
+// every post of every sync is real work for no reason.
+const BRAND_MATCHERS = BRANDS.map((spellings) => [
+  spellings[0],
+  spellings.map((spelling) => new RegExp(
+    // Word-boundary match so "Dior" does not fire inside another word, and "LV"
+    // does not fire inside "LVMH".
+    `(^|[^\\p{L}])${foldForMatch(spelling).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`,
+    'iu')),
+]);
+
 export function detectBrand(text = '') {
-  const s = String(text);
-  for (const spellings of BRANDS) {
-    for (const spelling of spellings) {
-      // Word-boundary match so "Dior" does not fire inside another word, and
-      // "LV" does not fire inside "LVMH".
-      const re = new RegExp(`(^|[^\\p{L}])${spelling.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}]|$)`, 'iu');
-      // The canonical name, not the spelling that matched.
-      if (re.test(s)) return spellings[0];
-    }
+  const folded = foldForMatch(text);
+  for (const [canonical, matchers] of BRAND_MATCHERS) {
+    // The canonical name, not the spelling that matched.
+    for (const re of matchers) if (re.test(folded)) return canonical;
   }
   return null;
 }
+
+/** Every house the vitrine knows, canonical spelling only. vision.js offers this
+ *  list to the model and refuses anything outside it — a free-text answer would
+ *  grow a second «Hermes» chip beside «Hermès» and split the counts. */
+export const BRAND_NAMES = BRANDS.map((spellings) => spellings[0]);
 
 export function detectCategory(text = '') {
   for (const [re, label] of CATEGORIES) if (re.test(text)) return label;
@@ -329,7 +408,27 @@ const capitalise = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 export function parsePostText(text = '', { channelTitle = '' } = {}) {
   const clean = String(text || '').trim();
   const { price, currency } = parsePrice(clean);
-  const brand = detectBrand(clean);
+  // BRAND, in priority order. The caption is the seller's own word and it wins
+  // outright — including when it is wrong, which happens (a Miu Miu bag captioned
+  // «Gucci»). Correcting the channel is not ours to do, so the app repeats what
+  // the channel says and only fills SILENCE.
+  //
+  //   1. the caption            — «Gucci | Size 21x13x7,5cm»
+  //   2. the catalogue's name   — @w2b_hermes is titled «Hermès», so a caption
+  //                               that is nothing but a size still lands on a
+  //                               brand. 126 posts in two channels today.
+  //   3. the photograph         — vision.js, and only where 1 and 2 are silent.
+  //                               Not here: it costs a model call and a network
+  //                               round trip, so it runs in the scheduler over
+  //                               what this function left null. See docs/TODO.md.
+  //
+  // `brandSource` records WHICH of the three answered, and it is what stops the
+  // later steps from arguing with the earlier ones — the backfill only looks at
+  // rows nobody has answered for, and a re-sync knows a stored vision verdict
+  // from a caption it should refresh.
+  const fromText = detectBrand(clean);
+  const brand = fromText || detectBrand(channelTitle);
+  const brandSource = fromText ? 'text' : (brand ? 'channel' : null);
   // A catalogue whose NAME is the category answers what the caption left out.
   // Most cards read "Balenciaga / Size 33-12-12cm" and nothing else, so category
   // was known for one post in four — while «Сумки жіночі» knew the answer all
@@ -345,6 +444,7 @@ export function parsePostText(text = '', { channelTitle = '' } = {}) {
     currency,
     article: parseArticle(clean),
     brand,
+    brandSource,
     category,
   };
 }
@@ -383,10 +483,27 @@ export async function ingestChannelPost(update) {
     // An edit in the channel must show up in the app — that is the whole point
     // of "и наоборот".
     if (edited) {
+      // BRAND AND CATEGORY MUST MOVE WITH THE CAPTION. This update used to
+      // refresh the title and leave them behind, and the result was on the
+      // shelf: cards reading «Gucci · сумка» filed under Saint Laurent, because
+      // the seller had edited a Saint Laurent post into a Gucci one and only
+      // half the card followed. Same ladder as the sync upsert — a human's
+      // correction is untouchable, and a brand read off the photograph survives
+      // a caption that still says nothing.
+      const keepVision = !parsed.brand && ['vision', 'vision-none'].includes(existing.brand_source);
+      const brand = existing.curated || keepVision ? existing.brand : parsed.brand;
+      const brandSource = existing.curated || keepVision ? existing.brand_source : parsed.brandSource;
       await db.prepare(`UPDATE posts SET title=?, body=?, price=COALESCE(?, price), currency=COALESCE(?, currency),
-                  article=COALESCE(?, article), photos_json=COALESCE(?, photos_json), edited_at=? WHERE id=?`)
-        .run(parsed.title, parsed.body, parsed.price, parsed.currency, parsed.article,
-          photos.length ? JSON.stringify(photos) : null, new Date().toISOString(), existing.id);
+                  article=COALESCE(?, article), photos_json=COALESCE(?, photos_json),
+                  brand=?, brand_source=?, category=?, edited_at=? WHERE id=?`)
+        // …and the title obeys `curated` here too. The sync has always respected
+        // it; this path did not, so a channel edit quietly undid a correction
+        // somebody had made in the cabinet.
+        .run(existing.curated ? existing.title : parsed.title,
+          parsed.body, parsed.price, parsed.currency, parsed.article,
+          photos.length ? JSON.stringify(photos) : null,
+          brand, brandSource, existing.curated ? existing.category : parsed.category,
+          new Date().toISOString(), existing.id);
     }
     return existing.id;
   }
@@ -411,13 +528,13 @@ export async function ingestChannelPost(update) {
   }
 
   const info = await db.prepare(`INSERT INTO posts
-    (channel,tg_message_id,title,body,price,currency,image_url,article,brand,category,photos_json,media_group_id,source,status,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'channel','published',?)`)
+    (channel,tg_message_id,title,body,price,currency,image_url,article,brand,brand_source,category,photos_json,media_group_id,source,status,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'channel','published',?)`)
     .run(
       channel.key, post.message_id, parsed.title, parsed.body,
       parsed.price, parsed.currency || 'USD',
       photos.length ? null : '🛍️',
-      parsed.article, parsed.brand, parsed.category,
+      parsed.article, parsed.brand, parsed.brandSource, parsed.category,
       photos.length ? JSON.stringify(photos) : null,
       post.media_group_id ? String(post.media_group_id) : null,
       createdAt,

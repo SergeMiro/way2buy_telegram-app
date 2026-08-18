@@ -366,3 +366,56 @@ test('vacuumAnalyze refuses a table name it did not write itself', async () => {
   // A legal name is accepted and simply does nothing on the in-process driver.
   assert.equal(await vacuumAnalyze('posts'), false);
 });
+
+// A brand read off a photograph exists only in the row: the caption is silent,
+// so `excluded.brand` is null on every subsequent sync. A plain
+// `brand = excluded.brand` therefore erased the model's answer and bought the
+// same call again on the next pass — the expensive way to learn nothing.
+test('a re-sync keeps a brand that came from the photograph', async () => {
+  const silent = () => serve([page([post(301, 'Size 20,5x14x5cm')], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: silent().fetchPage });
+
+  const fresh = await byMsg(301);
+  assert.equal(fresh.brand, null, 'nothing in the caption, nothing in «Сумки жіночі»');
+  assert.equal(fresh.brand_source, null, 'so the backfill will pick it up');
+
+  // The scheduler looks at the photograph and answers.
+  await db.prepare("UPDATE posts SET brand='Miu Miu', brand_source='vision' WHERE id=?").run(fresh.id);
+
+  await syncChannel(await channel(), { pages: 1, fetchPage: silent().fetchPage });
+  const after = await byMsg(301);
+  assert.equal(after.brand, 'Miu Miu', 'the sync must not undo what the model established');
+  assert.equal(after.brand_source, 'vision');
+});
+
+test('a photograph with no legible logo is not paid for twice', async () => {
+  const silent = () => serve([page([post(302, 'Розмір 38')], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: silent().fetchPage });
+  const row = await byMsg(302);
+  await db.prepare("UPDATE posts SET brand_source='vision-none' WHERE id=?").run(row.id);
+
+  await syncChannel(await channel(), { pages: 1, fetchPage: silent().fetchPage });
+  assert.equal((await byMsg(302)).brand_source, 'vision-none',
+    'a verdict of "nothing there" survives, or every sync re-queues the same photo');
+});
+
+test('a caption that gains a brand overrules a stored guess; one that loses it clears', async () => {
+  const named = serve([page([post(303, 'Prada сумка')], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: named.fetchPage });
+  assert.equal((await byMsg(303)).brand, 'Prada');
+  assert.equal((await byMsg(303)).brand_source, 'text');
+
+  // The seller edits the caption down to a size. The brand came from the words
+  // that are now gone, so it goes with them — and the card rejoins the queue.
+  const stripped = serve([page([post(303, 'Size 30x20')], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: stripped.fetchPage });
+  assert.equal((await byMsg(303)).brand, null);
+  assert.equal((await byMsg(303)).brand_source, null);
+
+  // And the other direction: a vision guess yields to a caption that speaks up.
+  await db.prepare("UPDATE posts SET brand='Fendi', brand_source='vision' WHERE channel='bags' AND tg_message_id=303").run();
+  const corrected = serve([page([post(303, 'Prada сумка, розмір 30x20')], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: corrected.fetchPage });
+  assert.equal((await byMsg(303)).brand, 'Prada', 'the seller has the last word');
+  assert.equal((await byMsg(303)).brand_source, 'text');
+});

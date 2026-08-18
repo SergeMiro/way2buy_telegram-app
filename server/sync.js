@@ -62,7 +62,7 @@ export function windowStart(now = Date.now(), months = WINDOW_MONTHS) {
 
 const COLUMNS = [
   'channel', 'tg_message_id', 'title', 'body', 'price', 'currency', 'image_url',
-  'article', 'brand', 'category', 'photos_json', 'source', 'status', 'created_at',
+  'article', 'brand', 'brand_source', 'category', 'photos_json', 'source', 'status', 'created_at',
 ];
 
 function rowFor(channel, post) {
@@ -77,6 +77,7 @@ function rowFor(channel, post) {
     post.photos[0] || '🛍️',
     parsed.article,
     parsed.brand,
+    parsed.brandSource,
     parsed.category,
     post.photos.length ? JSON.stringify(post.photos) : null,
     'channel',
@@ -110,8 +111,25 @@ async function upsertBatch(rows) {
       article     = coalesce(excluded.article, posts.article),
       -- Judgement calls: kept when a human has made them.
       title       = case when posts.curated then posts.title    else excluded.title    end,
-      brand       = case when posts.curated then posts.brand    else excluded.brand    end,
       category    = case when posts.curated then posts.category else excluded.category end,
+      -- BRAND is the one field three different sources can answer for, so plain
+      -- plain excluded.brand would be wrong: the caption and the channel title
+      -- are both recomputed above and arrive inside excluded, but a brand read off
+      -- the PHOTOGRAPH lives only in the row — and excluded.brand is null for
+      -- exactly those posts. Overwriting would erase every vision answer on the
+      -- next sync and buy the same model call again, forever.
+      brand       = case when posts.curated                       then posts.brand
+                         when excluded.brand is not null          then excluded.brand
+                         when posts.brand_source = 'vision'       then posts.brand
+                         else null end,
+      -- …and the same ladder for the provenance, so 'vision-none' survives too:
+      -- a photograph with no legible logo must not be re-queried every sync.
+      -- A caption that LOST its brand still clears a text-derived one (both
+      -- fall through to null), which is the case this is careful about.
+      brand_source = case when posts.curated                      then posts.brand_source
+                          when excluded.brand is not null         then excluded.brand_source
+                          when posts.brand_source in ('vision', 'vision-none') then posts.brand_source
+                          else null end,
       -- A post that had vanished and is back is published again. A post hidden
       -- by hand stays hidden.
       status      = case when posts.status = 'gone' then 'published' else posts.status end,

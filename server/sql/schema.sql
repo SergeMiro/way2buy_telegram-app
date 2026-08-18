@@ -127,6 +127,14 @@ create table if not exists posts (
 -- Anything gained after the first deploy has to say so explicitly, the same rule
 -- the index drops further down follow.
 alter table posts    add column if not exists curated     boolean not null default false;
+-- WHICH of the three sources named the brand — see parsePostText() and vision.js:
+--   'text'        the caption said it. The seller's own word, right or wrong.
+--   'channel'     the caption was silent and the catalogue's name answered.
+--   'vision'      neither did, and the model read a logo off the photograph.
+--   'vision-none' the model looked and found nothing legible. Recorded so the
+--                 same photograph is not paid for twice.
+--   null          nothing has answered yet — this is the backfill's work queue.
+alter table posts    add column if not exists brand_source text;
 alter table channels add column if not exists synced_at   timestamptz;
 -- Where the deep backfill stopped, so «вся історія» resumes instead of re-reading
 -- the newest pages. NULL means "start from the top".
@@ -449,6 +457,12 @@ create index if not exists idx_posts_brand             on posts (brand, created_
   where brand is not null and status = 'published';
 create index if not exists idx_posts_category          on posts (category, created_at desc)
   where category is not null and status = 'published';
+-- The vision backfill's work queue: published cards nobody has named a brand for
+-- yet. Partial and tiny — it shrinks to nothing as the queue is worked off, which
+-- is the point: without it every scheduler tick seq-scans all 6.7k posts to find
+-- the handful left.
+create index if not exists idx_posts_brand_pending     on posts (created_at desc)
+  where brand_source is null and status = 'published';
 -- channel_post webhook: find the row a Telegram edit refers to
 create unique index if not exists uq_posts_channel_msg on posts (channel, tg_message_id)
   where tg_message_id is not null;
