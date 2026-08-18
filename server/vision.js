@@ -20,26 +20,39 @@
 //  small batches, where being slow costs nothing.
 //
 //  WITHOUT A KEY THIS FILE DOES NOTHING. `configured()` is false, the backfill
-//  returns `{ skipped: 'no GEMINI_API_KEY' }`, and the vitrine behaves exactly
-//  as it does today. Adding the key is the whole activation. See docs/TODO.md.
+//  reports itself skipped, and the vitrine behaves exactly as it does today.
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { fetchPhoto, BRAND_NAMES } from './telegram.js';
-
-const KEY = () => process.env.GEMINI_API_KEY || '';
-// Flash: this is logo recognition, not reasoning, and there are ~1900 cards in
-// the queue. The model is an env var because it is the thing most likely to be
-// re-pointed later without touching code.
-const MODEL = () => process.env.W2B_VISION_MODEL || 'gemini-2.0-flash';
-const ENDPOINT = (model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+import { complete, imageMessage, available, NoModelAnswered } from './llm.js';
 
 // How many cards one scheduler tick is allowed to buy. Small on purpose: the
 // tick has a serverless time limit, and a queue that drains over a few hours
 // costs the same as one that drains in ten minutes.
 const BATCH = Number(process.env.W2B_VISION_BATCH || 8);
-const TIMEOUT_MS = Number(process.env.W2B_VISION_TIMEOUT_MS || 20_000);
 
-export const configured = () => Boolean(KEY());
+export const configured = () => available().vision;
+
+/**
+ * The bytes behind one photo reference, whichever kind it is.
+ *
+ * A card's photos are stored two different ways and the difference is invisible
+ * until something tries to read them. Posts that arrived on the webhook hold
+ * Telegram file_ids, which only the Bot API can resolve. Posts imported from the
+ * channel's public page hold ordinary CDN URLs — and those are 6349 of 6730
+ * cards, including every single one still waiting for a brand. A resolver that
+ * only understood file_ids would have looked at ten cards and declared the queue
+ * finished.
+ */
+async function loadPhoto(ref, { fetchImpl = fetch } = {}) {
+  if (!/^https?:/i.test(String(ref))) return fetchPhoto(ref);
+  const res = await fetchImpl(ref);
+  if (!res.ok) throw new Error(`photo ${res.status} ${String(ref).slice(0, 60)}`);
+  return {
+    buffer: Buffer.from(await res.arrayBuffer()),
+    contentType: res.headers.get('content-type') || 'image/jpeg',
+  };
+}
 
 const PROMPT = `You are looking at one product photograph from a fashion boutique.
 
@@ -65,39 +78,21 @@ better answer than a plausible one: this label goes on a shop's price card.`;
  * answer «Miu Miu (Prada Group)», and half a name in a filter chip is worse
  * than no chip.
  */
-export async function brandFromPhoto(fileId, { fetch: fetchImpl = fetch } = {}) {
+export async function brandFromPhoto(photoRef, { fetchImpl } = {}) {
   if (!configured()) return null;
-  const photo = await fetchPhoto(fileId);
+  const photo = await loadPhoto(photoRef, fetchImpl ? { fetchImpl } : {});
   if (!photo?.buffer?.length) return null;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  let json;
-  try {
-    const res = await fetchImpl(`${ENDPOINT(MODEL())}?key=${KEY()}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: PROMPT },
-            { inline_data: { mime_type: photo.contentType || 'image/jpeg', data: photo.buffer.toString('base64') } },
-          ],
-        }],
-        // Deterministic: the same photograph must not name two different houses
-        // on two runs, and there is a single right answer to look for.
-        generationConfig: { temperature: 0, maxOutputTokens: 16 },
-      }),
-    });
-    if (!res.ok) throw new Error(`gemini ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    json = await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-
-  const raw = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-  return normalise(raw);
+  const answer = await complete({
+    chain: 'vision',
+    messages: imageMessage(PROMPT, photo.buffer.toString('base64'), photo.contentType || 'image/jpeg'),
+    // One line is all that is wanted, and a tight cap is also the cheapest way
+    // to stop a talkative model from narrating its way to the name.
+    maxTokens: 24,
+    temperature: 0,
+    ...(fetchImpl ? { fetchImpl } : {}),
+  });
+  return normalise(answer.text);
 }
 
 /** The model's line → a name the vitrine already uses, or null. */
@@ -120,7 +115,7 @@ export function normalise(raw) {
  * on the next tick instead of being mistaken for "nothing there".
  */
 export async function backfillBrands({ limit = BATCH } = {}) {
-  if (!configured()) return { skipped: 'no GEMINI_API_KEY', pending: await pendingCount() };
+  if (!configured()) return { skipped: 'no vision key', pending: await pendingCount() };
 
   const rows = await db.prepare(`
     SELECT id, photos_json FROM posts
@@ -142,9 +137,13 @@ export async function backfillBrands({ limit = BATCH } = {}) {
       if (brand) { out.named += 1; out.brands.push({ id: row.id, brand }); }
       else out.unknown += 1;
     } catch (e) {
-      // Left for the next tick on purpose — see the note above.
+      // Left for the next tick on purpose — see the note above. A
+      // NoModelAnswered carries the whole walk, which is the only way to tell
+      // "the free pools are busy" from "the key is wrong".
       out.failed += 1;
-      out.error = String(e.message || e).slice(0, 160);
+      out.error = e instanceof NoModelAnswered
+        ? `${e.message}: ${e.tried.map((t) => `${t.model} ${t.status || t.error || t.skipped}`).join('; ')}`.slice(0, 300)
+        : String(e.message || e).slice(0, 160);
     }
   }
   out.pending = await pendingCount();

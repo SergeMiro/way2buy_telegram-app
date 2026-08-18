@@ -5,19 +5,22 @@
 //  new customers, revenue, top spenders, who's ONE step from a reward, whose
 //  birthday is near, who's at churn risk, hot interests. This is the fuel.
 //
-//  Step 2 (done here): turn signals → a readable narrative. If GEMINI_API_KEY
-//  is set we ask Gemini to write it (free tier is plenty); otherwise we render
-//  a solid built-in template. Either way `await sendReport()` DMs it to the admins.
+//  Step 2 (done here): turn signals → a readable narrative. A free model writes
+//  it — see llm.js for the chain and why it is ordered that way — and the
+//  built-in template is the floor underneath, not a curiosity: if every model in
+//  the chain is rate-limited, the owner still gets her numbers. Either way
+//  `await sendReport()` DMs it to the supers.
 //
-//  This is the "prepare the ground for AI" layer: the moment a key is added,
-//  the reports get smart — no restructuring needed.
+//  The signals object is the contract between the two halves. Everything the
+//  narrative may state comes from it, and the prompt says so — a report that
+//  invents a name or a sum is worse than no report, because it is read to decide
+//  what to buy.
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { loyaltyFor } from './loyalty.js';
 import { alertIds } from './roles.js';
 import { sendToUser } from './telegram.js';
-
-const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+import { complete, available } from './llm.js';
 
 /** «2026-04-02» from either a Date (Postgres) or an ISO string (SQLite/PGlite). */
 const isoDay = (v) => (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10);
@@ -121,31 +124,53 @@ export function renderReportText(s) {
   return L.join('\n');
 }
 
-async function renderWithGemini(signals) {
-  const prompt = `Ти — асистент бутіка Way2Buy. На основі JSON даних напиши короткий, теплий, конкретний щоденний звіт для власниці українською (з emoji, без води, до 1500 символів). Дай 2-3 конкретні рекомендації дій.\n\nДані:\n${JSON.stringify(signals, null, 2)}`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+/**
+ * The narrative, written by whichever free model answers first.
+ *
+ * The template below is not a fallback of last resort — it is the floor. If the
+ * chain is dry, or a model returns something too short to be a report, the
+ * owner still gets her numbers. A report that arrives in plain prose beats a
+ * report that does not arrive.
+ */
+async function renderWithModel(signals) {
+  const prompt = `Ти — асистент бутіка Way2Buy. На основі JSON даних напиши короткий, теплий, конкретний звіт для власниці українською (з emoji, без води, до 1500 символів). Дай 2-3 конкретні рекомендації дій.
+
+Пиши лише про те, що є в даних. Не вигадуй імен, сум і товарів, яких тут немає — цей звіт читають, щоб приймати рішення про закупівлю.
+
+Дані:
+${JSON.stringify(signals, null, 2)}`;
+
+  const answer = await complete({
+    chain: 'analytics',
+    messages: [{ role: 'user', content: prompt }],
+    maxTokens: 1200,
+    temperature: 0.4,
   });
-  const j = await res.json();
-  const txt = j?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!txt) throw new Error('gemini: empty');
-  return txt;
+  // A model that answered with two words answered with nothing useful.
+  if (answer.text.length < 120) throw new Error(`${answer.model}: завідомо коротка відповідь`);
+  return answer;
 }
 
 export async function buildReport(period = 'day', now = new Date()) {
   const signals = await buildSignals(period, now);
-  let text;
+  let text = renderReportText(signals);
   let engine = 'template';
-  if (GEMINI_KEY) {
-    try { text = await renderWithGemini(signals); engine = 'gemini-1.5-flash'; }
-    catch { text = renderReportText(signals); }
-  } else {
-    text = renderReportText(signals);
+  let fallbackReason = null;
+
+  if (available().analytics) {
+    try {
+      const answer = await renderWithModel(signals);
+      text = answer.text;
+      engine = `${answer.provider}:${answer.model}`;
+    } catch (e) {
+      // Reported rather than swallowed: «the template again» is the symptom of
+      // a dead key or an exhausted quota, and silence about it is how nobody
+      // notices for a month.
+      fallbackReason = String(e.message || e).slice(0, 300);
+      console.warn('[report] model chain failed, template served:', fallbackReason);
+    }
   }
-  return { engine, signals, text };
+  return { engine, signals, text, ...(fallbackReason ? { fallbackReason } : {}) };
 }
 
 export async function sendReport(period = 'day', now = new Date()) {

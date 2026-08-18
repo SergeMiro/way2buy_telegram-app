@@ -20,6 +20,12 @@ import { buildSignals, buildReport, renderReportText } from '../server/ai.js';
 
 await migrate();
 
+// No test in this file may reach a real provider: the report would then depend
+// on a free pool's mood, and a green suite would cost money the day someone
+// puts a paid model in the chain. Cleared before anything imports ai.js.
+delete process.env.OPENROUTER_API_KEY;
+delete process.env.OPENCODE_API_KEY;
+
 const DAY = 86400000;
 const NOW = new Date(Date.UTC(2026, 7, 17, 12));
 const iso = (ms) => new Date(ms).toISOString();
@@ -87,7 +93,7 @@ test('a birthday a week out is flagged, one months away is not', async () => {
 
 test('the rendered text carries the numbers, not just headings', async () => {
   const report = await buildReport('week', NOW);
-  assert.equal(report.engine, 'template', 'no Gemini key in tests');
+  assert.equal(report.engine, 'template', 'no provider key in tests — the floor is what is served');
   assert.ok(report.text.includes('Ірина Зникла'), 'the churn list reached the text');
   assert.ok(report.text.includes('$'), 'money is rendered');
   // renderReportText must survive a database with nothing in it — the first

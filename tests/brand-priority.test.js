@@ -76,23 +76,24 @@ test('only a name the vitrine already uses survives the model', () => {
 });
 
 test('with no API key the backfill is a no-op that still reports the queue', async () => {
-  const before = process.env.GEMINI_API_KEY;
-  delete process.env.GEMINI_API_KEY;
+  const before = { or: process.env.OPENROUTER_API_KEY, oc: process.env.OPENCODE_API_KEY };
+  delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENCODE_API_KEY;
   try {
     assert.equal(configured(), false);
     await db.exec(`INSERT INTO posts (channel,tg_message_id,title,body,brand,brand_source,photos_json,source,status,created_at)
       VALUES ('bags', 900001, 'Сумка', 'Size 20x10', NULL, NULL, '["file-1"]'::jsonb, 'channel', 'published', now())
       ON CONFLICT DO NOTHING;`);
     const r = await backfillBrands();
-    assert.equal(r.skipped, 'no GEMINI_API_KEY');
+    assert.equal(r.skipped, 'no vision key');
     assert.ok(r.pending >= 1, 'the queue is still counted, so the cabinet can show it');
     // And nothing was written: the card is exactly as it was.
     const row = await db.prepare('SELECT brand, brand_source FROM posts WHERE tg_message_id=900001').get();
     assert.equal(row.brand, null);
     assert.equal(row.brand_source, null);
   } finally {
-    if (before === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = before;
+    if (before.or) process.env.OPENROUTER_API_KEY = before.or;
+    if (before.oc) process.env.OPENCODE_API_KEY = before.oc;
   }
 });
 
