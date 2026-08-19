@@ -419,3 +419,33 @@ test('a caption that gains a brand overrules a stored guess; one that loses it c
   assert.equal((await byMsg(303)).brand, 'Prada', 'the seller has the last word');
   assert.equal((await byMsg(303)).brand_source, 'text');
 });
+
+// A card delivered by the bot carries Telegram file_ids, and every one of them
+// resolves forever. A card read from the public page carries links that expire,
+// and only its cover is copied into storage. So a sync must never replace the
+// first kind with the second: that swaps a whole working gallery for a single
+// fast cover, which is exactly what happened to 369 cards before this existed.
+test('a sync does not trade a gallery of file_ids for expiring links', async () => {
+  const served = () => serve([page([post(401, 'Chanel сумка', ['https://cdn4.telesco.pe/file/new-a', 'https://cdn4.telesco.pe/file/new-b'])], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: served().fetchPage });
+
+  // The bot later delivers the same post, so the row now holds file_ids.
+  await db.prepare('UPDATE posts SET photos_json = ?::jsonb WHERE channel=? AND tg_message_id=?')
+    .run(JSON.stringify(['AgACfile1', 'AgACfile2', 'AgACfile3']), 'bags', 401);
+
+  await syncChannel(await channel(), { pages: 1, fetchPage: served().fetchPage });
+  const row = await byMsg(401);
+  assert.deepEqual(row.photos_json, ['AgACfile1', 'AgACfile2', 'AgACfile3'],
+    'all three still resolve; the sync had one permanent slot to offer and three to take away');
+});
+
+test('a card that has only expiring links still accepts a fresher set', async () => {
+  const first = serve([page([post(402, 'Prada сумка', ['https://cdn4.telesco.pe/file/old'])], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: first.fetchPage });
+  assert.deepEqual((await byMsg(402)).photos_json, ['https://cdn4.telesco.pe/file/old']);
+
+  const again = serve([page([post(402, 'Prada сумка', ['https://cdn4.telesco.pe/file/fresh'])], null)]);
+  await syncChannel(await channel(), { pages: 1, fetchPage: again.fetchPage });
+  assert.deepEqual((await byMsg(402)).photos_json, ['https://cdn4.telesco.pe/file/fresh'],
+    'nothing permanent was at stake, so the newer read wins');
+});

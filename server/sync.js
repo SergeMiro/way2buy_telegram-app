@@ -106,7 +106,19 @@ async function upsertBatch(rows) {
       -- added photo shows up in the app.
       body        = excluded.body,
       image_url   = excluded.image_url,
-      photos_json = coalesce(excluded.photos_json, posts.photos_json),
+      -- A LIST OF file_idS OUTRANKS A LIST OF LINKS, and this is not a
+      -- preference. A post delivered by the bot stores Telegram file_ids: every
+      -- photo in the album resolves through /api/photo forever. What this sync
+      -- carries is permanent only in its FIRST slot — photos.js copies the
+      -- cover and the rest stay expiring cdn.telesco.pe links. Overwriting one
+      -- with the other therefore trades a whole working gallery for one fast
+      -- cover, which is how 369 recent cards lost their extra photographs on
+      -- 18.08.2026 before this clause existed.
+      photos_json = case
+        when posts.photos_json is null                  then excluded.photos_json
+        when (posts.photos_json->>0) not like 'http%'    then posts.photos_json
+        else coalesce(excluded.photos_json, posts.photos_json)
+      end,
       price       = coalesce(excluded.price, posts.price),
       currency    = coalesce(excluded.currency, posts.currency),
       article     = coalesce(excluded.article, posts.article),
