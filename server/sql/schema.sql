@@ -804,6 +804,17 @@ comment on column inquiries.deal_status is
 --
 --  The role grants are wrapped in a guard because anon/authenticated exist only
 --  on Supabase; the same file has to run against PGlite in the tests.
+--
+--  And the app does NOT connect as the owner: production uses a dedicated
+--  `w2b_app` role with DML and nothing else. A table created by the owner
+--  therefore starts with no grants for it at all — which is how the settings
+--  table shipped and then failed with «permission denied» while every other
+--  table kept working, because those had been granted by hand once.
+--
+--  So the grant is part of the schema now, inside the same loop: every table in
+--  the list gets w2b_app's privileges on every apply, and a table added next
+--  year cannot repeat that outage. Guarded, like the rest — the role does not
+--  exist in the tests or on a single-role deployment.
 -- ─────────────────────────────────────────────────────────────────────────
 
 do $$
@@ -826,6 +837,10 @@ begin
     execute format('alter table %I enable row level security', t);
     if exists (select 1 from pg_roles where rolname = 'anon') then
       execute format('revoke all on table %I from anon, authenticated', t);
+    end if;
+    -- What the application itself needs, and only that: no DDL, no ownership.
+    if exists (select 1 from pg_roles where rolname = 'w2b_app') then
+      execute format('grant select, insert, update, delete on table %I to w2b_app', t);
     end if;
   end loop;
 
