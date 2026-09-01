@@ -17,6 +17,7 @@
 //  free pools are shared and a model that is busy this minute answers the next.
 //  The walk simply steps over it, which is the whole point of a chain.
 // ─────────────────────────────────────────────────────────────────────────
+import { num } from './settings.js';
 
 const PROVIDERS = {
   openrouter: {
@@ -134,12 +135,17 @@ export async function complete({
   messages,
   maxTokens = 800,
   temperature = 0,
-  timeoutMs = Number(process.env.W2B_LLM_TIMEOUT_MS || 25_000),
-  budgetMs = Number(process.env.W2B_LLM_BUDGET_MS || 60_000),
+  // Both live in `app_settings` («Параметри» → ШІ); null here means "whatever
+  // is configured", and an explicit number still wins for a caller that knows
+  // it has less time than that.
+  timeoutMs = null,
+  budgetMs = null,
   fetchImpl = fetch,
 } = {}) {
   const models = CHAINS[chain];
   if (!models) throw new Error(`невідомий ланцюг «${chain}»`);
+  if (timeoutMs == null) timeoutMs = await num('llm.timeout_ms');
+  if (budgetMs == null) budgetMs = await num('llm.budget_ms');
 
   const startedAt = Date.now();
   const tried = [];

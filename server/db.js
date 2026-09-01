@@ -266,6 +266,15 @@ export async function migrate() {
   const conn = await connection();
   await conn.exec(readFileSync(SCHEMA_PATH, 'utf8'));
   await seedRulesAndChannels();
+  // The tunable numbers, created once from the environment and owned by the
+  // cabinet afterwards. Same rule as the rules and channels above: created if
+  // missing, never overwritten.
+  //
+  // Imported here rather than at the top of the file: settings.js reads through
+  // this very module, and a static import would make the two a cycle. At call
+  // time both are fully evaluated and there is nothing to trip over.
+  const { seedSettings } = await import('./settings.js');
+  await seedSettings();
 }
 
 // Rule and channel rows are configuration, not demo data: created if missing on
@@ -623,6 +632,16 @@ export async function init({ migrateIfNeeded = true } = {}) {
   if (migrateIfNeeded && (ephemeral || process.env.W2B_AUTO_MIGRATE === '1')) {
     await migrate();
   }
+  // The tunable numbers, ALWAYS — including on production, where migrate() is
+  // deliberately not run (DDL does not belong on a request path, so the schema
+  // is applied out of band). One idempotent statement: it creates the rows the
+  // first time, using the environment as their initial value, and does nothing
+  // on every boot after that. Without this a production instance would have an
+  // empty table and would quietly ignore the variables it is configured with.
+  try {
+    const { seedSettings } = await import('./settings.js');
+    await seedSettings();
+  } catch { /* reported inside; the definitions answer until the table exists */ }
   if (ephemeral || process.env.W2B_AUTO_SEED === '1') {
     await seed();
   }

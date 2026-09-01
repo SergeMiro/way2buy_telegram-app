@@ -25,11 +25,14 @@
 import { db } from './db.js';
 import { fetchPhoto, BRAND_NAMES } from './telegram.js';
 import { complete, imageMessage, available, NoModelAnswered } from './llm.js';
+import { num } from './settings.js';
 
 // How many cards one scheduler tick is allowed to buy. Small on purpose: the
 // tick has a serverless time limit, and a queue that drains over a few hours
 // costs the same as one that drains in ten minutes.
-const BATCH = Number(process.env.W2B_VISION_BATCH || 8);
+// How many photographs one tick pays for — a row in `app_settings`
+// («Параметри» → ШІ), because this is the only scheduler job with a per-item
+// cost and the right batch size is something the shop discovers.
 
 export const configured = () => available().vision;
 
@@ -114,7 +117,8 @@ export function normalise(raw) {
  * that ERRORED leaves the row untouched, so a rate limit or an outage is retried
  * on the next tick instead of being mistaken for "nothing there".
  */
-export async function backfillBrands({ limit = BATCH } = {}) {
+export async function backfillBrands({ limit = null } = {}) {
+  if (limit == null) limit = await num('vision.batch');
   if (!configured()) return { skipped: 'no vision key', pending: await pendingCount() };
 
   const rows = await db.prepare(`

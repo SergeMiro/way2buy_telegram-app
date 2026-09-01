@@ -153,6 +153,17 @@
     ['Заявки', 'Requests', 'Заявки'], ['Акції', 'Campaigns', 'Акции'], ['Бонуси', 'Rewards', 'Бонусы'],
     ['Популярне', 'Popular', 'Популярное'], ['Прибуток', 'Profit', 'Прибыль'],
     ['Клієнти', 'Customers', 'Клиенты'], ['Контент', 'Content', 'Контент'], ['Команда', 'Team', 'Команда'],
+    // The three tabs of «Заявки»: where a client is in the purchase itself.
+    ['В процесі', 'In progress', 'В процессе'],
+    ['Купили', 'Bought', 'Купили'], ['Не купили', 'Did not buy', 'Не купили'],
+    // «Параметри» — the tab, and the cards inside it. The labels of individual
+    // settings stay Ukrainian: they are the shop's own wording, they come from
+    // the server, and a dictionary entry per number would go stale the moment
+    // somebody adds one.
+    ['Параметри', 'Settings', 'Параметры'],
+    ['Продажі', 'Sales', 'Продажи'], ['Витрина', 'Vitrine', 'Витрина'],
+    ['Фото', 'Photos', 'Фото'], ['ШІ', 'AI', 'ИИ'],
+    ['Планувальник', 'Scheduler', 'Планировщик'],
     ['Кабінет · супер-адмін', 'Admin · super admin', 'Кабинет · суперадмин'],
     ['Кабінет · адмін', 'Admin · admin', 'Кабинет · админ'],
     ['DEMO — публікації симулюються', 'DEMO — posts are simulated', 'DEMO — публикации симулируются'],

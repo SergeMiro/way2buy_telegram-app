@@ -54,6 +54,14 @@
       // being composed, and how many customers they reach right now.
       presets: [], team: [], draft: null, reach: null,
       analytics: null,
+      // Заявки: which of the three deal tabs is open, how many are in each, the
+      // card whose status is being re-chosen (the pencil), and the one a
+      // reminder link pointed at.
+      dealTab: 'in_progress', dealCounts: null, followupDays: 5,
+      dealEdit: null, dealFocus: null,
+      // «Параметри»: the groups as the server describes them, and which cards
+      // have an unsaved edit in them.
+      settings: null, settingsDirty: {},
       // Per-channel sync progress, keyed by channel: { running, note, error }.
       // A deep backfill is many calls, so the admin needs to see it moving.
       sync: {},
@@ -355,6 +363,93 @@
   }
 
   initImageLoupe();
+
+  // ── swiping a deal card: → купив, ← не купив ──────────────────────────────
+  //
+  // The person answering these cards is doing it on a phone, between Telegram
+  // chats, and the answer is binary. A swipe is the fastest possible way to give
+  // it — and it is an ALTERNATIVE, never the only way: the same two answers are
+  // buttons on every card, because a gesture nobody discovers is not a feature.
+  //
+  // The two rules that keep it from fighting the page: `touch-action: pan-y` on
+  // the card (the browser keeps vertical scrolling and hands us the horizontal
+  // gesture, so nothing has to be prevented), and a dominance test before the
+  // first pixel of movement is honoured — a mostly-vertical drag releases the
+  // card and scrolls the list as usual.
+  function initDealSwipe() {
+    var THRESHOLD = 72;      // px of travel before a release is a decision
+    var DOMINANCE = 1.6;     // how much horizontal must beat vertical
+    var SLOP = 12;           // px of noise before the direction is judged
+    var wrap = null, card = null, dealId = 0, pointerId = null;
+    var startX = 0, startY = 0, dx = 0, decided = false;
+
+    function reset(animate) {
+      if (card) {
+        card.style.transition = animate ? 'transform .18s ease' : '';
+        card.style.transform = '';
+      }
+      if (wrap) wrap.classList.remove('is-swiping', 'is-yes', 'is-no');
+      wrap = card = null;
+      pointerId = null;
+      dx = 0;
+      decided = false;
+    }
+
+    document.addEventListener('pointerdown', function (e) {
+      if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      if (!e.target.closest) return;
+      var el = e.target.closest('[data-deal-card]');
+      // Only an open deal, and only outside its own controls: a tap on ✓ is a
+      // tap on ✓ even if the finger slides a little.
+      if (!el || el.getAttribute('data-deal-current') !== 'in_progress') return;
+      if (e.target.closest('button, a')) return;
+      wrap = el;
+      card = el.querySelector('.deal__card');
+      if (!card) { wrap = null; return; }
+      dealId = Number(el.getAttribute('data-deal-card'));
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      dx = 0;
+      decided = false;
+    }, { passive: true });
+
+    document.addEventListener('pointermove', function (e) {
+      if (e.pointerId !== pointerId || !card) return;
+      var mx = e.clientX - startX;
+      var my = e.clientY - startY;
+      if (!decided) {
+        // Vertical intent wins outright — the list must still scroll.
+        if (Math.abs(my) > SLOP && Math.abs(my) >= Math.abs(mx)) { reset(false); return; }
+        if (Math.abs(mx) < SLOP || Math.abs(mx) < Math.abs(my) * DOMINANCE) return;
+        decided = true;
+        wrap.classList.add('is-swiping');
+        card.style.transition = '';
+      }
+      dx = mx;
+      card.style.transform = 'translateX(' + dx + 'px)';
+      wrap.classList.toggle('is-yes', dx > THRESHOLD);
+      wrap.classList.toggle('is-no', dx < -THRESHOLD);
+    }, { passive: true });
+
+    document.addEventListener('pointerup', function (e) {
+      if (e.pointerId !== pointerId || !card) return;
+      var travelled = dx;
+      var id = dealId;
+      var acted = decided;
+      // Let go first: the card springs back, and the repaint that follows a
+      // successful call is what actually removes it from this tab.
+      reset(true);
+      if (!acted) return;
+      if (travelled > THRESHOLD) setDeal(id, 'bought');
+      else if (travelled < -THRESHOLD) setDeal(id, 'not_bought');
+    }, { passive: true });
+
+    document.addEventListener('pointercancel', function () { reset(true); }, { passive: true });
+    window.addEventListener('blur', function () { reset(true); });
+  }
+
+  initDealSwipe();
 
   // The confirmation after an inquiry is sent.
   //
@@ -1210,15 +1305,77 @@
     { key: 'customers', label: 'Клієнти',    need: 'customers.read' },
     { key: 'content',   label: 'Контент',    need: 'catalog.read' },
     { key: 'team',      label: 'Команда',    need: 'team.manage' },
+    { key: 'settings',  label: 'Параметри',  need: 'settings.manage' },
   ];
   var visibleAdminTabs = function () {
     return ADMIN_TABS.filter(function (t) { return can(t.need); });
   };
 
+  // The three states of a deal, and how each one reads on a card.
+  var DEAL_TABS = [
+    { key: 'in_progress', label: 'В процесі', icon: '🕔', pill: 'pill--warn' },
+    { key: 'bought',      label: 'Купили',    icon: '✓',  pill: 'pill--ok' },
+    { key: 'not_bought',  label: 'Не купили', icon: '✕',  pill: '' },
+  ];
+  var dealTab = function (key) {
+    return DEAL_TABS.filter(function (t) { return t.key === key; })[0] || DEAL_TABS[0];
+  };
+  // The tab is a heading («Купили»), the card is about one person («купив»).
+  var DEAL_PAST = { in_progress: 'у процесі', bought: 'купив', not_bought: 'не купив' };
+  // Ukrainian plurals that stay Ukrainian. The shared plural() runs its forms
+  // through the translator, which is right inside a sentence the dictionary
+  // knows — and wrong here: these words sit in Ukrainian sentences that are not
+  // translated (like «Відповіли» and «Закрити» beside them), and «У процесі 3
+  // days» is neither language.
+  function pluralUk(n, forms) {
+    var a = Math.abs(n) % 100;
+    var b = a % 10;
+    if (a > 10 && a < 20) return forms[2];
+    if (b > 1 && b < 5) return forms[1];
+    if (b === 1) return forms[0];
+    return forms[2];
+  }
+  function daysSince(iso) {
+    if (!iso) return 0;
+    var d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    return isNaN(d) || d < 0 ? 0 : d;
+  }
   // ── Заявки: what Dasha and Maryna both work from ──────────────────────────
+  //
+  // One section, three tabs, and the tab a client is in IS their deal status:
+  // sending an inquiry puts them in «В процесі», and the ✓ / ✕ on the card (or a
+  // swipe) moves them to «Купили» / «Не купили». Nothing here is one-way — the
+  // pencil re-opens the choice, because the person tapping is doing it from a
+  // phone between messages and will sometimes tap the wrong one.
   function adminInquiriesHtml(a) {
-    var html = '<div class="section-title">Заявки від клієнтів</div>';
-    if (!a.inquiries.length) return html + '<div class="empty">Заявок ще немає.</div>';
+    var counts = a.dealCounts || {};
+    var days = a.followupDays || 5;
+
+    var html = '<div class="section-title">Заявки від клієнтів</div>' +
+      '<div class="seg" style="margin-bottom:var(--w2b-space-3)">' +
+        DEAL_TABS.map(function (t) {
+          var n = counts[t.key];
+          // The label is its own text node so the translator can find it: it
+          // matches whole nodes, and «🕔 В процесі · 3» is not an entry.
+          return '<button class="seg__btn' + (a.dealTab === t.key ? ' is-active' : '') +
+            '" data-deal-tab="' + t.key + '">' + t.icon + ' <span>' + esc(t.label) + '</span>' +
+            (n ? ' · ' + n : '') + '</button>';
+        }).join('') +
+      '</div>';
+
+    if (a.dealTab === 'in_progress') {
+      html += '<div class="panel__note" style="margin-bottom:var(--w2b-space-3)">' +
+        'Клієнт потрапляє сюди, коли надсилає заявку. Купив — свайп праворуч або ✓, ' +
+        'не купив — свайп ліворуч або ✕. Якщо ще не вирішилось, не робіть нічого: ' +
+        'нагадаємо через ' + days + ' ' + pluralUk(days, ['день', 'дні', 'днів']) + '.' +
+      '</div>';
+    }
+
+    if (!a.inquiries.length) {
+      return html + '<div class="empty">' +
+        (a.dealTab === 'in_progress' ? 'Відкритих заявок немає.' : 'Тут поки порожньо.') +
+        '</div>';
+    }
 
     return html + a.inquiries.map(function (q) {
       // The same link the DM carries. Whoever answers should be one tap from
@@ -1232,27 +1389,82 @@
       }).join('<br/>');
       var STATUS = { new: ['🆕', 'нова'], answered: ['💬', 'відповіли'], closed: ['✅', 'закрита'] };
       var s = STATUS[q.status] || ['•', q.status];
+      var deal = q.dealStatus || 'in_progress';
+      var dt = dealTab(deal);
+      var open = daysSince(q.createdAt);
+      var editing = a.dealEdit === q.id;
+      var focused = a.dealFocus === q.id;
 
-      return '<div class="panel">' +
-        '<div class="panel__head">' +
-          '<div class="panel__title">' + esc(q.customerName || ('#' + q.customerId)) + ' · ' +
-            q.itemsCount + ' поз.</div>' +
-          '<span class="pill' + (q.status === 'new' ? ' pill--warn' : ' pill--ok') + '">' +
-            s[0] + ' ' + esc(s[1]) + '</span>' +
-        '</div>' +
-        '<div class="panel__note">' + items +
-          (q.message ? '<br/><br/>Питання клієнта:<br/>«' + esc(q.message) + '»' : '') +
-          (q.promoLabel ? '<br/><br/>Знижка: ' + esc(q.promoLabel) : '') +
-          (q.phone ? '<br/>📞 ' + esc(q.phone) : '') +
-          '<br/>' + esc(timeAgo(q.createdAt)) +
-        '</div>' +
-        '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
-          (q.status === 'new'
-            ? '<button class="btn btn--ghost" data-inquiry="' + q.id + '" data-inquiry-status="answered">Відповіли</button>'
-            : '') +
-          (q.status !== 'closed'
-            ? '<button class="btn btn--ghost" data-inquiry="' + q.id + '" data-inquiry-status="closed">Закрити</button>'
-            : '') +
+      // What the deal line says under the items. In «В процесі» the number of
+      // days is the whole point; once it is settled, who settled it and when.
+      var dealNote = deal === 'in_progress'
+        ? 'У процесі ' + open + ' ' + pluralUk(open, ['день', 'дні', 'днів']) +
+          (q.followupCount ? ' · нагадувань: ' + q.followupCount : '')
+        : dt.icon + ' ' + DEAL_PAST[deal] +
+          (q.dealStatusAt ? ' · ' + dateShort(q.dealStatusAt) : '') +
+          // Who said so — on a settled deal only. On an open one the id would
+          // be whoever last corrected it, which says nothing about its state.
+          (q.dealStatusBy ? ' (' + q.dealStatusBy + ')' : '');
+
+      // The choice, re-opened by the pencil. The current status is shown as
+      // active rather than hidden, so the row always has three options in the
+      // same three places — a control that changes shape between taps is a
+      // control this audience stops trusting.
+      var editRow = '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+        DEAL_TABS.map(function (t) {
+          return '<button class="btn ' + (t.key === deal ? 'btn--primary' : 'btn--ghost') +
+            '" data-deal="' + q.id + '" data-deal-status="' + t.key + '">' +
+            t.icon + ' ' + t.label + '</button>';
+        }).join('') +
+        '<button class="btn btn--ghost" data-deal-edit="0">Скасувати</button>' +
+      '</div>';
+
+      var dealControls = editing ? editRow
+        : deal === 'in_progress'
+          ? '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+              '<button class="btn btn--primary" data-deal="' + q.id + '" data-deal-status="bought">✓ Купив</button>' +
+              '<button class="btn btn--ghost" data-deal="' + q.id + '" data-deal-status="not_bought">✕ Не купив</button>' +
+            '</div>'
+          : '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+              '<button class="btn btn--ghost" data-deal-edit="' + q.id + '">✏️ Змінити статус</button>' +
+            '</div>';
+
+      // The swipe layer. The hints sit behind the card and are revealed by the
+      // card moving off them, so there is nothing to animate but one transform.
+      // Only an open deal is swipeable: a settled one changes through the
+      // pencil, where the choice is deliberate and visible.
+      return '<div class="deal' + (focused ? ' is-focused' : '') + '"' +
+          ' data-deal-card="' + q.id + '" data-deal-current="' + deal + '">' +
+        (deal === 'in_progress'
+          ? '<div class="deal__hint deal__hint--yes">✓ Купив</div>' +
+            '<div class="deal__hint deal__hint--no">✕ Не купив</div>'
+          : '') +
+        '<div class="panel deal__card">' +
+          '<div class="panel__head">' +
+            '<div class="panel__title">' + esc(q.customerName || ('#' + q.customerId)) + ' · ' +
+              q.itemsCount + ' поз.</div>' +
+            '<span class="pill' + (dt.pill ? ' ' + dt.pill : '') + '">' +
+              dt.icon + ' <span>' + esc(dt.label) + '</span></span>' +
+          '</div>' +
+          '<div class="panel__note">' + items +
+            (q.message ? '<br/><br/>Питання клієнта:<br/>«' + esc(q.message) + '»' : '') +
+            (q.promoLabel ? '<br/><br/>Знижка: ' + esc(q.promoLabel) : '') +
+            (q.phone ? '<br/>📞 ' + esc(q.phone) : '') +
+            '<br/>' + esc(timeAgo(q.createdAt)) + ' · ' + esc(dealNote) +
+          '</div>' +
+          dealControls +
+          // Answering the client is a different job from closing the sale, so
+          // it keeps its own row and its own words.
+          '<div class="inline" style="margin-top:var(--w2b-space-2)">' +
+            '<span class="pill' + (q.status === 'new' ? ' pill--warn' : ' pill--ok') + '">' +
+              s[0] + ' ' + esc(s[1]) + '</span>' +
+            (q.status === 'new'
+              ? '<button class="btn btn--ghost" data-inquiry="' + q.id + '" data-inquiry-status="answered">Відповіли</button>'
+              : '') +
+            (q.status !== 'closed'
+              ? '<button class="btn btn--ghost" data-inquiry="' + q.id + '" data-inquiry-status="closed">Закрити</button>'
+              : '') +
+          '</div>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -1664,6 +1876,68 @@
       '</form>');
   }
 
+  // ── Параметри: every tunable number, drawn from what the server describes ──
+  //
+  // This screen has no knowledge of any individual setting. The server sends
+  // groups of { key, label, hint, kind, min, max, step, value, def }, and adding
+  // a setting later is one entry in server/settings.js — nothing here changes.
+  //
+  // A card at a time, one «Зберегти» per card, and only the fields that actually
+  // changed are sent: Marina edits one number and presses one button, and a
+  // half-typed value in another card cannot travel with it.
+  var SETTING_UNIT = {
+    days: 'днів', hours: 'годин', minutes: 'хв', months: 'міс',
+    ms: 'мс', percent: '%', usd: '$', px: 'px', mb: 'МБ', count: 'шт',
+  };
+
+  function adminSettingsHtml(a) {
+    var html = '<div class="section-title">Параметри</div>';
+    if (!a.settings) return html + '<div class="empty">Завантаження…</div>';
+
+    html += '<div class="panel"><div class="panel__note">' +
+      'Тут числа, якими живе застосунок. Раніше кожне з них можна було змінити ' +
+      'лише перевиданням застосунку — тепер достатньо вписати нове і натиснути ' +
+      '«Зберегти». Діє одразу, перезапуск не потрібен.' +
+    '</div></div>';
+
+    html += (a.settings.groups || []).map(function (g) {
+      return '<div class="panel" data-settings-group="' + esc(g.title) + '">' +
+        '<div class="panel__head"><div class="panel__title">' + esc(g.title) + '</div></div>' +
+        g.items.map(function (it) {
+          var unit = SETTING_UNIT[it.kind] || '';
+          return '<label class="field" style="margin-bottom:var(--w2b-space-3)">' +
+            '<span class="field__label">' + esc(it.label) +
+              (unit ? ', ' + esc(unit) : '') + '</span>' +
+            '<input class="field__input" type="number" inputmode="decimal"' +
+              ' data-setting="' + esc(it.key) + '"' +
+              ' value="' + esc(String(it.value)) + '"' +
+              ' min="' + it.min + '" max="' + it.max + '" step="' + it.step + '"/>' +
+            '<span class="field__hint">' +
+              (it.hint ? esc(it.hint) + ' ' : '') +
+              'Від ' + it.min + ' до ' + it.max + '. ' +
+              (it.isDefault ? 'Зараз стандартне значення.' : 'Стандартне — ' + it.def + '.') +
+            '</span>' +
+            (it.isDefault ? '' :
+              '<button class="btn btn--ghost btn--sm" type="button" style="margin-top:var(--w2b-space-2)"' +
+              ' data-setting-reset="' + esc(it.key) + '">Повернути ' + it.def + '</button>') +
+          '</label>';
+        }).join('') +
+        '<button class="btn btn--primary" data-settings-save="' + esc(g.title) + '">Зберегти</button>' +
+      '</div>';
+    }).join('');
+
+    var sch = a.settings.scheduler;
+    if (sch) {
+      html += '<div class="panel"><div class="panel__note">' +
+        'Планувальник: ' + (sch.running ? 'працює' : 'не запущено') +
+        ' · крок ' + sch.intervalMinutes + ' хв' +
+        (sch.lastRun && sch.lastRun.at ? ' · останній прохід ' + esc(timeAgo(sch.lastRun.at)) : '') +
+        '. На Vercel постійного процесу немає — там проходи робить зовнішній cron.' +
+      '</div></div>';
+    }
+    return html;
+  }
+
   // ── Бонуси: the $ ⇄ % switch for both rules and every holiday ─────────────
   function adminBonusesHtml(a) {
     var html = '<div class="section-title">Бонуси</div>';
@@ -1964,6 +2238,7 @@
     else if (a.adminTab === 'promos') html += adminPromosHtml(a);
     else if (a.adminTab === 'team') html += adminTeamHtml(a);
     else if (a.adminTab === 'bonuses') html += adminBonusesHtml(a);
+    else if (a.adminTab === 'settings') html += adminSettingsHtml(a);
     else html += '<div class="empty">Тут для вас поки нічого немає.</div>';
 
     return html + '</div>';
@@ -2362,7 +2637,7 @@
         state.admin.channels = content[1].channels || [];
       }
       if (state.admin.adminTab === 'inquiries' && can('inquiries.read')) {
-        state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+        await loadInquiries();
       }
       if (state.admin.adminTab === 'stats' && can('popular.read')) {
         state.admin.analytics = await api.admin.analytics();
@@ -2372,6 +2647,9 @@
       }
       if (state.admin.adminTab === 'team' && can('team.manage')) {
         state.admin.team = (await api.admin.team()).team || [];
+      }
+      if (state.admin.adminTab === 'settings' && can('settings.manage')) {
+        state.admin.settings = await api.admin.settings();
       }
     }
   }
@@ -2517,6 +2795,38 @@
   async function loadPopular() {
     var r = await api.admin.popular({ period: state.admin.popularPeriod });
     state.admin.popular = r;
+  }
+
+  // One read answers the list AND the three tab counters, so switching tabs
+  // never shows a stale number next to a fresh list.
+  async function loadInquiries() {
+    var r = await api.admin.inquiries(state.admin.dealTab);
+    state.admin.inquiries = r.inquiries || [];
+    state.admin.dealCounts = r.deals || null;
+    if (r.followupDays) state.admin.followupDays = r.followupDays;
+  }
+
+  // Купив / не купив / назад у процес. One path for the buttons, the pencil and
+  // the swipe, so all three behave identically and there is one place where a
+  // failed call is reported.
+  var DEAL_TOAST = { in_progress: 'Повернуто в процес', bought: 'Купив ✓', not_bought: 'Не купив ✕' };
+  async function setDeal(id, status) {
+    if (!id || !status) return;
+    try {
+      await api.admin.setDealStatus(id, status);
+      state.admin.dealEdit = null;
+      state.admin.dealFocus = null;
+      await loadInquiries();
+      $app.innerHTML = renderAdmin();
+      tg.haptic('success');
+      toast(DEAL_TOAST[status] || 'Статус оновлено');
+    } catch (err) {
+      tg.haptic('error');
+      // The card was dragged off its place by the swipe; the repaint puts every
+      // card back where it belongs, which is the honest picture after a failure.
+      $app.innerHTML = renderAdmin();
+      toast(err.message, 'error');
+    }
   }
 
   var VIEWS = {
@@ -2715,10 +3025,94 @@
           Number(inqStatus.getAttribute('data-inquiry')),
           inqStatus.getAttribute('data-inquiry-status')
         );
-        state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+        await loadInquiries();
         $app.innerHTML = renderAdmin();
         toast('Статус заявки оновлено');
       } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    // ── «Параметри»: save one card ──
+    //
+    // Only what actually changed is sent. The card knows its own inputs, and the
+    // value the server last reported sits on each one, so «Зберегти» on an
+    // untouched card is a no-op rather than seventeen redundant writes.
+    var setSave = t.closest('[data-settings-save]');
+    if (setSave) {
+      var card = setSave.closest('[data-settings-group]');
+      var values = {};
+      var invalid = null;
+      var inputs = card ? card.querySelectorAll('[data-setting]') : [];
+      for (var i = 0; i < inputs.length; i += 1) {
+        var el = inputs[i];
+        var key = el.getAttribute('data-setting');
+        var raw = String(el.value).trim().replace(',', '.');
+        if (raw === '' || isNaN(Number(raw))) { invalid = el; break; }
+        var v = Number(raw);
+        var lo = Number(el.getAttribute('min'));
+        var hi = Number(el.getAttribute('max'));
+        if (v < lo || v > hi) { invalid = el; break; }
+        // The current server value, straight off the rendered attribute.
+        if (String(v) !== String(Number(el.getAttribute('value')))) values[key] = v;
+      }
+      if (invalid) {
+        invalid.focus();
+        tg.haptic('error');
+        toast('Перевірте значення: ' + invalid.getAttribute('min') + '–' + invalid.getAttribute('max'), 'error');
+        return;
+      }
+      if (!Object.keys(values).length) { toast('Нічого не змінилось'); return; }
+      setSave.disabled = true;
+      try {
+        state.admin.settings = await api.admin.saveSettings(values);
+        $app.innerHTML = renderAdmin();
+        toast('Збережено');
+      } catch (err) {
+        setSave.disabled = false;
+        toast(err.message, 'error');
+      }
+      return;
+    }
+
+    var setReset = t.closest('[data-setting-reset]');
+    if (setReset) {
+      try {
+        state.admin.settings = await api.admin.resetSetting(setReset.getAttribute('data-setting-reset'));
+        $app.innerHTML = renderAdmin();
+        toast('Повернуто стандартне значення');
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    // ── the three deal tabs ──
+    var dTab = t.closest('[data-deal-tab]');
+    if (dTab) {
+      state.admin.dealTab = dTab.getAttribute('data-deal-tab');
+      state.admin.dealEdit = null;
+      state.admin.dealFocus = null;
+      // Repainted twice on purpose: once so the tab reacts to the tap
+      // immediately, once when its list arrives.
+      $app.innerHTML = renderAdmin();
+      try {
+        await loadInquiries();
+        $app.innerHTML = renderAdmin();
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    // ── ✏️ re-open the choice on a settled deal (0 = cancel) ──
+    var dEdit = t.closest('[data-deal-edit]');
+    if (dEdit) {
+      var editId = Number(dEdit.getAttribute('data-deal-edit'));
+      state.admin.dealEdit = editId || null;
+      $app.innerHTML = renderAdmin();
+      return;
+    }
+
+    // ── ✓ / ✕ / back to «в процесі» ──
+    var dSet = t.closest('[data-deal-status]');
+    if (dSet) {
+      await setDeal(Number(dSet.getAttribute('data-deal')), dSet.getAttribute('data-deal-status'));
       return;
     }
 
@@ -2775,7 +3169,7 @@
       try {
         if (key === 'popular') { await loadPopular(); $app.innerHTML = renderAdmin(); }
         if (key === 'inquiries') {
-          state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
+          await loadInquiries();
           $app.innerHTML = renderAdmin();
         }
         if (key === 'content') {
@@ -2796,6 +3190,10 @@
         }
         if (key === 'team') {
           state.admin.team = (await api.admin.team()).team || [];
+          $app.innerHTML = renderAdmin();
+        }
+        if (key === 'settings') {
+          state.admin.settings = await api.admin.settings();
           $app.innerHTML = renderAdmin();
         }
       } catch (err) { toast(err.message, 'error'); }
@@ -3239,6 +3637,27 @@
 
     $nav.hidden = false;
     paintCartBadge(state.me.cartCount || 0);
+
+    // «Відкрити заявку» from a follow-up DM: ?deal=<id> lands straight on that
+    // card. The tab is read from the deal itself rather than assumed, so a link
+    // opened after somebody already answered still finds it — in «Купили» or
+    // «Не купили» — instead of showing an empty «В процесі».
+    var wanted = Number(new URLSearchParams(window.location.search).get('deal') || 0);
+    if (wanted && can('inquiries.read')) {
+      try {
+        var one = ((await api.admin.inquiry(wanted)).inquiries || [])[0];
+        state.admin.adminTab = 'inquiries';
+        state.admin.dealTab = (one && one.dealStatus) || 'in_progress';
+        state.admin.dealFocus = wanted;
+        await go('admin');
+        // The card is somewhere down a list; bring it into view and let the
+        // highlight say which one the message was about.
+        var el = document.querySelector('[data-deal-card="' + wanted + '"]');
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+        return;
+      } catch (e) { /* an id that no longer exists just opens the app normally */ }
+    }
+
     // Catalogues first: browsing pictures is what the client came for, and the
     // discounts tab is one tap away.
     await go(state.me.registered ? 'catalog' : 'home');

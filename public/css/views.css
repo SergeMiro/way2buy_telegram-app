@@ -2221,3 +2221,56 @@ body.is-zooming .fit-row__thumb img { transition: none; }
 .tip--stock .tip__kind { background: var(--w2b-primary); color: var(--w2b-on-primary); }
 .tip--check .tip__kind { background: var(--w2b-accent-soft); color: var(--w2b-gold-strong); }
 .tip__text { font-size: var(--w2b-fs-sm); line-height: var(--w2b-lh-body); color: var(--w2b-text); }
+
+/* ── Заявки: a deal card you can answer with a swipe ───────────────────────
+   The card is the only thing that moves; the two answers lie underneath it and
+   are revealed by it moving off them, so the whole gesture is one transform and
+   nothing reflows. `touch-action: pan-y` is what makes the two gestures
+   coexist: the browser keeps the vertical scroll and hands the horizontal drag
+   to the script, which is why nothing here has to prevent a default. */
+.deal {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--w2b-radius-md);
+}
+.deal + .deal { margin-top: var(--w2b-space-2); }
+.deal__card {
+  position: relative;
+  touch-action: pan-y;
+  will-change: transform;
+}
+.deal__hint {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--w2b-space-4);
+  font-size: var(--w2b-fs-sm);
+  font-weight: 700;
+  letter-spacing: var(--w2b-ls-caps);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.deal__hint--yes { left: 0;  color: var(--w2b-ok); }
+.deal__hint--no  { right: 0; color: var(--w2b-danger-text); }
+/* Visible only while a drag is actually under way, and the one being committed
+   to is the one that lights up — so letting go says which answer it will be. */
+.deal.is-swiping .deal__hint { opacity: .45; }
+.deal.is-yes .deal__hint--yes,
+.deal.is-no  .deal__hint--no { opacity: 1; }
+
+/* The card a reminder link pointed at. It fades on its own: the highlight
+   answers "which one did the message mean" and then stops being useful. */
+.deal.is-focused .deal__card {
+  box-shadow: inset 0 0 0 2px var(--w2b-warn);
+  animation: deal-focus 2.4s ease-out 1 forwards;
+}
+@keyframes deal-focus {
+  0%, 60% { box-shadow: inset 0 0 0 2px var(--w2b-warn); }
+  100%    { box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deal__card { transition: none !important; }
+  .deal.is-focused .deal__card { animation: none; }
+}

@@ -163,8 +163,20 @@
       setCost: function (purchaseId, form) { return request('POST', '/api/admin/purchases/' + purchaseId + '/cost', form); },
 
       // ── Dasha's queue + what clients actually want ──
-      inquiries: function (status) { return request('GET', '/api/admin/inquiries', undefined, status ? { status: status } : {}); },
+      // `deal` is one of the three tabs: 'in_progress' | 'bought' | 'not_bought'.
+      inquiries: function (deal, status) {
+        var q = {};
+        if (deal) q.deal = deal;
+        if (status) q.status = status;
+        return request('GET', '/api/admin/inquiries', undefined, q);
+      },
+      // One inquiry by id — what a «Відкрити заявку» link resolves.
+      inquiry: function (id) { return request('GET', '/api/admin/inquiries', undefined, { id: id }); },
       setInquiryStatus: function (id, status) { return request('PATCH', '/api/admin/inquiries/' + id, { status: status }); },
+      // Купив / не купив / назад у процес — one call, both directions.
+      setDealStatus: function (id, status) {
+        return request('PATCH', '/api/admin/inquiries/' + id + '/deal', { status: status });
+      },
       // period: 'month' | 'year' | 'all', or { from, to }
       popular: function (query) { return request('GET', '/api/admin/popular', undefined, query || {}); },
 
@@ -194,6 +206,12 @@
       addMember: function (form) { return request('POST', '/api/admin/team', form); },
       setMember: function (tgId, patch) { return request('PATCH', '/api/admin/team/' + encodeURIComponent(tgId), patch); },
       removeMember: function (tgId) { return request('DELETE', '/api/admin/team/' + encodeURIComponent(tgId)); },
+
+      // ── «Параметри»: every tunable number ──
+      settings: function () { return request('GET', '/api/admin/settings'); },
+      // One call per card: { 'deal.followup_days': 7, … }
+      saveSettings: function (values) { return request('PATCH', '/api/admin/settings', { values: values }); },
+      resetSetting: function (key) { return request('POST', '/api/admin/settings/reset', { key: key }); },
 
       // ── channels + the scheduler tick ──
       channels: function () { return request('GET', '/api/admin/channels'); },

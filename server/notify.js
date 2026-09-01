@@ -34,10 +34,10 @@ async function markDm(notificationId, status) {
   await db.prepare('UPDATE notifications SET dm_status=? WHERE id=?').run(status, notificationId);
 }
 
-async function dm(tgUserId, text, notificationId) {
+async function dm(tgUserId, text, notificationId, extra = {}) {
   if (!tgUserId) return await markDm(notificationId, 'skipped');
   try {
-    await sendToUser(tgUserId, text);
+    await sendToUser(tgUserId, text, extra);
     await markDm(notificationId, liveMode() ? 'sent' : 'simulated');
   } catch {
     // A DM failure must never fail the operation that triggered it — the
@@ -63,12 +63,18 @@ export async function notifyCustomer({ customerId, kind, title, body = '', promo
 // rendered as text in the cabinet, where markup would show up as markup — while
 // the DM gets the same message with its item titles turned into taps. The
 // caller is responsible for escaping anything it interpolates into bodyHtml.
-export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, dedupeKey }) {
+//
+// `replyMarkup` is the same idea one step further: a DM can carry a BUTTON, and
+// deals.js uses it to put «Відкрити заявку» — a web_app button that opens the
+// cabinet on one deal — under the nudge. Nothing is stored for it; the panel
+// already has the thing the button is a shortcut to.
+export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, replyMarkup = null, dedupeKey }) {
   const id = await writeRow({ customerId: null, kind, title, body, dedupeKey });
   if (!id) return null;
   const text = `<b>${escapeHtml(title)}</b>\n${bodyHtml || escapeHtml(body)}`;
+  const extra = replyMarkup ? { reply_markup: replyMarkup } : {};
   for (const tgId of await adminIds()) {
-    void dm(tgId, text, id);
+    void dm(tgId, text, id, extra);
   }
   return id;
 }

@@ -29,6 +29,8 @@ import * as roles from './roles.js';
 import * as presets from './presets.js';
 import * as analytics from './analytics.js';
 import * as abandoned from './abandoned.js';
+import * as deals from './deals.js';
+import * as settings from './settings.js';
 import { asJson } from './sql.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -601,8 +603,21 @@ app.get('/api/admin/pending-costs', requirePermission('profit.read'), async (req
 });
 
 // ── ADMIN: inquiries (Dasha's queue) + popularity ────────────────────────
+//
+// `deal` selects one of the three tabs — в процесі / купили / не купили — and
+// the counts come back with every read, so the tab labels never need a second
+// call to say how many are behind them.
 app.get('/api/admin/inquiries', requirePermission('inquiries.read'), async (req, res) => {
-  res.json({ inquiries: await cart.listInquiries({ status: req.query.status || null, limit: req.query.limit }) });
+  res.json({
+    inquiries: await cart.listInquiries({
+      id: req.query.id || null,
+      status: req.query.status || null,
+      deal: req.query.deal || null,
+      limit: req.query.limit,
+    }),
+    deals: await deals.counts(),
+    followupDays: (await deals.config()).days,
+  });
 });
 
 app.patch('/api/admin/inquiries/:id', requirePermission('inquiries.write'), async (req, res) => {
@@ -611,6 +626,20 @@ app.patch('/api/admin/inquiries/:id', requirePermission('inquiries.write'), asyn
     if (!ok) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: String(e.message || e) }); }
+});
+
+// Купив / не купив / повернути в процес. The same route for all three, in both
+// directions: a status set by mistake is corrected by setting another one, so
+// there is no separate "undo" and no state this can get stuck in.
+app.patch('/api/admin/inquiries/:id/deal', requirePermission('inquiries.write'), async (req, res) => {
+  try {
+    const ok = await deals.setStatus(Number(req.params.id), {
+      status: req.body?.status,
+      by: tgid(req) || null,
+    });
+    if (!ok) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, deals: await deals.counts() });
+  } catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
 });
 
 // period=month|year|all, or explicit from/to — the same endpoint answers both
@@ -898,11 +927,43 @@ app.get('/api/admin/customers/:id/timeline', requirePermission('customers.read')
 
 // What the abandoned-fitting-room rule is set to, and who has already had it.
 app.get('/api/admin/abandoned', requirePermission('discounts.manage'), async (req, res) => {
-  res.json({ config: abandoned.config(), pending: await abandoned.pending() });
+  res.json({ config: await abandoned.config(), pending: await abandoned.pending() });
 });
 
 app.get('/api/admin/alerts', requirePermission('alerts.read'), async (req, res) => {
   res.json({ alerts: await adminAlerts({ limit: req.query.limit }) });
+});
+
+// ── ADMIN: «Параметри» — every tunable number ────────────────────────────
+//
+// The screen draws itself from this response: the definitions (label, unit,
+// bounds) come from settings.js, the values from `app_settings`. Adding a
+// setting later is one entry in DEFINITIONS and no UI work at all.
+app.get('/api/admin/settings', requirePermission('settings.manage'), async (req, res) => {
+  res.json({ ...(await settings.all()), scheduler: scheduler.status() });
+});
+
+// One save for a whole card. Every value is validated BEFORE anything is
+// written, so a form with one bad field does not half-apply.
+app.patch('/api/admin/settings', requirePermission('settings.manage'), async (req, res) => {
+  try {
+    const values = req.body?.values || {};
+    const saved = await settings.setMany(values, { by: tgid(req) || null });
+    // The one number that is not simply read on use: the tick interval is armed
+    // in advance, so the timer has to be told rather than left to notice after
+    // the next pass — which at a long interval could be tomorrow.
+    if ('scheduler.interval_min' in values) await scheduler.reschedule();
+    res.json({ ok: true, saved, ...(await settings.all()), scheduler: scheduler.status() });
+  } catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
+});
+
+app.post('/api/admin/settings/reset', requirePermission('settings.manage'), async (req, res) => {
+  try {
+    const key = String(req.body?.key || '');
+    await settings.reset(key, { by: tgid(req) || null });
+    if (key === 'scheduler.interval_min') await scheduler.reschedule();
+    res.json({ ok: true, ...(await settings.all()), scheduler: scheduler.status() });
+  } catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
 });
 
 // Scheduler status + a manual/cron-callable (await tick (serverless hosts have no

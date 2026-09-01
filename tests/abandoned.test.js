@@ -50,8 +50,8 @@ async function addedHoursAgo(c, hours, count = 1) {
 
 /* ── the rule names itself ───────────────────────────────────────────────── */
 
-test('the grant key is the rule, spelled the way it is spoken', () => {
-  const cfg = config();
+test('the grant key is the rule, spelled the way it is spoken', async () => {
+  const cfg = await config();
   assert.equal(cfg.hours, 5);
   assert.equal(cfg.percent, 10);
   assert.equal(cfg.grantKey, '5hour_10per');
@@ -65,7 +65,7 @@ test('five hours is the line: four hours is still shopping', async () => {
   const waited = await customer('Чекала');
   await addedHoursAgo(waited, 6);
 
-  const ids = (await pending(NOW, config())).map((r) => Number(r.customer_id));
+  const ids = (await pending(NOW, await config())).map((r) => Number(r.customer_id));
   assert.ok(!ids.includes(early.id), 'four hours in, they may still be choosing');
   assert.ok(ids.includes(waited.id));
 });
@@ -75,7 +75,7 @@ test('somebody who DID write is not abandoned — sending empties the room', asy
   await addedHoursAgo(c, 8, 2);
   await sendInquiry({ customer: c, message: 'Скільки коштує?', now: NOW });
 
-  const ids = (await pending(NOW, config())).map((r) => Number(r.customer_id));
+  const ids = (await pending(NOW, await config())).map((r) => Number(r.customer_id));
   assert.ok(!ids.includes(c.id), 'her items are sent, not sitting');
 
   const res = await remindAbandoned(NOW);

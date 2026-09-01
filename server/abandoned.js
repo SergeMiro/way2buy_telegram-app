@@ -14,7 +14,8 @@
 //  all of them lose the insert and none of them sends a second discount. The
 //  order matters: send-then-record can double-send, record-then-send cannot.
 //
-//  The rule names itself. Hours and percentage are settings, and the grant key
+//  The rule names itself. Hours and percentage are settings — rows in
+//  `app_settings`, edited from «Параметри» — and the grant key
 //  is built from them — five hours and ten per cent is '5hour_10per', which
 //  reads the same in the database as it does in the conversation. Change the
 //  setting and it becomes a DIFFERENT rule with a different key, which is
@@ -22,15 +23,20 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { notifyCustomer } from './notify.js';
+import { nums } from './settings.js';
 
 const HOUR = 3600_000;
 const iso = (ms) => new Date(ms).toISOString();
 
-export function config() {
-  const hours = Math.max(1, Number(process.env.W2B_ABANDON_HOURS || 5));
-  const percent = Math.max(1, Math.min(90, Number(process.env.W2B_ABANDON_PERCENT || 10)));
-  const validDays = Math.max(1, Number(process.env.W2B_ABANDON_VALID_DAYS || 7));
-  const minOrderUsd = Math.max(0, Number(process.env.W2B_ABANDON_MIN_ORDER || 0));
+// Async because all four numbers are rows in `app_settings` now, edited from
+// «Параметри» in the cabinet. The bounds that used to be Math.max/min here are
+// the definition's min/max, enforced on the way in and on the way out.
+export async function config() {
+  const s = await nums('abandon.hours', 'abandon.percent', 'abandon.valid_days', 'abandon.min_order_usd');
+  const hours = s['abandon.hours'];
+  const percent = s['abandon.percent'];
+  const validDays = s['abandon.valid_days'];
+  const minOrderUsd = s['abandon.min_order_usd'];
   return {
     hours,
     percent,
@@ -65,7 +71,8 @@ export async function grantsFor(customerId) {
  * item to 'sent' — so an active item older than the window IS an unanswered
  * intention. No second query is needed to prove they did not write.
  */
-export async function pending(now = Date.now(), { hours } = config()) {
+export async function pending(now = Date.now(), cfg = null) {
+  const { hours } = cfg || (await config());
   const cutoff = iso(now - hours * HOUR);
   return await db.prepare(
     `SELECT ci.customer_id                AS customer_id,
@@ -86,7 +93,7 @@ export async function pending(now = Date.now(), { hours } = config()) {
  * already had it, which is the number that should grow and then stop.
  */
 export async function remindAbandoned(now = Date.now()) {
-  const cfg = config();
+  const cfg = await config();
   if (!cfg.enabled) return { skipped: true, reason: 'disabled' };
 
   const rows = await pending(now, cfg);

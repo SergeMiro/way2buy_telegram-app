@@ -412,19 +412,26 @@ function escapeHtml(s = '') {
 
 // ── admin reads ───────────────────────────────────────────────────────────
 
-export async function listInquiries({ status = null, limit = 50 } = {}) {
+// `status` is how far Dasha got with answering ('new' | 'answered' | 'closed');
+// `deal` is how the sale itself ended ('in_progress' | 'bought' | 'not_bought',
+// see deals.js). Two different questions about one row, and the cabinet asks
+// both: the tabs filter by `deal`, the pill on the card shows `status`.
+export async function listInquiries({ id = null, status = null, deal = null, limit = 50 } = {}) {
   const lim = Math.min(Math.max(Number(limit) || 50, 1), 200);
-  const rows = status
-    ? await db.prepare(
-        `SELECT i.*, c.name, c.tg_user_id, c.phone FROM inquiries i
-           JOIN customers c ON c.id = i.customer_id
-          WHERE i.status=? ORDER BY i.created_at DESC LIMIT ?`
-      ).all(status, lim)
-    : await db.prepare(
-        `SELECT i.*, c.name, c.tg_user_id, c.phone FROM inquiries i
-           JOIN customers c ON c.id = i.customer_id
-          ORDER BY i.created_at DESC LIMIT ?`
-      ).all(lim);
+  const where = [];
+  const params = [];
+  // One inquiry by id: what the «Відкрити заявку» button in a follow-up DM
+  // resolves, so the cabinet can open the tab that deal is actually in rather
+  // than guessing and paging through the list to look for it.
+  if (id) { where.push('i.id=?'); params.push(Number(id)); }
+  if (status) { where.push('i.status=?'); params.push(status); }
+  if (deal) { where.push('i.deal_status=?'); params.push(deal); }
+  const rows = await db.prepare(
+    `SELECT i.*, c.name, c.tg_user_id, c.phone FROM inquiries i
+       JOIN customers c ON c.id = i.customer_id
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY i.created_at DESC LIMIT ?`
+  ).all(...params, lim);
 
   return rows.map((r) => ({
     id: r.id,
@@ -439,6 +446,11 @@ export async function listInquiries({ status = null, limit = 50 } = {}) {
     status: r.status,
     createdAt: r.created_at,
     answeredAt: r.answered_at,
+    // The deal: its state, who last said so, and how many nudges it has taken.
+    dealStatus: r.deal_status || 'in_progress',
+    dealStatusAt: r.deal_status_at,
+    dealStatusBy: r.deal_status_by,
+    followupCount: Number(r.followup_count) || 0,
   }));
 }
 

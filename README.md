@@ -12,7 +12,7 @@ in one zero-build Node application on Postgres.
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
-[![Tests](https://img.shields.io/badge/tests-125_node%3Atest-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-280_node%3Atest-brightgreen)](#testing)
 [![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
 🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
@@ -106,6 +106,20 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 - **«Синхронізувати»** — pick a catalogue, press once, and it is made to match its Telegram
   channel: new posts in, changed ones updated, retired ones out of the vitrine. The channel is
   only read, never written to (see [Filling the catalogues](#filling-the-catalogues))
+- **Did they buy it?** (`deals.js`) — an inquiry is an open deal, and «Заявки» has three tabs
+  for the only three answers: **в процесі** (where sending the inquiry puts the client) →
+  **купили** / **не купили**, set by a swipe or by ✓ / ✕ on the card and corrected with the
+  pencil. Every N days an untouched deal writes to Maryna and Dasha — *this client has been in
+  progress for so many days, did they buy?* — with a button that opens the cabinet on that one
+  deal. Doing nothing is a valid answer: the deal stays open and asks again
+- **«Параметри»** (`settings.js`, `app_settings`) — every tunable number in the shop as a row
+  you edit in the cabinet: the follow-up interval, the abandoned-fitting-room rule, how many
+  months of a channel the vitrine keeps, sync pages and pacing, photo width/quality/size,
+  the vision batch, model timeout and budget, the scheduler interval. Each was an environment
+  variable, which on Vercel made «7 днів замість 5» a redeploy; now it takes effect at once,
+  with no restart. The labels and bounds live in code beside the consumers, so a row nobody
+  defines is ignored rather than obeyed, and a value out of range is refused rather than
+  quietly clamped
 - **Pending-cost and alert views**, popular-item ranking, scheduler status
 - **Reports** — a built-in template narrative, or a generated one through **Gemini 1.5 Flash**
   when a key is present; reports can be sent to Telegram
@@ -130,7 +144,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | --- | --- | --- |
 | Runtime | **Node.js 20+**, ES modules | — |
 | HTTP | **Express 4.21** | One process, one router, 53 endpoints |
-| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 20 tables, 79 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
+| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 23 tables, 90 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
 | Schema | `server/sql/schema.sql`, idempotent | DDL as a reviewable data file — the same file is applied to Supabase and loaded by the tests |
 | Statement layer | `server/sql.js` | Translates the original `?` / `@named` statements to `$n`, so the port added `await` instead of rewriting 200 queries |
 | Frontend | **Vanilla JavaScript**, no framework, no bundler | Zero build step (ADR-001) |
@@ -205,13 +219,14 @@ Decisions worth naming:
 
 ## Data model
 
-20 tables with 79 indexes, created by `server/sql/schema.sql`:
+23 tables with 90 indexes, created by `server/sql/schema.sql`:
 
 - **Customers & loyalty** — `customers`, `purchases`, `redemptions`
 - **Discounts** — `discount_rules`, `campaigns`, `holidays`, `birthday_claims`, `promo_codes`
 - **Content & demand** — `channels`, `posts`, `inquiries`, `cart_items`, `cart_events`
 - **Comms** — `notifications`, `events`
 - **AI** — `ai_conversations`, `ai_messages`, `ai_proposals`
+- **Settings** — `app_settings` (key → value; labels and bounds live in `server/settings.js`)
 - **Infrastructure** — `scheduler_lock`
 
 `npm run seed` produces a realistic demo set: 7 clients, 25 purchases, a holiday campaign, a
@@ -241,8 +256,10 @@ Supabase table editor — the business logic stays in the server modules, where 
 
 The admin set is mounted under `/api/admin/*`: `customers`, `posts`, `post`, `purchase`,
 `purchases/:id/cost`, `pending-costs`, `profit`, `popular`, `rules`, `campaigns`,
-`campaigns/:id/materialize`, `holidays`, `birthday-claims`, `promo`, `inquiries`, `channels`,
-`telegram`, `alerts`, `scheduler`, `tick`, `report`, `report/send`, and
+`campaigns/:id/materialize`, `holidays`, `birthday-claims`, `promo`, `inquiries`,
+`PATCH inquiries/:id/deal` — купив / не купив / назад у процес, both directions —, `channels`,
+`telegram`, `alerts`, `settings` (`GET` + `PATCH`, plus `POST settings/reset`),
+`scheduler`, `tick`, `report`, `report/send`, and
 `POST channels/:key/sync` — one bounded, resumable pass of «Синхронізувати».
 
 `POST /telegram/webhook` receives channel posts and bot updates.
@@ -282,14 +299,37 @@ Everything is optional — the app runs in demo mode with an empty `.env`.
 | `CHANNEL_LUXURY` | `Way2Buy_Luxury` | Channel username, without `@` |
 | `ADMIN_TG_IDS` | — | Comma-separated Telegram ids allowed into the admin office |
 | `SUPPORT_TG_IDS` | — | Ids that receive client inquiries as DMs without admin access |
-| `PUBLIC_URL` | — | Public HTTPS URL, needed for the channel-post webhook |
+| `PUBLIC_URL` | — | Public HTTPS URL, needed for the channel-post webhook and for the «Відкрити заявку» button in a follow-up DM |
 | `CASHBACK_STEP_USD` | `3000` | Spend step that earns a reward |
 | `CASHBACK_REWARD_USD` | `100` | Reward per step |
 | `GEMINI_API_KEY` | — | AI reports; empty falls back to the template narrative |
-| `SCHEDULER_INTERVAL_MIN` | `15` | Tick interval, in minutes |
+| `SCHEDULER_INTERVAL_MIN` | `15` | Tick interval — **first-boot seed only**, see below |
+| `W2B_DEAL_FOLLOWUP_ENABLED` | on | `0` stops the deal nudges; the three tabs keep working |
 | `DATABASE_URL` | — | Postgres connection string. **Empty runs an in-process PGlite** — that is what makes the zero-config demo work. |
 | `W2B_AUTO_MIGRATE` | — | `1` applies the schema on boot. Off by default: DDL does not belong on a request path. |
 | `W2B_DB_POOL_MAX` | `10` (`1` on Vercel) | Connection pool size |
+
+### The numbers are not here
+
+Every tunable number — the deal follow-up interval, the abandoned-fitting-room rule, the
+vitrine window, sync pacing, photo size and quality, the vision batch, model timeouts, the
+scheduler interval — is a row in `app_settings`, edited in **«Параметри»** in the cabinet and
+applied immediately. `server/settings.js` holds the definitions: label, unit, bounds, default.
+
+The matching environment variables (`W2B_ABANDON_*`, `W2B_CATALOG_MONTHS`, `W2B_SYNC_PAGES`,
+`W2B_TME_DELAY_MS`, `W2B_PHOTO_*`, `W2B_VISION_BATCH`, `W2B_LLM_*`, `W2B_DEAL_FOLLOWUP_DAYS`,
+`SCHEDULER_INTERVAL_MIN`) survive as the **first-boot seed**: each row is created once with the
+variable's value if it is set, and never overwritten — so a shop already running on
+`W2B_ABANDON_HOURS=8` keeps 8, and after that the number belongs to the cabinet. Editing one of
+them on a database that already has its rows does nothing.
+
+Seeding runs from `init()` and not from `migrate()`, deliberately: production does not migrate
+on boot (DDL does not belong on a request path), and a production instance with an empty table
+would silently ignore the variables it is configured with.
+
+Four are genuinely not configurable and stay in the environment, because they are consumed once
+when the process starts or are a security boundary: `PORT`, `W2B_DB_POOL_MAX`,
+`W2B_DB_CONNECT_TIMEOUT_MS`, `W2B_INITDATA_MAX_AGE_H`.
 
 ## Telegram wiring
 
@@ -385,7 +425,7 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-125 tests across eleven suites, on the Node built-in test runner — no test framework dependency,
+280 tests across 23 suites, on the Node built-in test runner — no test framework dependency,
 and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
@@ -396,6 +436,8 @@ and on real Postgres rather than a stand-in:
 | `rules.test.js` | Discount rule resolution and precedence |
 | `profit.test.js` | Sale/cost pairing and margin calculation |
 | `telegram.test.js` | Publishing, webhook parsing, DM delivery |
+| `deals.test.js` | Deal statuses, the follow-up cadence, and that a nudge is sent exactly once |
+| `settings.test.js` | That a restart cannot undo an edit, a bad value is refused, and a missing row never becomes NaN |
 
 Each file runs in its own process against a private in-memory PGlite, so the suites are
 independent and there is nothing to tear down. `tests/helpers/tmpdb.js` clears `DATABASE_URL`

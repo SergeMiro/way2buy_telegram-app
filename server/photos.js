@@ -26,16 +26,19 @@
 //  come. Both are correct, one is merely smaller.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { num } from './settings.js';
+
 const BUCKET = process.env.W2B_PHOTO_BUCKET || 'photos';
-const KEEP = Math.max(1, Number(process.env.W2B_PHOTO_KEEP || 1));
-const MAX_BYTES = Number(process.env.W2B_PHOTO_MAX_BYTES || 5 * 1024 * 1024);
+// How many photos of a post are copied, how big a source file may be, and the
+// size/quality of what is stored — all four are rows in `app_settings`
+// («Параметри» → Фото), read per photo rather than at import, so a change
+// applies to the next sync without a restart.
 // 720px at q76 ≈ 77 KB, so the whole vitrine is ~0.46 GB against a 1 GB plan —
 // half the budget, which leaves room for the shop to grow. The source is 800×800
 // (Telegram's own preview cap), and a card is two-to-a-row on a 390px phone, so
 // 720 is still more pixels than the vitrine can show; the product sheet is the
 // only place a sharper eye might notice.
-const WIDTH = Number(process.env.W2B_PHOTO_WIDTH || 720);
-const QUALITY = Number(process.env.W2B_PHOTO_QUALITY || 76);
+
 
 const projectUrl = () => {
   const explicit = process.env.SUPABASE_URL;
@@ -71,8 +74,8 @@ async function shrink(buffer) {
   try {
     const out = await sharpModule(buffer)
       .rotate()                                   // honour EXIF, or bags lie on their side
-      .resize({ width: WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: QUALITY, mozjpeg: true })
+      .resize({ width: await num('photo.width'), withoutEnlargement: true })
+      .jpeg({ quality: await num('photo.quality'), mozjpeg: true })
       .toBuffer();
     // A "smaller" image that came out bigger is not an improvement.
     return out.length < buffer.length
@@ -124,9 +127,13 @@ export async function remove(keys, { fetchImpl = fetch } = {}) {
  *
  * Already-stored URLs are left alone, so re-running the import is cheap.
  */
-export async function persist(channel, messageId, photos, { fetchImpl = fetch, keep = KEEP } = {}) {
+export async function persist(channel, messageId, photos, { fetchImpl = fetch, keep = null } = {}) {
   const list = Array.isArray(photos) ? [...photos] : [];
   if (!configured() || !list.length) return { photos: list, stored: 0, skipped: 'not configured' };
+  if (keep == null) keep = await num('photo.keep');
+  // Stored in megabytes because that is the unit a person types; compared in
+  // bytes because that is what a response gives us.
+  const maxBytes = (await num('photo.max_mb')) * 1024 * 1024;
 
   let stored = 0;
   for (let i = 0; i < Math.min(keep, list.length); i += 1) {
@@ -138,7 +145,7 @@ export async function persist(channel, messageId, photos, { fetchImpl = fetch, k
       const res = await fetchImpl(ref);
       if (!res.ok) continue;                       // an expired link: nothing to copy
       const raw = Buffer.from(await res.arrayBuffer());
-      if (!raw.length || raw.length > MAX_BYTES) continue;
+      if (!raw.length || raw.length > maxBytes) continue;
       const { buffer, contentType } = await shrink(raw);
       list[i] = await put(keyFor(channel, messageId, i), buffer, contentType, { fetchImpl });
       stored += 1;

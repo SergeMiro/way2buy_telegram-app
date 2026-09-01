@@ -35,11 +35,13 @@ import { db, vacuumAnalyze } from './db.js';
 import { parsePostText } from './telegram.js';
 import { fetchChannelPage, sleep, normalizeUsername, keyFor } from './tme.js';
 import * as photos from './photos.js';
+import { num } from './settings.js';
 
 // One page is ~3 posts in an album-heavy catalogue and ~16 in a plain one, so
 // four pages is a few seconds of work — comfortably inside a serverless limit.
-const PAGES_PER_CALL = Number(process.env.W2B_SYNC_PAGES || 4);
-const PAGE_DELAY_MS = Number(process.env.W2B_TME_DELAY_MS || 700);
+// Both are rows in `app_settings` now («Параметри» → Витрина), read at the
+// moment they are used rather than when this file was imported — so changing
+// them takes effect on the next press of «Синхронізувати», with no restart.
 
 // WINDOW. The catalogue keeps the last N months and no more, and that is a
 // commercial rule before it is a technical one: a bag posted a year ago is
@@ -51,10 +53,10 @@ const PAGE_DELAY_MS = Number(process.env.W2B_TME_DELAY_MS || 700);
 // The default is the product decision, not a neutral guess — a fresh clone, the
 // cron and production should all keep the same slice, or the vitrine differs
 // between environments for no visible reason. 0 keeps everything.
-const WINDOW_MONTHS = Number(process.env.W2B_CATALOG_MONTHS ?? 3);
+
 
 /** The oldest post the catalogue will hold, as an epoch ms — or null for "all". */
-export function windowStart(now = Date.now(), months = WINDOW_MONTHS) {
+export function windowStart(now = Date.now(), months = 3) {
   if (!months || months <= 0) return null;
   const d = new Date(now);
   d.setUTCMonth(d.getUTCMonth() - months);
@@ -241,7 +243,8 @@ export async function setMainChannel(key) {
  * and only leaves the vitrine: deleting it would set those references to NULL
  * and quietly detach a client's selection from what she selected.
  */
-export async function pruneOutsideWindow(channelKey, cutoff = windowStart()) {
+export async function pruneOutsideWindow(channelKey, cutoff) {
+  if (cutoff === undefined) cutoff = windowStart(Date.now(), await num('catalog.months'));
   if (!cutoff) return { retired: 0, deleted: 0 };
   const at = new Date(cutoff).toISOString();
 
@@ -293,10 +296,15 @@ export async function pruneOutsideWindow(channelKey, cutoff = windowStart()) {
  */
 export async function syncChannel(channel, {
   deep = false,
-  pages = PAGES_PER_CALL,
+  pages = null,
   fetchPage = fetchChannelPage,
-  since = windowStart(),
+  // `undefined` means "use the configured window"; `null` means "read
+  // everything" and is a deliberate caller choice, so the two cannot share a
+  // default.
+  since = undefined,
 } = {}) {
+  if (pages == null) pages = await num('sync.pages');
+  if (since === undefined) since = windowStart(Date.now(), await num('catalog.months'));
   if (!channel?.username) {
     throw new Error(`канал «${channel?.title || channel?.key}» без @username — синхронізувати нічого`);
   }
@@ -381,7 +389,7 @@ export async function syncChannel(channel, {
       break;
     }
     cursor = result.before;
-    if (page < pages - 1) await sleep(PAGE_DELAY_MS);
+    if (page < pages - 1) await sleep(await num('sync.tme_delay_ms'));
   }
 
   // Deletions, scoped to the window actually read — see the header and
