@@ -329,6 +329,11 @@ export async function seedSettings() {
   } catch (e) {
     // A database that has not had the table created yet must not stop the app
     // from starting: num() falls back to the definitions until it does.
+    //
+    // LOUD, though. A seed that fails invisibly is how an instance ends up
+    // quietly running on defaults while the table sits empty and nobody can
+    // tell why — which is exactly what happened the first time this shipped.
+    console.error('[settings] seed failed:', e.message || e);
     return { created: 0, total: DEFINITIONS.length, error: String(e.message || e) };
   }
 }

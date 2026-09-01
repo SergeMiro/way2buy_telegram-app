@@ -197,7 +197,11 @@
     loupe.setAttribute('aria-hidden', 'true');
     loupe.innerHTML = '<div class="product-loupe__viewport">' +
       '<img class="product-loupe__image" alt="" draggable="false" />' +
-      '</div>';
+      '</div>' +
+      // The zoom factor is a BUTTON, not a decal. It used to be a CSS ::after
+      // reading "2x", which nobody could press — the loupe is pointer-events:
+      // none so the finger under it keeps driving the magnifier.
+      '<button class="product-loupe__zoom" type="button" aria-label="Змінити збільшення"></button>';
     document.body.appendChild(loupe);
 
     var loupeImage = loupe.querySelector('.product-loupe__image');
@@ -215,7 +219,28 @@
     var MOVE_TOLERANCE = 11;
     var LOUPE_SIZE = 152;
     var VIEWPORT_SIZE = 138;
-    var ZOOM = 2;
+
+    // Three steps, and 1.5 is the default: 2x was chosen when the loupe could
+    // not be adjusted, and for most cards it is more magnification than the
+    // 800px source can actually show.
+    //
+    // ONE factor for the whole shop, not one per card. It is a single variable
+    // read at paint time, so pressing the badge changes what every article
+    // will magnify — there is nothing per-card to keep in step. localStorage
+    // makes the choice survive a reload; it is a per-viewer preference, not
+    // shop configuration, so it does not belong in «Параметри».
+    var ZOOM_STEPS = [1.5, 2, 2.5];
+    var ZOOM_KEY = 'w2b:loupe-zoom';
+    var zoomStep = 0;
+    try {
+      var savedZoom = window.localStorage.getItem(ZOOM_KEY);
+      var savedIndex = savedZoom === null ? -1 : ZOOM_STEPS.indexOf(Number(savedZoom));
+      if (savedIndex >= 0) zoomStep = savedIndex;
+    } catch (e) { /* private mode — the default answers */ }
+    var zoom = function () { return ZOOM_STEPS[zoomStep]; };
+    // Whether the loupe is staying on screen after the finger left, which is
+    // the only state in which its badge can be pressed.
+    var pinned = false;
 
     function zoomMediaFromEvent(eventTarget) {
       var image = eventTarget && eventTarget.closest && eventTarget.closest(
@@ -259,10 +284,11 @@
       var imageY = localY - box.top;
       var centre = VIEWPORT_SIZE / 2;
 
-      loupeImage.style.width = (box.width * ZOOM) + 'px';
-      loupeImage.style.height = (box.height * ZOOM) + 'px';
-      loupeImage.style.left = (centre - imageX * ZOOM) + 'px';
-      loupeImage.style.top = (centre - imageY * ZOOM) + 'px';
+      var factor = zoom();
+      loupeImage.style.width = (box.width * factor) + 'px';
+      loupeImage.style.height = (box.height * factor) + 'px';
+      loupeImage.style.left = (centre - imageX * factor) + 'px';
+      loupeImage.style.top = (centre - imageY * factor) + 'px';
 
       var left = Math.max(8, Math.min(window.innerWidth - LOUPE_SIZE - 8, clientX - LOUPE_SIZE / 2));
       var top = clientY - LOUPE_SIZE - 28;
@@ -286,13 +312,54 @@
       tg.haptic('light');
     }
 
+    var zoomButton = loupe.querySelector('.product-loupe__zoom');
+
+    function paintZoomLabel() {
+      // «1.5x», «2x», «2.5x» — the same wording the old decal used.
+      var label = String(zoom()) + 'x';
+      zoomButton.textContent = label;
+      // The little hint in the corner of every card carries the same figure,
+      // and there are dozens of them on screen — so it is one CSS custom
+      // property rather than a re-render of the vitrine.
+      document.documentElement.style.setProperty('--w2b-zoom-label', '"' + label + '"');
+    }
+    paintZoomLabel();
+
+    // Pressing the badge steps 1.5 → 2 → 2.5 → 1.5. Repainted in place, so the
+    // effect is visible on the very card being looked at rather than only on
+    // the next one.
+    zoomButton.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      zoomStep = (zoomStep + 1) % ZOOM_STEPS.length;
+      try { window.localStorage.setItem(ZOOM_KEY, String(zoom())); } catch (err) { /* ignore */ }
+      paintZoomLabel();
+      if (active) paintLoupe(lastX, lastY);
+      tg.haptic('light');
+    });
+
+    // The finger left but the loupe stays: the badge is inside it, and a
+    // control that vanishes with the gesture cannot be pressed. The page is
+    // unlocked again at the same moment — a magnifier left on screen must not
+    // also hold the catalogue still.
+    function pinLoupe() {
+      if (!active) return;
+      pinned = true;
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      pointerId = null;
+      loupe.classList.add('is-pinned');
+      document.body.classList.remove('is-zooming');
+    }
+
     function resetLoupe() {
       clearTimeout(holdTimer);
       holdTimer = null;
       if (active) {
-        loupe.classList.remove('is-visible', 'is-flipped');
+        loupe.classList.remove('is-visible', 'is-flipped', 'is-pinned');
         document.body.classList.remove('is-zooming');
       }
+      pinned = false;
       active = false;
       target = null;
       media = null;
@@ -301,6 +368,10 @@
 
     document.addEventListener('pointerdown', function (e) {
       if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      // Anything outside the loupe dismisses a pinned one — including the start
+      // of a hold on the next card, which then opens it again where the finger
+      // actually is.
+      if (pinned && !(e.target.closest && e.target.closest('.product-loupe'))) resetLoupe();
       var found = zoomMediaFromEvent(e.target);
       if (!found) return;
 
@@ -344,7 +415,11 @@
     }, { passive: false });
 
     document.addEventListener('pointerup', function (e) {
-      if (e.pointerId === pointerId) resetLoupe();
+      if (e.pointerId !== pointerId) return;
+      // A completed hold leaves the loupe up so its badge is reachable; a hold
+      // that never became one is simply cancelled, exactly as before.
+      if (active) pinLoupe();
+      else resetLoupe();
     }, { passive: true });
     // A finger lifted outside the element, or a second finger arriving, both
     // end the hold — otherwise `active` could outlive the gesture and the page
@@ -355,7 +430,9 @@
     document.addEventListener('pointercancel', resetLoupe, { passive: true });
     window.addEventListener('blur', resetLoupe);
     window.addEventListener('scroll', function () {
-      if (!active) resetLoupe();
+      // Pinned: the catalogue moved, so what the loupe is showing no longer
+      // sits under it. Not active: nothing to keep.
+      if (pinned || !active) resetLoupe();
     }, { passive: true });
     document.addEventListener('contextmenu', function (e) {
       if (zoomMediaFromEvent(e.target) && Date.now() < suppressContextMenuUntil) e.preventDefault();

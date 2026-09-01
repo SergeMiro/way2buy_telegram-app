@@ -1722,10 +1722,13 @@ body {
   -webkit-backdrop-filter: blur(10px);
 }
 .tile--stock .tile__chan { background: rgba(166, 61, 97, 0.9); }
+/* The hint on every card. It must say the same thing the loupe will do, so the
+   figure comes from a custom property that app.js rewrites when the factor is
+   changed — one property, every card, no re-render. */
 .tile__media:has(img)::after,
 .post__gallery:has(img)::after,
 .fit-row__thumb:has(img)::after {
-  content: "2x";
+  content: var(--w2b-zoom-label, "1.5x");
   position: absolute;
   right: 9px;
   bottom: 9px;
@@ -1953,22 +1956,39 @@ body {
   border-radius: 50%;
   box-shadow: 0 20px 55px rgba(49, 27, 39, 0.27), 0 0 0 5px rgba(255, 253, 252, 0.72);
 }
-.product-loupe::after {
-  content: "2x";
+/* The zoom factor: a button, not a decal.
+   `pointer-events: auto` is the whole point — its parent is deliberately
+   pointer-events: none so the finger under the loupe keeps driving the
+   magnifier, and this one element has to opt back in.
+   34px rather than the old 29: this is now something people press, and the
+   audience this shop was built for does not aim precisely. */
+.product-loupe__zoom {
   position: absolute;
-  right: 3px;
-  bottom: 11px;
+  right: 1px;
+  bottom: 9px;
   z-index: 3;
   display: grid;
   place-items: center;
-  width: 29px;
-  height: 29px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   color: var(--w2b-on-primary);
   background: var(--w2b-accent);
   border: 3px solid var(--w2b-surface-1);
   border-radius: 50%;
-  font-size: 8px;
+  font-family: inherit;
+  font-size: 9px;
   font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.product-loupe__zoom:active { transform: scale(0.92); opacity: 0.85; }
+/* Pinned: the finger has gone and the badge is what the eye should find. */
+.product-loupe.is-pinned .product-loupe__zoom {
+  box-shadow: 0 0 0 3px rgba(49, 27, 39, 0.14);
 }
 .product-loupe__viewport {
   position: absolute;

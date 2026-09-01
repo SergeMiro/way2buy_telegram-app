@@ -640,8 +640,13 @@ export async function init({ migrateIfNeeded = true } = {}) {
   // empty table and would quietly ignore the variables it is configured with.
   try {
     const { seedSettings } = await import('./settings.js');
-    await seedSettings();
-  } catch { /* reported inside; the definitions answer until the table exists */ }
+    const seeded = await seedSettings();
+    if (seeded.error) console.error('[db] settings seed reported:', seeded.error);
+  } catch (e) {
+    // Never fatal — the definitions answer until the table exists — but never
+    // silent either: this is the only place that would know.
+    console.error('[db] settings seed threw:', e.message || e);
+  }
   if (ephemeral || process.env.W2B_AUTO_SEED === '1') {
     await seed();
   }
