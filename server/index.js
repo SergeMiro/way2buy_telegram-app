@@ -19,6 +19,7 @@ import * as rules from './rules.js';
 import * as birthday from './birthday.js';
 import * as profit from './profit.js';
 import * as cart from './cart.js';
+import * as deals from './deals.js';
 import * as catalog from './catalog.js';
 import * as sync from './sync.js';
 import * as scheduler from './scheduler.js';
@@ -611,6 +612,32 @@ app.patch('/api/admin/inquiries/:id', requirePermission('inquiries.write'), asyn
     if (!ok) return res.status(404).json({ error: 'not found' });
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: String(e.message || e) }); }
+});
+
+// ── ADMIN: deals — «в процесі / купив / не купив» ────────────────────────
+//
+// One list endpoint for all three tabs (they are one table and one index), and
+// one write for both the checkmark and the pencil: recording an outcome and
+// correcting a mis-tap are the same operation on purpose. See deals.js.
+app.get('/api/admin/deals', requirePermission('deals.read'), async (req, res) => {
+  res.json({
+    deals: await deals.listDeals({ status: req.query.status || null, limit: req.query.limit }),
+    counts: await deals.counts(),
+    remindDays: deals.config().days,
+  });
+});
+
+app.patch('/api/admin/deals/:id', requirePermission('deals.write'), async (req, res) => {
+  try {
+    const deal = await deals.setStatus(Number(req.params.id), {
+      status: req.body?.status,
+      amountUsd: req.body?.amountUsd,
+      note: req.body?.note,
+      by: tgid(req) || null,
+    });
+    if (!deal) return res.status(404).json({ error: 'not found' });
+    res.json({ ok: true, deal, counts: await deals.counts() });
+  } catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
 });
 
 // period=month|year|all, or explicit from/to — the same endpoint answers both

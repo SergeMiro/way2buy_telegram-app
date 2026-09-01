@@ -50,6 +50,10 @@
       rules: [], holidays: [], profit: null, pendingCosts: [], claims: [],
       inquiries: [], popular: null, popularPeriod: 'month', posts: [],
       channels: [],
+      // «Покупки»: one list, three tabs, and the id a reminder link asked us to
+      // scroll to (see the deep link in boot()).
+      deals: [], dealCounts: null, dealTab: 'in_progress', dealRemindDays: 5,
+      dealFocus: null, dealsLoading: false,
       // The campaign builder: the ready-made presets, the conditions currently
       // being composed, and how many customers they reach right now.
       presets: [], team: [], draft: null, reach: null,
@@ -355,6 +359,98 @@
   }
 
   initImageLoupe();
+
+  /* ── swiping a purchase card ──────────────────────────────────────────────
+     Right for «купив», left for «не купив» — the gesture Maryna asked for, on
+     the cards in «Покупки» that are still in progress. The buttons on each card
+     do exactly the same thing and are the path anyone who does not know about
+     the gesture takes; this is a shortcut, never the only way through.
+
+     Three rules keep it from firing by accident, because an accidental swipe
+     writes a wrong outcome into a client's record:
+       • it must start horizontal — a vertical drag is the page scrolling, and
+         once we decide it is a scroll we never take it back;
+       • it must travel a real distance (a third of the card, at least 64px);
+       • a tap on a button inside the card is not a swipe at all.
+     Anything short of that snaps the card back and nothing is written. */
+  function initDealSwipe() {
+    var card = null;
+    var pointerId = null;
+    var startX = 0;
+    var startY = 0;
+    var dx = 0;
+    var axis = ''; // '' until the first few pixels decide: 'x' or 'y'
+    var THRESHOLD_MIN = 64;
+    var AXIS_LOCK = 10;
+
+    // Dropping the inline transform hands the card back to the stylesheet,
+    // which animates it home — so "nothing happened" looks like nothing
+    // happened rather than like a card that stuck. It is the inner .deal__body
+    // that moves: the two verdicts live on .deal itself and must stay put while
+    // the card slides off them.
+    function reset() {
+      if (card) {
+        card.classList.remove('is-dragging', 'is-yes', 'is-no');
+        var body = card.querySelector('.deal__body');
+        if (body) body.style.transform = '';
+      }
+      card = null;
+      pointerId = null;
+      axis = '';
+      dx = 0;
+    }
+
+    document.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      var el = e.target.closest && e.target.closest('.deal[data-deal-status="in_progress"]');
+      if (!el || e.target.closest('button, a')) return;
+      card = el;
+      pointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
+      dx = 0;
+      axis = '';
+    }, { passive: true });
+
+    document.addEventListener('pointermove', function (e) {
+      if (!card || e.pointerId !== pointerId) return;
+      var mx = e.clientX - startX;
+      var my = e.clientY - startY;
+      if (!axis) {
+        if (Math.abs(mx) < AXIS_LOCK && Math.abs(my) < AXIS_LOCK) return;
+        // The page wins ties: a diagonal drag on a list is somebody scrolling.
+        axis = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+        if (axis === 'y') { reset(); return; }
+        card.classList.add('is-dragging');
+      }
+      dx = mx;
+      var body = card.querySelector('.deal__body');
+      if (body) body.style.transform = 'translateX(' + dx + 'px)';
+      card.classList.toggle('is-yes', dx > 0);
+      card.classList.toggle('is-no', dx < 0);
+    }, { passive: true });
+
+    async function finish(e) {
+      if (!card || (e && e.pointerId !== pointerId)) return;
+      // Everything the decision needs is read BEFORE the card is let go —
+      // reset() clears `axis` and `dx` along with the rest of the gesture.
+      var el = card;
+      var travelled = dx;
+      var horizontal = axis === 'x';
+      var threshold = Math.max(THRESHOLD_MIN, el.offsetWidth / 3);
+      reset();
+      if (!horizontal || Math.abs(travelled) < threshold) return;
+      tg.haptic('light');
+      try {
+        await setDealStatus(Number(el.getAttribute('data-deal')), travelled > 0 ? 'bought' : 'not_bought');
+      } catch (err) { toast(err.message, 'error'); }
+    }
+
+    document.addEventListener('pointerup', finish);
+    document.addEventListener('pointercancel', function () { reset(); }, { passive: true });
+  }
+
+  initDealSwipe();
 
   // The confirmation after an inquiry is sent.
   //
@@ -1202,6 +1298,7 @@
   // refusal — and «Акції» and «Команда» simply do not exist for her.
   var ADMIN_TABS = [
     { key: 'inquiries', label: 'Заявки',     need: 'inquiries.read' },
+    { key: 'deals',     label: 'Покупки',    need: 'deals.read' },
     { key: 'promos',    label: 'Акції',      need: 'discounts.manage' },
     { key: 'bonuses',   label: 'Бонуси',     need: 'discounts.manage' },
     { key: 'popular',   label: 'Популярне',  need: 'popular.read' },
@@ -1256,6 +1353,180 @@
         '</div>' +
       '</div>';
     }).join('');
+  }
+
+  // ── Покупки: в процесі / купив / не купив ─────────────────────────────────
+  //
+  //  The section that answers the only question the shop really has about a
+  //  client who wrote in: did they buy it?
+  //
+  //  Three tabs, one table. A card in «В процесі» carries the two decisions as
+  //  a checkmark and a cross, and can also be swiped — right for «купив», left
+  //  for «не купив», the gesture Maryna asked for. A card that has already been
+  //  decided carries a pencil instead, which opens the same three choices: a
+  //  mis-tap is fixed the same way it was made, with no separate "undo" nobody
+  //  would find.
+  var DEAL_TABS = [
+    { key: 'in_progress', label: 'В процесі', icon: '⏳' },
+    { key: 'bought',      label: 'Купив',     icon: '✅' },
+    { key: 'not_bought',  label: 'Не купив',  icon: '✖️' },
+  ];
+  var DEAL_LABEL = { in_progress: 'В процесі', bought: 'Купив', not_bought: 'Не купив' };
+
+  function dealItemsHtml(d) {
+    var items = d.items || [];
+    if (!items.length) return d.articles ? 'арт. ' + esc(d.articles) : '—';
+    return items.map(function (i) {
+      var label = esc(i.title || 'Позиція') + (i.article ? ' · арт. ' + esc(i.article) : '');
+      return '• ' + (i.url
+        ? '<a href="' + esc(i.url) + '" target="_blank" rel="noopener">' + label + '</a>'
+        : label);
+    }).join('<br/>');
+  }
+
+  function dealCardHtml(a, d) {
+    var open = d.status === 'in_progress';
+    var age = d.days + ' ' + plural(d.days, ['день', 'дні', 'днів']);
+    // A deal that has already been nudged is the one the admin was asked about
+    // and did not answer — worth saying, so the reminder does not feel unheard.
+    var overdue = open && d.days >= a.dealRemindDays;
+
+    return '<div class="deal' + (overdue ? ' deal--overdue' : '') +
+        (a.dealFocus === d.id ? ' is-focus' : '') + '" data-deal="' + d.id +
+        '" data-deal-status="' + esc(d.status) + '">' +
+      // The two things a swipe reveals under the card. Purely decorative — the
+      // gesture handler is what actually decides — but without them a swipe is
+      // a card sliding for no stated reason.
+      '<div class="deal__hint deal__hint--yes" aria-hidden="true">✅ Купив</div>' +
+      '<div class="deal__hint deal__hint--no" aria-hidden="true">✖️ Не купив</div>' +
+      '<div class="deal__body">' +
+        '<div class="panel__head">' +
+          '<div class="panel__title">' + esc(d.customerName || ('#' + d.customerId)) + '</div>' +
+          '<span class="pill' + (open ? (overdue ? ' pill--warn' : '') : ' pill--ok') + '">' +
+            (open ? '⏳ ' : d.status === 'bought' ? '✅ ' : '✖️ ') + esc(DEAL_LABEL[d.status]) +
+          '</span>' +
+        '</div>' +
+        '<div class="panel__note">' + dealItemsHtml(d) +
+          (d.message ? '<br/><br/>«' + esc(d.message) + '»' : '') +
+          (d.phone ? '<br/>📞 ' + esc(d.phone) : '') +
+          '<br/>' + (open
+            ? 'у процесі ' + esc(age) +
+              (d.reminders ? ' · нагадувань: ' + d.reminders : '')
+            : esc(DEAL_LABEL[d.status]) + ' · ' + esc(dateShort(d.decidedAt || d.createdAt)) +
+              (d.amountUsd ? ' · ' + usd(d.amountUsd) : '')) +
+          (d.note ? '<br/>' + esc(d.note) : '') +
+        '</div>' +
+        '<div class="inline" style="margin-top:var(--w2b-space-3)">' +
+          (open
+            ? '<button class="btn btn--primary btn--sm" data-deal-set="' + d.id + '" data-to="bought">✓ Купив</button>' +
+              '<button class="btn btn--ghost btn--sm" data-deal-set="' + d.id + '" data-to="not_bought">✕ Не купив</button>'
+            : '<button class="btn btn--ghost btn--sm" data-deal-edit="' + d.id + '">✏️ Змінити статус</button>') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function adminDealsHtml(a) {
+    var counts = a.dealCounts || {};
+    var html = '<div class="section-title">Покупки клієнтів</div>' +
+      '<div class="seg" style="margin-bottom:var(--w2b-space-3)">' +
+        DEAL_TABS.map(function (t) {
+          return '<button class="seg__btn' + (a.dealTab === t.key ? ' is-active' : '') +
+            '" data-deal-tab="' + t.key + '">' + t.icon + ' ' + esc(t.label) +
+            ' <b>' + (counts[t.key] || 0) + '</b></button>';
+        }).join('') +
+      '</div>';
+
+    var list = (a.deals || []).filter(function (d) { return d.status === a.dealTab; });
+    if (a.dealsLoading) return html + '<div class="empty">Завантаження…</div>';
+    if (!list.length) {
+      return html + '<div class="empty">' + esc({
+        in_progress: 'Ніхто зараз не в процесі покупки.',
+        bought: 'Тут зʼявляться клієнти, які купили.',
+        not_bought: 'Тут зʼявляться клієнти, які не купили.',
+      }[a.dealTab] || 'Порожньо.') + '</div>';
+    }
+
+    if (a.dealTab === 'in_progress') {
+      html += '<div class="panel"><div class="panel__note">Проведіть картку вправо — «Купив», ' +
+        'вліво — «Не купив». Нагадаємо про кожну кожні ' + a.dealRemindDays + ' ' +
+        plural(a.dealRemindDays, ['день', 'дні', 'днів']) + '.</div></div>';
+    }
+    return html + list.map(function (d) { return dealCardHtml(a, d); }).join('');
+  }
+
+  // The pencil. Three choices, the current one marked — the same call that
+  // records an outcome also corrects one, so this needs no separate endpoint.
+  function sheetEditDeal(d) {
+    openSheet('Статус клієнта ' + (d.customerName || '#' + d.customerId),
+      '<div class="stack">' +
+        '<p class="field__hint">' + (d.articles ? 'арт. ' + esc(d.articles) : esc(d.itemsCount + ' поз.')) +
+          ' · зараз: «' + esc(DEAL_LABEL[d.status]) + '»</p>' +
+        DEAL_TABS.map(function (t) {
+          return '<button class="btn ' + (d.status === t.key ? 'btn--primary' : 'btn--ghost') +
+            '" data-deal-set="' + d.id + '" data-to="' + t.key + '">' +
+            t.icon + ' ' + esc(t.label) + '</button>';
+        }).join('') +
+      '</div>');
+  }
+
+  // One tab's worth, not the whole table. The counts come from the database on
+  // every read, so the three badges stay right even though only one list is
+  // loaded — which matters after a year, when «Купив» is long enough to push
+  // everything still in progress off the end of a single page.
+  async function loadDeals(status) {
+    var tab = status || state.admin.dealTab;
+    state.admin.dealsLoading = true;
+    try {
+      var r = await api.admin.deals(tab);
+      state.admin.deals = r.deals || [];
+      state.admin.dealCounts = r.counts || null;
+      if (r.remindDays) state.admin.dealRemindDays = r.remindDays;
+      return r;
+    } finally {
+      state.admin.dealsLoading = false;
+    }
+  }
+
+  // Land on the card a reminder link named. It may already have been decided by
+  // the time somebody opens the message — a reminder sits in Telegram for days
+  // — so the tab follows the CARD rather than the other way round, and each tab
+  // is looked in until it turns up. An id that no longer exists is not an error
+  // worth a red toast: the section is simply shown as it is.
+  async function focusDeal(id) {
+    var order = [state.admin.dealTab].concat(DEAL_TABS.map(function (t) { return t.key; }));
+    for (var i = 0; i < order.length; i++) {
+      var here = (state.admin.deals || []).filter(function (d) { return d.id === id; })[0];
+      if (here) {
+        state.admin.dealTab = here.status;
+        state.admin.dealFocus = id;
+        $app.innerHTML = renderAdmin();
+        var el = $app.querySelector('.deal[data-deal="' + id + '"]');
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+        return;
+      }
+      if (i + 1 < order.length) {
+        state.admin.dealTab = order[i + 1];
+        try { await loadDeals(); } catch (err) { break; }
+      }
+    }
+    state.admin.dealFocus = null;
+  }
+
+  // Move one card and repaint. The card leaves the tab it was on — which is the
+  // point, and why the counts come back with the write: «В процесі 12» ticking
+  // down to 11 is the confirmation, so nothing has to be re-fetched to see that
+  // the tap landed.
+  async function setDealStatus(id, to) {
+    var r = await api.admin.setDealStatus(id, to);
+    var updated = r.deal;
+    state.admin.dealCounts = r.counts || state.admin.dealCounts;
+    state.admin.deals = state.admin.deals.map(function (d) {
+      return d.id === updated.id ? updated : d;
+    });
+    state.admin.dealFocus = null;
+    $app.innerHTML = renderAdmin();
+    toast('Статус: ' + DEAL_LABEL[updated.status]);
   }
 
   // ── Популярне: every add to the fitting room, by month or by year ─────────
@@ -1957,6 +2228,7 @@
 
     if (a.adminTab === 'profit') html += adminProfitHtml(a);
     else if (a.adminTab === 'inquiries') html += adminInquiriesHtml(a);
+    else if (a.adminTab === 'deals') html += adminDealsHtml(a);
     else if (a.adminTab === 'popular') html += adminPopularHtml(a);
     else if (a.adminTab === 'customers') html += adminCustomersHtml(a);
     else if (a.adminTab === 'content') html += adminContentHtml(a);
@@ -2364,6 +2636,7 @@
       if (state.admin.adminTab === 'inquiries' && can('inquiries.read')) {
         state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
       }
+      if (state.admin.adminTab === 'deals' && can('deals.read')) await loadDeals();
       if (state.admin.adminTab === 'stats' && can('popular.read')) {
         state.admin.analytics = await api.admin.analytics();
       }
@@ -2722,6 +2995,43 @@
       return;
     }
 
+    var dealTab = t.closest('[data-deal-tab]');
+    if (dealTab) {
+      state.admin.dealTab = dealTab.getAttribute('data-deal-tab');
+      state.admin.dealFocus = null;
+      state.admin.deals = [];
+      // Painted before the fetch so the tab responds instantly, and marked
+      // loading so the switch does not flash «нікого немає» on its way.
+      state.admin.dealsLoading = true;
+      $app.innerHTML = renderAdmin();
+      try {
+        await loadDeals();
+        $app.innerHTML = renderAdmin();
+      } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+
+    // «Купив» / «Не купив» — from the card, and from the pencil's sheet, which
+    // is why this one handler serves both.
+    var dealSet = t.closest('[data-deal-set]');
+    if (dealSet) {
+      tg.haptic('light');
+      dealSet.disabled = true;
+      try {
+        closeSheet();
+        await setDealStatus(Number(dealSet.getAttribute('data-deal-set')), dealSet.getAttribute('data-to'));
+      } catch (err) { dealSet.disabled = false; toast(err.message, 'error'); }
+      return;
+    }
+
+    var dealEdit = t.closest('[data-deal-edit]');
+    if (dealEdit) {
+      var editId = Number(dealEdit.getAttribute('data-deal-edit'));
+      var found = (state.admin.deals || []).filter(function (d) { return d.id === editId; })[0];
+      if (found) sheetEditDeal(found);
+      return;
+    }
+
     // One tap adds the item and updates the counter — no page reload, because a
     // client browsing a catalogue must not lose their place.
     var add = t.closest('[data-add]');
@@ -2778,6 +3088,7 @@
           state.admin.inquiries = (await api.admin.inquiries()).inquiries || [];
           $app.innerHTML = renderAdmin();
         }
+        if (key === 'deals') { await loadDeals(); $app.innerHTML = renderAdmin(); }
         if (key === 'content') {
           // Channels come from the admin endpoint, not from the client config:
           // only it carries the post counts and the sync state the rows show.
@@ -3239,6 +3550,21 @@
 
     $nav.hidden = false;
     paintCartBadge(state.me.cartCount || 0);
+
+    // A reminder DM ("this client has been in progress for 12 days") carries a
+    // button that opens the app here, on that card. `deal-<id>` is the whole
+    // vocabulary; anything else, or anybody without the right, simply lands on
+    // the catalogue as usual — a deep link chooses a screen, it does not open
+    // one, and the server still decides what the screen may show.
+    var deep = /^deal-(\d+)$/.exec(tg.deepLink || '');
+    if (deep && state.me.admin && can('deals.read')) {
+      state.admin.adminTab = 'deals';
+      state.admin.dealFocus = Number(deep[1]);
+      await go('admin');
+      await focusDeal(state.admin.dealFocus);
+      return;
+    }
+
     // Catalogues first: browsing pictures is what the client came for, and the
     // discounts tab is one tap away.
     await go(state.me.registered ? 'catalog' : 'home');

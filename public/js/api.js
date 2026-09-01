@@ -168,6 +168,20 @@
       // period: 'month' | 'year' | 'all', or { from, to }
       popular: function (query) { return request('GET', '/api/admin/popular', undefined, query || {}); },
 
+      // ── did they buy it? status: 'in_progress' | 'bought' | 'not_bought' ──
+      // One list for all three tabs, and one write for both the checkmark and
+      // the pencil — recording an outcome and fixing a mis-tap are the same
+      // call by design (see server/deals.js).
+      deals: function (status) {
+        return request('GET', '/api/admin/deals', undefined, status ? { status: status } : {});
+      },
+      setDealStatus: function (id, status, patch) {
+        var body = { status: status };
+        if (patch && patch.amountUsd !== undefined) body.amountUsd = patch.amountUsd;
+        if (patch && patch.note !== undefined) body.note = patch.note;
+        return request('PATCH', '/api/admin/deals/' + id, body);
+      },
+
       // ── birthday audit trail ──
       birthdayClaims: function (verdict) { return request('GET', '/api/admin/birthday-claims', undefined, verdict ? { verdict: verdict } : {}); },
       setBirthday: function (customerId, date) { return request('POST', '/api/admin/customers/' + customerId + '/birthday', { birthday: date }); },

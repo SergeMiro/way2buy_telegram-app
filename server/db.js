@@ -316,7 +316,7 @@ export async function seed({ force = false } = {}) {
     // identity sequences restart so a reseed is byte-for-byte reproducible.
     await db.exec(`TRUNCATE TABLE
       notifications, ai_messages, ai_proposals, ai_conversations, scheduler_lock,
-      redemptions, birthday_claims, cart_events, cart_items, inquiries,
+      redemptions, birthday_claims, cart_events, cart_items, deals, inquiries,
       promo_codes, events, purchases, posts, campaigns, holidays, customers
       RESTART IDENTITY CASCADE`);
   }

@@ -25,8 +25,8 @@
 //  monthly and yearly views the same query.
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
-import { notifyCustomer, notifyAdmins, adminIds } from './notify.js';
-import { sendToUser } from './telegram.js';
+import { notifyCustomer, notifyStaff, supportIds } from './notify.js';
+import { openDeal } from './deals.js';
 import { asJson } from './sql.js';
 import { mediaUrl, isEmojiRef } from './media.js';
 
@@ -34,10 +34,10 @@ const iso = (ms) => new Date(ms).toISOString();
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // Dasha is support, Maryna is the owner: the inquiry goes to BOTH, which is
-// exactly what Maryna asked for. Falls back to the admin list when no separate
-// support id is configured, so nothing is silently lost.
-export const supportIds = () =>
-  (process.env.SUPPORT_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+// exactly what Maryna asked for. The list itself now lives in notify.js, beside
+// the admin one — "who gets told" is one question — and is re-exported here
+// because this is where callers have always looked for it.
+export { supportIds };
 
 // Who the client is writing to — and it is ONE person, always the same one.
 //
@@ -376,17 +376,17 @@ export async function sendInquiry({ customer, message = '', now = Date.now() }) 
   const body = `${lead}\n${items.map(itemLine).join('\n')}\n${tail(false)}`;
   const bodyHtml = `${escapeHtml(lead)}\n${items.map(itemLineHtml).join('\n')}\n${tail(true)}`;
 
-  // Maryna (admins) get it in the admin alert feed + DM. The client is never
-  // told this happened — nothing in the response or in their notification feed
-  // names an admin, and the confirmation they see credits Dasha alone.
-  await notifyAdmins({ kind: 'inquiry', title, body, bodyHtml, dedupeKey: `inquiry:${inquiryId}` });
-  // Dasha gets the same message as a DM. Separate ids so support can be someone
-  // who is not an admin of the panel; anyone on both lists is not sent twice.
-  const alerted = await adminIds();
-  const dashaIds = supportIds().filter((id) => !alerted.includes(id));
-  for (const id of dashaIds) {
-    void Promise.resolve(await sendToUser(id, `<b>${escapeHtml(title)}</b>\n${bodyHtml}`)).catch(() => {});
-  }
+  // Maryna (admins, alert feed + DM) and Dasha (DM only — support can be
+  // someone who is not an admin of the panel, and anyone on both lists is not
+  // sent twice). The client is never told this happened: nothing in the
+  // response or in their notification feed names an admin, and the confirmation
+  // they see credits Dasha alone.
+  await notifyStaff({ kind: 'inquiry', title, body, bodyHtml, dedupeKey: `inquiry:${inquiryId}` });
+
+  // The same act that sends the message files the client under «в процесі
+  // покупки». Doing it here rather than as a step somebody has to remember is
+  // the whole reason the section can be trusted — see deals.js.
+  await openDeal({ customerId: customer.id, inquiryId, items, now });
 
   // The client's own confirmation, in their language, with no jargon.
   await notifyCustomer({
