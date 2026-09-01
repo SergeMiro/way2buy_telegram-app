@@ -12,7 +12,7 @@ in one zero-build Node application on Postgres.
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
-[![Tests](https://img.shields.io/badge/tests-125_node%3Atest-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-248_node%3Atest-brightgreen)](#testing)
 [![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
 🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
@@ -106,6 +106,11 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 - **«Синхронізувати»** — pick a catalogue, press once, and it is made to match its Telegram
   channel: new posts in, changed ones updated, retired ones out of the vitrine. The channel is
   only read, never written to (see [Filling the catalogues](#filling-the-catalogues))
+- **«Покупки»** (`deals.js`) — did the client who wrote in actually buy it? Sending an inquiry
+  files them under «в процесі» automatically; three tabs (в процесі / купив / не купив) are one
+  table and one `status` column, so a card is moved with a swipe, a checkmark, or the pencil
+  that corrects a mis-tap. A card left undecided asks for itself every `W2B_DEAL_REMIND_DAYS`
+  days, as a DM to both the owner and support carrying a link straight to that card
 - **Pending-cost and alert views**, popular-item ranking, scheduler status
 - **Reports** — a built-in template narrative, or a generated one through **Gemini 1.5 Flash**
   when a key is present; reports can be sent to Telegram
@@ -129,8 +134,8 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | Area | Technology | Why |
 | --- | --- | --- |
 | Runtime | **Node.js 20+**, ES modules | — |
-| HTTP | **Express 4.21** | One process, one router, 53 endpoints |
-| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 20 tables, 79 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
+| HTTP | **Express 4.21** | One process, one router, 67 endpoints |
+| Database | **PostgreSQL 17** on **Supabase**, via `pg` | 23 tables, 91 indexes, real types: `numeric` money, `timestamptz` dates, `boolean` flags, `jsonb` documents |
 | Schema | `server/sql/schema.sql`, idempotent | DDL as a reviewable data file — the same file is applied to Supabase and loaded by the tests |
 | Statement layer | `server/sql.js` | Translates the original `?` / `@named` statements to `$n`, so the port added `await` instead of rewriting 200 queries |
 | Frontend | **Vanilla JavaScript**, no framework, no bundler | Zero build step (ADR-001) |
@@ -139,7 +144,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
 | Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
 | Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
-| Tests | **`node:test`** — 125 tests across 11 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
+| Tests | **`node:test`** — 248 tests across 22 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
 | Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
 | Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
 
@@ -159,7 +164,7 @@ Three runtime dependencies in total: `express`, `pg`, `dotenv`. That is the poin
         │  fetch /api/*         channel_post webhook · DMs · publish
         ▼                                     ▼
    ┌──────────────────────────────────────────────────────┐
-   │  server/index.js — Express router (53 endpoints)     │
+   │  server/index.js — Express router (67 endpoints)     │
    │                                                      │
    │   loyalty.js     cashback · tiers · badges · streaks │
    │   birthday.js    claim windows, one claim per year   │
@@ -205,11 +210,11 @@ Decisions worth naming:
 
 ## Data model
 
-20 tables with 79 indexes, created by `server/sql/schema.sql`:
+23 tables with 91 indexes, created by `server/sql/schema.sql`:
 
 - **Customers & loyalty** — `customers`, `purchases`, `redemptions`
 - **Discounts** — `discount_rules`, `campaigns`, `holidays`, `birthday_claims`, `promo_codes`
-- **Content & demand** — `channels`, `posts`, `inquiries`, `cart_items`, `cart_events`
+- **Content & demand** — `channels`, `posts`, `inquiries`, `deals`, `cart_items`, `cart_events`
 - **Comms** — `notifications`, `events`
 - **AI** — `ai_conversations`, `ai_messages`, `ai_proposals`
 - **Infrastructure** — `scheduler_lock`
@@ -221,7 +226,7 @@ Supabase table editor — the business logic stays in the server modules, where 
 
 ## API
 
-53 endpoints. The client-facing set:
+67 endpoints. The client-facing set:
 
 | Method | Route | Purpose |
 | --- | --- | --- |
@@ -241,7 +246,7 @@ Supabase table editor — the business logic stays in the server modules, where 
 
 The admin set is mounted under `/api/admin/*`: `customers`, `posts`, `post`, `purchase`,
 `purchases/:id/cost`, `pending-costs`, `profit`, `popular`, `rules`, `campaigns`,
-`campaigns/:id/materialize`, `holidays`, `birthday-claims`, `promo`, `inquiries`, `channels`,
+`campaigns/:id/materialize`, `holidays`, `birthday-claims`, `promo`, `inquiries`, `deals`, `channels`,
 `telegram`, `alerts`, `scheduler`, `tick`, `report`, `report/send`, and
 `POST channels/:key/sync` — one bounded, resumable pass of «Синхронізувати».
 
@@ -287,6 +292,9 @@ Everything is optional — the app runs in demo mode with an empty `.env`.
 | `CASHBACK_REWARD_USD` | `100` | Reward per step |
 | `GEMINI_API_KEY` | — | AI reports; empty falls back to the template narrative |
 | `SCHEDULER_INTERVAL_MIN` | `15` | Tick interval, in minutes |
+| `W2B_DEAL_REMIND_DAYS` | `5` | How long a purchase may sit «в процесі» before the owner and support are reminded to close it. Set `7` for a weekly rhythm. |
+| `W2B_DEAL_REMIND_ENABLED` | `1` | `0` switches those reminders off entirely |
+| `W2B_DEAL_REMIND_MAX` | `0` | Stop nagging after this many reminders; `0` never stops |
 | `DATABASE_URL` | — | Postgres connection string. **Empty runs an in-process PGlite** — that is what makes the zero-config demo work. |
 | `W2B_AUTO_MIGRATE` | — | `1` applies the schema on boot. Off by default: DDL does not belong on a request path. |
 | `W2B_DB_POOL_MAX` | `10` (`1` on Vercel) | Connection pool size |
@@ -367,12 +375,17 @@ keep up.
 
 ## The scheduler
 
-Three idempotent jobs, every 15 minutes:
+Idempotent jobs, every 15 minutes:
 
 1. **Birthday windows opening today** → notify the client that the discount is claimable
 2. **A sale older than a day with no factory cost** → remind the admin, so margin data stays
    complete
-3. **Campaign statuses** → activate and expire on schedule
+3. **A purchase still «в процесі» after `W2B_DEAL_REMIND_DAYS`** → ask the owner and support how
+   it ended, with a link to that card. Doing nothing is a valid answer: the card stays open and
+   asks again on the next window
+4. **Campaign statuses** → activate and expire on schedule
+5. **A fitting room filled hours ago and never sent** → one discount, once, ever
+6. **Catalogue cards whose brand nothing has named** → read the logo off the photograph
 
 Because each job reconciles state rather than firing an event, a restart cannot skip or
 duplicate a notification. `scheduler_lock` prevents two processes from ticking at once. On a
@@ -385,7 +398,7 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-125 tests across eleven suites, on the Node built-in test runner — no test framework dependency,
+248 tests across twenty-two suites, on the Node built-in test runner — no test framework dependency,
 and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
@@ -395,6 +408,7 @@ and on real Postgres rather than a stand-in:
 | `birthday.test.js` | Claim windows, one claim per year, edge dates |
 | `rules.test.js` | Discount rule resolution and precedence |
 | `profit.test.js` | Sale/cost pairing and margin calculation |
+| `deals.test.js` | Purchase status: one card per inquiry, the three generated columns, the pencil, the reminder rhythm |
 | `telegram.test.js` | Publishing, webhook parsing, DM delivery |
 
 Each file runs in its own process against a private in-memory PGlite, so the suites are
@@ -431,10 +445,10 @@ on quiet days.
 
 ```
 server/
-  index.js        Express router — 53 endpoints
+  index.js        Express router — 67 endpoints
   db.js           drivers (pg / PGlite), statements, transactions, seed
   sql.js          statement translation, value normalisation, jsonb helper
-  sql/schema.sql  the schema: 20 tables, 79 indexes, views, RLS posture
+  sql/schema.sql  the schema: 23 tables, 91 indexes, views, RLS posture
   env.js          validated configuration
   catalog.js      the vitrine query: selection, facets, keyset paging
   sync.js         «Синхронізувати»: reconcile a catalogue with its channel,
@@ -445,6 +459,7 @@ server/
   campaigns.js    scheduled campaigns and materialisation
   rules.js        editable discount rules
   cart.js         fitting room, cart events, popularity
+  deals.js        did they buy it? — в процесі / купив / не купив, and the nudge
   profit.js       sale vs factory cost, margin, pending-cost reminders
   telegram.js     Bot API — publish, channel_post webhook, DM, photo proxy
   tme.js          a public channel's own web page — the only path to its history
@@ -466,7 +481,7 @@ scripts/          telegram.mjs (bot setup)
                   import-history.mjs (catalogues ← Telegram Desktop export)
                   migrate-sqlite-to-postgres.mjs (one-off data import)
                   sql/keepalive.sql (anti-pause heartbeat for the Free plan)
-tests/            11 node:test suites, 125 tests
+tests/            22 node:test suites, 248 tests
 docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
 

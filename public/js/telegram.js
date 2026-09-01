@@ -80,6 +80,19 @@
     username: inTelegram ? wa.initDataUnsafe.user.username || null : null,
     languageCode: inTelegram ? wa.initDataUnsafe.user.language_code || null : null,
 
+    // WHERE the app was asked to open, as opposed to who opened it. A staff
+    // reminder ("this client has been in progress 12 days") carries a button
+    // that opens this Mini App on that exact card, and this is how the app
+    // learns which one. Three sources, same meaning, because a Mini App can be
+    // launched three ways: `?w2b=…` on the URL (a plain link, and what
+    // PUBLIC_URL builds), Telegram's own ?startapp= payload, and the query the
+    // client puts on the iframe URL. Never a credential — it only chooses a
+    // screen, and every screen behind it is still gated by the server.
+    deepLink: (function () {
+      if (inTelegram && wa.initDataUnsafe.start_param) return String(wa.initDataUnsafe.start_param);
+      return params.get('w2b') || params.get('startapp') || params.get('tgWebAppStartParam') || '';
+    })(),
+
     setUserId: function (id) {
       tg.userId = String(id);
       try { window.localStorage.setItem(LS_KEY, tg.userId); } catch (e) { /* ignore */ }

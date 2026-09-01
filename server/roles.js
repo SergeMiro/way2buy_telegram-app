@@ -33,6 +33,12 @@ export const PERMISSIONS = {
   // ── the manager's day ──────────────────────────────────────────────────
   'inquiries.read':    ['super', 'admin'],
   'inquiries.write':   ['super', 'admin'],   // mark answered / closed
+  // Did the client buy it? Both of them work this list — the answer is known to
+  // whichever of the two actually spoke to the client, and that is not always
+  // the same person. Recording an outcome is not the same as setting a price,
+  // so it stays on the manager's side of the line.
+  'deals.read':        ['super', 'admin'],
+  'deals.write':       ['super', 'admin'],   // купив / не купив, and fixing a mis-tap
   'customers.read':    ['super', 'admin'],   // names, phones, addresses
   'customers.write':   ['super', 'admin'],   // fix a birthday on file
   'catalog.read':      ['super', 'admin'],

@@ -2221,3 +2221,62 @@ body.is-zooming .fit-row__thumb img { transition: none; }
 .tip--stock .tip__kind { background: var(--w2b-primary); color: var(--w2b-on-primary); }
 .tip--check .tip__kind { background: var(--w2b-accent-soft); color: var(--w2b-gold-strong); }
 .tip__text { font-size: var(--w2b-fs-sm); line-height: var(--w2b-lh-body); color: var(--w2b-text); }
+
+/* ── «Покупки»: the swipeable purchase card ───────────────────────────────
+   A .deal is a .panel that can be pushed sideways. The two verdicts sit
+   UNDER it, one at each edge, and are revealed by the card moving rather
+   than by anything appearing — so the gesture explains itself the moment it
+   starts, and a card that snaps back has said nothing.
+
+   The card is clipped by its own overflow, so the hints never escape it, and
+   `touch-action: pan-y` hands vertical drags straight to the page: a list
+   that fights the scroll is worse than a list with no gesture at all. */
+.deal {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--w2b-radius-card);
+  background: var(--w2b-surface-2);
+  touch-action: pan-y;
+}
+
+.deal__body {
+  position: relative;
+  padding: var(--w2b-space-4);
+  border-radius: var(--w2b-radius-card);
+  background: var(--w2b-surface-1);
+  box-shadow: var(--w2b-inset-hairline), var(--w2b-shadow-1);
+  transition: transform 180ms ease;
+}
+/* While a finger is down the card must track it exactly — a transition here
+   would make the card lag behind the thumb. */
+.deal.is-dragging .deal__body { transition: none; }
+
+.deal__hint {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--w2b-space-4);
+  font-size: var(--w2b-fs-xs);
+  font-weight: var(--w2b-fw-medium);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.deal__hint--yes { left: 0;  color: var(--w2b-ok-text); }
+.deal__hint--no  { right: 0; color: var(--w2b-danger-text); }
+.deal.is-yes .deal__hint--yes,
+.deal.is-no  .deal__hint--no { opacity: 1; }
+
+/* Open longer than the reminder window: the one card in the tab that is
+   actually asking for an answer. */
+.deal--overdue .deal__body { box-shadow: var(--w2b-inset-hairline), 0 0 0 1px var(--w2b-warn); }
+
+/* Arrived here from a reminder's «Відкрити картку» button. */
+.deal.is-focus .deal__body { box-shadow: var(--w2b-inset-hairline), 0 0 0 2px var(--w2b-primary); }
+
+.seg__btn b { font-weight: var(--w2b-fw-bold); opacity: 0.65; }
+
+@media (prefers-reduced-motion: reduce) {
+  .deal__body, .deal__hint { transition-duration: 1ms !important; }
+}

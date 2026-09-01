@@ -1,15 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────
 //  scheduler.js — the in-process tick.
 //
-//  Three jobs, all idempotent (they reconcile state rather than fire once, so
+//  Six jobs, all idempotent (they reconcile state rather than fire once, so
 //  a restart can never miss or double a notification):
 //   1. birthday window opens today  → tell the client their discount is ready
 //   2. sale older than a day with no cost entered → remind the admin
-//   3. campaign statuses            → activate/expire on schedule
-//   4. a fitting room filled hours ago and never sent → one discount, once
-//   5. cards whose brand nothing has named yet → read the logo off the photo
+//   3. a purchase still «в процесі» after N days → ask the staff how it ended
+//   4. campaign statuses            → activate/expire on schedule
+//   5. a fitting room filled hours ago and never sent → one discount, once
+//   6. cards whose brand nothing has named yet → read the logo off the photo
 //
-//  (5) is the only job that costs money per item, so it is also the only one
+//  (6) is the only job that costs money per item, so it is also the only one
 //  that works in a small batch and leaves the rest for the next tick. Without a
 //  GEMINI_API_KEY it reports itself skipped and nothing else changes.
 //
@@ -24,6 +25,7 @@ import { remindPendingCosts } from './profit.js';
 import { notifyCustomer } from './notify.js';
 import * as campaigns from './campaigns.js';
 import { remindAbandoned } from './abandoned.js';
+import { remindStaleDeals } from './deals.js';
 import { backfillBrands } from './vision.js';
 
 const MINUTE = 60000;
@@ -72,6 +74,11 @@ export async function tick(now = Date.now()) {
     result.abandoned = await remindAbandoned(now);
   } catch (e) {
     result.abandoned = { error: String(e.message || e) };
+  }
+  try {
+    result.deals = await remindStaleDeals(now);
+  } catch (e) {
+    result.deals = { error: String(e.message || e) };
   }
   try {
     result.campaigns = campaigns.reconcileStatus ? await campaigns.reconcileStatus(now) : { skipped: true };

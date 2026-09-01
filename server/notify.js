@@ -18,6 +18,13 @@ const now = () => new Date().toISOString();
 // bootstrap that cannot lock the owner out.
 export const adminIds = () => alertIds();
 
+// Dasha and anyone else who answers clients but does not run the shop. She is
+// not on the alert list (that one carries margins), so anything she has to act
+// on is sent here as well. Lives beside adminIds because "who gets told" is one
+// question with two answers, not two unrelated settings.
+export const supportIds = () =>
+  (process.env.SUPPORT_TG_IDS || '').split(',').map((s) => s.trim()).filter(Boolean);
+
 // Returns the notification id when a NEW row was written, null when the
 // dedupe key had already been used (i.e. nothing to deliver).
 async function writeRow({ customerId = null, kind, title, body = '', promoCodeId = null, campaignId = null, dedupeKey }) {
@@ -34,10 +41,10 @@ async function markDm(notificationId, status) {
   await db.prepare('UPDATE notifications SET dm_status=? WHERE id=?').run(status, notificationId);
 }
 
-async function dm(tgUserId, text, notificationId) {
+async function dm(tgUserId, text, notificationId, extra = {}) {
   if (!tgUserId) return await markDm(notificationId, 'skipped');
   try {
-    await sendToUser(tgUserId, text);
+    await sendToUser(tgUserId, text, extra);
     await markDm(notificationId, liveMode() ? 'sent' : 'simulated');
   } catch {
     // A DM failure must never fail the operation that triggered it — the
@@ -63,12 +70,34 @@ export async function notifyCustomer({ customerId, kind, title, body = '', promo
 // rendered as text in the cabinet, where markup would show up as markup — while
 // the DM gets the same message with its item titles turned into taps. The
 // caller is responsible for escaping anything it interpolates into bodyHtml.
-export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, dedupeKey }) {
+//
+// `extra` is passed straight to Telegram's sendMessage — today that is the
+// inline keyboard on a reminder, whose one button opens the Mini App on the
+// exact card the message is about. It never touches the stored row: the cabinet
+// is already looking at the thing the button would open.
+export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, dedupeKey, extra = {} }) {
   const id = await writeRow({ customerId: null, kind, title, body, dedupeKey });
   if (!id) return null;
   const text = `<b>${escapeHtml(title)}</b>\n${bodyHtml || escapeHtml(body)}`;
   for (const tgId of await adminIds()) {
-    void dm(tgId, text, id);
+    void dm(tgId, text, id, extra);
+  }
+  return id;
+}
+
+// The owners AND the manager. Two lists, one message, nobody told twice: an
+// alert is written once (so `dedupe_key` still makes a re-run a no-op) and the
+// support ids that are not already admins get the same text as a plain DM.
+//
+// Returns the notification id, or null when the dedupe key had already been
+// used — in which case nothing was sent to anybody, which is the point.
+export async function notifyStaff({ kind, title, body = '', bodyHtml = null, dedupeKey, extra = {} }) {
+  const id = await notifyAdmins({ kind, title, body, bodyHtml, dedupeKey, extra });
+  if (!id) return null;
+  const alerted = await adminIds();
+  const text = `<b>${escapeHtml(title)}</b>\n${bodyHtml || escapeHtml(body)}`;
+  for (const tgId of supportIds().filter((x) => !alerted.includes(x))) {
+    void dm(tgId, text, null, extra);
   }
   return id;
 }
