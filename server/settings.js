@@ -35,6 +35,13 @@ import { db } from './db.js';
 export const DEFINITIONS = [
   // ── Продажі ────────────────────────────────────────────────────────────
   {
+    key: 'deal.followup_enabled', group: 'Продажі', sort: 9,
+    label: 'Нагадувати про угоди', kind: 'switch',
+    def: 1, min: 0, max: 1, step: 1,
+    env: 'W2B_DEAL_FOLLOWUP_ENABLED', envBool: true,
+    hint: 'Вимкнено — три вкладки і статуси працюють як завжди, просто «клієнт у процесі, купив?» більше не приходить.',
+  },
+  {
     key: 'deal.followup_days', group: 'Продажі', sort: 10,
     label: 'Нагадувати про угоду в процесі кожні', kind: 'days',
     def: 5, min: 1, max: 90, step: 1, env: 'W2B_DEAL_FOLLOWUP_DAYS',
@@ -42,6 +49,13 @@ export const DEFINITIONS = [
   },
 
   // ── Примірочна ─────────────────────────────────────────────────────────
+  {
+    key: 'abandon.enabled', group: 'Примірочна', sort: 19,
+    label: 'Давати знижку за покинуту примірочну', kind: 'switch',
+    def: 1, min: 0, max: 1, step: 1,
+    env: 'W2B_ABANDON_ENABLED', envBool: true,
+    hint: 'Вимкнено — нічого не нараховується й не надсилається. Хто знижку вже отримав, її не втрачає.',
+  },
   {
     key: 'abandon.hours', group: 'Примірочна', sort: 20,
     label: 'Чекати перед знижкою за покинуту примірочну', kind: 'hours',
@@ -190,6 +204,15 @@ export async function num(key) {
   return clamp(def, value);
 }
 
+/**
+ * A switch, as a boolean. Stored in the same numeric column as everything else
+ * — 1 or 0 — because a second column type for two settings would be a second
+ * code path for every read, write and validation in this file.
+ */
+export async function flag(key) {
+  return (await num(key)) === 1;
+}
+
 /** Several at once, without one round trip each. */
 export async function nums(...keys) {
   await load();
@@ -305,9 +328,16 @@ export async function seedSettings() {
   const params = [];
   for (const d of DEFINITIONS) {
     const raw = d.env ? process.env[d.env] : '';
-    const fromEnv = raw === undefined || raw === null || String(raw).trim() === ''
-      ? null
-      : Number(raw) * (d.envScale || 1);
+    const unset = raw === undefined || raw === null || String(raw).trim() === '';
+    let fromEnv = null;
+    if (!unset) {
+      // A switch keeps the semantics its variable already had: ONLY '0' turned
+      // the rule off, anything else left it on. Changing that quietly would
+      // re-enable a rule somebody had deliberately disabled.
+      fromEnv = d.envBool
+        ? (String(raw).trim() === '0' ? 0 : 1)
+        : Number(raw) * (d.envScale || 1);
+    }
     params.push(d.key, clamp(d, Number.isFinite(fromEnv) ? fromEnv : d.def));
   }
   // ONE statement, not one per setting. This runs on every boot, and on a

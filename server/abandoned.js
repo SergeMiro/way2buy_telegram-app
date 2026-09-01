@@ -23,7 +23,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { db } from './db.js';
 import { notifyCustomer } from './notify.js';
-import { nums } from './settings.js';
+import { nums, flag } from './settings.js';
 
 const HOUR = 3600_000;
 const iso = (ms) => new Date(ms).toISOString();
@@ -44,7 +44,7 @@ export async function config() {
     minOrderUsd,
     // '5hour_10per'
     grantKey: `${hours}hour_${percent}per`,
-    enabled: process.env.W2B_ABANDON_ENABLED !== '0',
+    enabled: await flag('abandon.enabled'),
   };
 }
 

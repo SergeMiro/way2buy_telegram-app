@@ -186,6 +186,38 @@ test('all() says when a value is no longer the default, so the screen can offer 
   assert.equal((await all()).rows.find((r) => r.key === 'deal.followup_days').isDefault, true);
 });
 
+/* ── switches ────────────────────────────────────────────────────────────── */
+
+test('a switch is stored as 1/0 in the same column and read as a boolean', async () => {
+  const { flag } = await import('../server/settings.js');
+  assert.equal(await flag('deal.followup_enabled'), true, 'типово увімкнено');
+  await set('deal.followup_enabled', 0);
+  assert.equal(await flag('deal.followup_enabled'), false);
+  assert.equal(await num('deal.followup_enabled'), 0);
+  await set('deal.followup_enabled', 1);
+  assert.equal(await flag('deal.followup_enabled'), true);
+});
+
+test('a switch refuses anything but 0 and 1', async () => {
+  await assert.rejects(() => set('abandon.enabled', 2), SettingError);
+  await assert.rejects(() => set('abandon.enabled', -1), SettingError);
+  assert.equal(await num('abandon.enabled'), 1);
+});
+
+test('the cabinet gets switches as kind=switch with their two bounds', async () => {
+  const rows = (await all()).rows;
+  const sw = rows.filter((r) => r.kind === 'switch');
+  assert.equal(sw.length, 2, 'два тумблера');
+  for (const it of sw) {
+    assert.equal(it.min, 0);
+    assert.equal(it.max, 1);
+    assert.ok(it.value === 0 || it.value === 1);
+  }
+  // Each sits at the top of its own card, before the numbers it governs.
+  const products = rows.filter((r) => r.group === 'Продажі');
+  assert.equal(products[0].key, 'deal.followup_enabled');
+});
+
 /* ── the consumers actually read it ──────────────────────────────────────── */
 
 test('the abandoned-cart rule takes its four numbers from the table', async () => {

@@ -1956,12 +1956,10 @@ body {
   border-radius: 50%;
   box-shadow: 0 20px 55px rgba(49, 27, 39, 0.27), 0 0 0 5px rgba(255, 253, 252, 0.72);
 }
-/* The zoom factor: a button, not a decal.
-   `pointer-events: auto` is the whole point — its parent is deliberately
-   pointer-events: none so the finger under the loupe keeps driving the
-   magnifier, and this one element has to opt back in.
-   34px rather than the old 29: this is now something people press, and the
-   audience this shop was built for does not aim precisely. */
+/* The zoom factor on the loupe: a LABEL. The loupe is pointer-events: none —
+   the finger under it keeps driving the magnifier — so nothing inside it can be
+   pressed. What changes the factor is the 🔍 chip in the search row
+   (.filterbtn--zoom); this only says what the chip currently means. */
 .product-loupe__zoom {
   position: absolute;
   right: 1px;
@@ -1981,14 +1979,16 @@ body {
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
-  pointer-events: auto;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+  pointer-events: none;
 }
-.product-loupe__zoom:active { transform: scale(0.92); opacity: 0.85; }
-/* Pinned: the finger has gone and the badge is what the eye should find. */
-.product-loupe.is-pinned .product-loupe__zoom {
-  box-shadow: 0 0 0 3px rgba(49, 27, 39, 0.14);
+
+/* The chip that changes it, in the search row beside the filter button. */
+.filterbtn--zoom {
+  gap: 3px;
+  font-size: var(--w2b-fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .product-loupe__viewport {
   position: absolute;

@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
 import { addToCart, sendInquiry } from '../server/cart.js';
 import { config, remindAbandoned, hasGrant, pending } from '../server/abandoned.js';
+import { set as setSetting } from '../server/settings.js';
 
 await migrate();
 
@@ -161,7 +162,9 @@ test('two ticks racing produce one discount, because the database decides', asyn
 });
 
 test('the rule can be switched off without deleting anything', async () => {
-  process.env.W2B_ABANDON_ENABLED = '0';
+  // The switch is a row in `app_settings` now — «Параметри» → Примірочна — so
+  // turning the rule off is a tap in the cabinet, not a redeploy.
+  await setSetting('abandon.enabled', 0);
   try {
     const c = await customer('Вимкнено');
     await addedHoursAgo(c, 10);
@@ -169,6 +172,19 @@ test('the rule can be switched off without deleting anything', async () => {
     assert.equal(res.skipped, true);
     assert.equal(await hasGrant(c.id, '5hour_10per'), false);
   } finally {
-    delete process.env.W2B_ABANDON_ENABLED;
+    await setSetting('abandon.enabled', 1);
   }
+});
+
+test('switching it back on does not re-grant to whoever already had it', async () => {
+  const c = await customer('Вже отримав');
+  await addedHoursAgo(c, 10);
+  await remindAbandoned(NOW);
+  assert.equal(await hasGrant(c.id, '5hour_10per'), true);
+
+  await setSetting('abandon.enabled', 0);
+  await remindAbandoned(NOW);
+  await setSetting('abandon.enabled', 1);
+  const res = await remindAbandoned(NOW);
+  assert.equal(res.granted, 0, 'второй раз выдавать нельзя');
 });

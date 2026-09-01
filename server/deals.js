@@ -33,7 +33,7 @@ import { db } from './db.js';
 import { notifyAdmins, adminIds } from './notify.js';
 import { sendToUser } from './telegram.js';
 import { supportIds } from './cart.js';
-import { num } from './settings.js';
+import { num, flag } from './settings.js';
 
 const DAY = 86_400_000;
 const iso = (ms) => new Date(ms).toISOString();
@@ -52,7 +52,7 @@ export const LABELS = {
 export async function config() {
   return {
     days: await num('deal.followup_days'),
-    enabled: process.env.W2B_DEAL_FOLLOWUP_ENABLED !== '0',
+    enabled: await flag('deal.followup_enabled'),
   };
 }
 

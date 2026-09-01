@@ -256,13 +256,25 @@ test('a value outside the allowed range is refused, not clamped silently', async
   assert.equal((await config()).days, 5);
 });
 
-test('the whole sweep can be switched off', async () => {
+test('the whole sweep can be switched off from the cabinet', async () => {
   const { id } = await inquiry({ daysAgo: 40 });
-  process.env.W2B_DEAL_FOLLOWUP_ENABLED = '0';
+  await setSetting('deal.followup_enabled', 0);
   const res = await remindStaleDeals(NOW);
-  process.env.W2B_DEAL_FOLLOWUP_ENABLED = '';
   assert.equal(res.skipped, true);
   assert.equal(await nudges(id), 0);
+
+  // …and switching it back on resumes the nudges for the deals that waited.
+  await setSetting('deal.followup_enabled', 1);
+  await remindStaleDeals(NOW);
+  assert.equal(await nudges(id), 1);
+});
+
+test('the three tabs keep working while the nudges are off', async () => {
+  await setSetting('deal.followup_enabled', 0);
+  const { id } = await inquiry({ daysAgo: 40 });
+  assert.equal(await setStatus(id, { status: 'bought', now: NOW }), true);
+  assert.equal((await statusOf(id)).deal_status, 'bought');
+  await setSetting('deal.followup_enabled', 1);
 });
 
 test('daysOpen counts whole days and never goes negative', () => {

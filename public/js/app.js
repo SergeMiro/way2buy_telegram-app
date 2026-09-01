@@ -191,6 +191,50 @@
   /* ── product image loupe ──────────────────────────────────────────────────
      A short hold opens a 2x detail exactly around the point under the finger.
      Event delegation keeps it working after every view/search repaint. */
+  // ── увеличение лупы: одно число на весь магазин ───────────────────────────
+  //
+  // Three steps, 1.5 by default: 2x was chosen when the factor could not be
+  // adjusted, and the source is 800×800 — on most cards 2x magnifies pixels
+  // rather than detail.
+  //
+  // The state lives HERE and not inside the loupe, because two things read it:
+  // the loupe while it paints, and the button in the vitrine header that
+  // changes it. One variable is also the whole of "same factor on every
+  // article" — there is nothing per-card to keep in step.
+  var ZOOM_STEPS = [1.5, 2, 2.5];
+  var ZOOM_KEY = 'w2b:loupe-zoom';
+  var zoomStep = 0;
+  try {
+    var savedZoom = window.localStorage.getItem(ZOOM_KEY);
+    var savedIndex = savedZoom === null ? -1 : ZOOM_STEPS.indexOf(Number(savedZoom));
+    if (savedIndex >= 0) zoomStep = savedIndex;
+  } catch (e) { /* private mode — the default answers */ }
+
+  var zoomFactor = function () { return ZOOM_STEPS[zoomStep]; };
+  var zoomLabel = function () { return String(zoomFactor()) + 'x'; };
+
+  // The hint in the corner of every card shows the same figure. There are dozens
+  // of them on screen, so it is one CSS custom property rather than a repaint of
+  // the vitrine.
+  function paintZoomLabel() {
+    document.documentElement.style.setProperty('--w2b-zoom-label', '"' + zoomLabel() + '"');
+    var chips = document.querySelectorAll('[data-zoom-cycle]');
+    for (var i = 0; i < chips.length; i += 1) chips[i].textContent = '🔍 ' + zoomLabel();
+  }
+
+  function cycleZoom() {
+    zoomStep = (zoomStep + 1) % ZOOM_STEPS.length;
+    try { window.localStorage.setItem(ZOOM_KEY, String(zoomFactor())); } catch (e) { /* ignore */ }
+    paintZoomLabel();
+    return zoomFactor();
+  }
+
+  // Written once at boot, so the hints on the cards say the remembered factor
+  // from the first paint. Without this they show the CSS fallback until somebody
+  // presses the chip — and a card promising 1.5x while the loupe does 2.5x is
+  // worse than no hint at all.
+  paintZoomLabel();
+
   function initImageLoupe() {
     var loupe = document.createElement('div');
     loupe.className = 'product-loupe';
@@ -198,10 +242,10 @@
     loupe.innerHTML = '<div class="product-loupe__viewport">' +
       '<img class="product-loupe__image" alt="" draggable="false" />' +
       '</div>' +
-      // The zoom factor is a BUTTON, not a decal. It used to be a CSS ::after
-      // reading "2x", which nobody could press — the loupe is pointer-events:
-      // none so the finger under it keeps driving the magnifier.
-      '<button class="product-loupe__zoom" type="button" aria-label="Змінити збільшення"></button>';
+      // A label, not a control: the loupe is pointer-events: none — the finger
+      // under it keeps driving the magnifier — so nothing inside it can be
+      // pressed. The factor is changed by the chip in the vitrine header.
+      '<span class="product-loupe__zoom"></span>';
     document.body.appendChild(loupe);
 
     var loupeImage = loupe.querySelector('.product-loupe__image');
@@ -220,27 +264,6 @@
     var LOUPE_SIZE = 152;
     var VIEWPORT_SIZE = 138;
 
-    // Three steps, and 1.5 is the default: 2x was chosen when the loupe could
-    // not be adjusted, and for most cards it is more magnification than the
-    // 800px source can actually show.
-    //
-    // ONE factor for the whole shop, not one per card. It is a single variable
-    // read at paint time, so pressing the badge changes what every article
-    // will magnify — there is nothing per-card to keep in step. localStorage
-    // makes the choice survive a reload; it is a per-viewer preference, not
-    // shop configuration, so it does not belong in «Параметри».
-    var ZOOM_STEPS = [1.5, 2, 2.5];
-    var ZOOM_KEY = 'w2b:loupe-zoom';
-    var zoomStep = 0;
-    try {
-      var savedZoom = window.localStorage.getItem(ZOOM_KEY);
-      var savedIndex = savedZoom === null ? -1 : ZOOM_STEPS.indexOf(Number(savedZoom));
-      if (savedIndex >= 0) zoomStep = savedIndex;
-    } catch (e) { /* private mode — the default answers */ }
-    var zoom = function () { return ZOOM_STEPS[zoomStep]; };
-    // Whether the loupe is staying on screen after the finger left, which is
-    // the only state in which its badge can be pressed.
-    var pinned = false;
 
     function zoomMediaFromEvent(eventTarget) {
       var image = eventTarget && eventTarget.closest && eventTarget.closest(
@@ -284,7 +307,7 @@
       var imageY = localY - box.top;
       var centre = VIEWPORT_SIZE / 2;
 
-      var factor = zoom();
+      var factor = zoomFactor();
       loupeImage.style.width = (box.width * factor) + 'px';
       loupeImage.style.height = (box.height * factor) + 'px';
       loupeImage.style.left = (centre - imageX * factor) + 'px';
@@ -306,60 +329,22 @@
       active = true;
       suppressContextMenuUntil = Date.now() + 1000;
       loupeImage.src = target.currentSrc || target.src;
+      zoomBadge.textContent = zoomLabel();
       paintLoupe(lastX, lastY);
       loupe.classList.add('is-visible');
       document.body.classList.add('is-zooming');
       tg.haptic('light');
     }
 
-    var zoomButton = loupe.querySelector('.product-loupe__zoom');
-
-    function paintZoomLabel() {
-      // «1.5x», «2x», «2.5x» — the same wording the old decal used.
-      var label = String(zoom()) + 'x';
-      zoomButton.textContent = label;
-      // The little hint in the corner of every card carries the same figure,
-      // and there are dozens of them on screen — so it is one CSS custom
-      // property rather than a re-render of the vitrine.
-      document.documentElement.style.setProperty('--w2b-zoom-label', '"' + label + '"');
-    }
-    paintZoomLabel();
-
-    // Pressing the badge steps 1.5 → 2 → 2.5 → 1.5. Repainted in place, so the
-    // effect is visible on the very card being looked at rather than only on
-    // the next one.
-    zoomButton.addEventListener('click', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      zoomStep = (zoomStep + 1) % ZOOM_STEPS.length;
-      try { window.localStorage.setItem(ZOOM_KEY, String(zoom())); } catch (err) { /* ignore */ }
-      paintZoomLabel();
-      if (active) paintLoupe(lastX, lastY);
-      tg.haptic('light');
-    });
-
-    // The finger left but the loupe stays: the badge is inside it, and a
-    // control that vanishes with the gesture cannot be pressed. The page is
-    // unlocked again at the same moment — a magnifier left on screen must not
-    // also hold the catalogue still.
-    function pinLoupe() {
-      if (!active) return;
-      pinned = true;
-      clearTimeout(holdTimer);
-      holdTimer = null;
-      pointerId = null;
-      loupe.classList.add('is-pinned');
-      document.body.classList.remove('is-zooming');
-    }
+    var zoomBadge = loupe.querySelector('.product-loupe__zoom');
 
     function resetLoupe() {
       clearTimeout(holdTimer);
       holdTimer = null;
       if (active) {
-        loupe.classList.remove('is-visible', 'is-flipped', 'is-pinned');
+        loupe.classList.remove('is-visible', 'is-flipped');
         document.body.classList.remove('is-zooming');
       }
-      pinned = false;
       active = false;
       target = null;
       media = null;
@@ -368,10 +353,6 @@
 
     document.addEventListener('pointerdown', function (e) {
       if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
-      // Anything outside the loupe dismisses a pinned one — including the start
-      // of a hold on the next card, which then opens it again where the finger
-      // actually is.
-      if (pinned && !(e.target.closest && e.target.closest('.product-loupe'))) resetLoupe();
       var found = zoomMediaFromEvent(e.target);
       if (!found) return;
 
@@ -415,11 +396,7 @@
     }, { passive: false });
 
     document.addEventListener('pointerup', function (e) {
-      if (e.pointerId !== pointerId) return;
-      // A completed hold leaves the loupe up so its badge is reachable; a hold
-      // that never became one is simply cancelled, exactly as before.
-      if (active) pinLoupe();
-      else resetLoupe();
+      if (e.pointerId === pointerId) resetLoupe();
     }, { passive: true });
     // A finger lifted outside the element, or a second finger arriving, both
     // end the hold — otherwise `active` could outlive the gesture and the page
@@ -430,9 +407,7 @@
     document.addEventListener('pointercancel', resetLoupe, { passive: true });
     window.addEventListener('blur', resetLoupe);
     window.addEventListener('scroll', function () {
-      // Pinned: the catalogue moved, so what the loupe is showing no longer
-      // sits under it. Not active: nothing to keep.
-      if (pinned || !active) resetLoupe();
+      if (!active) resetLoupe();
     }, { passive: true });
     document.addEventListener('contextmenu', function (e) {
       if (zoomMediaFromEvent(e.target) && Date.now() < suppressContextMenuUntil) e.preventDefault();
@@ -1015,6 +990,13 @@
         '<span class="filterbtn__count"' + (applied.length ? '' : ' hidden') + '>' +
           applied.length + '</span>' +
       '</button>' +
+      // Збільшення лупи. It lives up here rather than on the loupe itself for a
+      // simple reason: the loupe exists only while a finger is held on a photo,
+      // and a control inside it could never be pressed. Its label is updated in
+      // place by paintZoomLabel() — this row is deliberately not re-rendered
+      // with the vitrine, so nothing here may depend on a repaint.
+      '<button class="filterbtn filterbtn--zoom" type="button" data-zoom-cycle' +
+        ' aria-label="Збільшення лупи">🔍 ' + zoomLabel() + '</button>' +
     '</div>';
   }
 
@@ -1967,6 +1949,52 @@
     ms: 'мс', percent: '%', usd: '$', px: 'px', mb: 'МБ', count: 'шт',
   };
 
+  // One setting — a number field, or a two-state switch for the on/off ones.
+  //
+  // Both carry `data-current`: the value the server last reported. That is what
+  // «Зберегти» compares against, so an untouched card sends nothing instead of
+  // rewriting every row it can see.
+  function settingFieldHtml(it) {
+    var reset = it.isDefault ? '' :
+      '<button class="btn btn--ghost btn--sm" type="button" style="margin-top:var(--w2b-space-2)"' +
+      ' data-setting-reset="' + esc(it.key) + '">Повернути ' +
+      (it.kind === 'switch' ? (it.def ? 'увімкнено' : 'вимкнено') : it.def) + '</button>';
+
+    if (it.kind === 'switch') {
+      var on = Number(it.value) === 1;
+      // A segmented control rather than a checkbox: it is the same shape as the
+      // tabs and period pickers everywhere else in the cabinet, and it is big
+      // enough to hit with a thumb.
+      return '<div class="field" style="margin-bottom:var(--w2b-space-3)">' +
+        '<span class="field__label">' + esc(it.label) + '</span>' +
+        '<div class="seg" data-setting="' + esc(it.key) + '" data-kind="switch"' +
+          ' data-value="' + (on ? 1 : 0) + '" data-current="' + (on ? 1 : 0) + '">' +
+          '<button class="seg__btn' + (on ? ' is-active' : '') + '" type="button" data-setting-switch="1">Увімкнено</button>' +
+          '<button class="seg__btn' + (on ? '' : ' is-active') + '" type="button" data-setting-switch="0">Вимкнено</button>' +
+        '</div>' +
+        '<span class="field__hint">' +
+          (it.hint ? esc(it.hint) + ' ' : '') +
+          (it.isDefault ? 'Зараз стандартне значення.' : 'Стандартно — ' + (it.def ? 'увімкнено' : 'вимкнено') + '.') +
+        '</span>' + reset +
+      '</div>';
+    }
+
+    var unit = SETTING_UNIT[it.kind] || '';
+    return '<label class="field" style="margin-bottom:var(--w2b-space-3)">' +
+      '<span class="field__label">' + esc(it.label) + (unit ? ', ' + esc(unit) : '') + '</span>' +
+      '<input class="field__input" type="number" inputmode="decimal"' +
+        ' data-setting="' + esc(it.key) + '"' +
+        ' value="' + esc(String(it.value)) + '"' +
+        ' data-current="' + esc(String(it.value)) + '"' +
+        ' min="' + it.min + '" max="' + it.max + '" step="' + it.step + '"/>' +
+      '<span class="field__hint">' +
+        (it.hint ? esc(it.hint) + ' ' : '') +
+        'Від ' + it.min + ' до ' + it.max + '. ' +
+        (it.isDefault ? 'Зараз стандартне значення.' : 'Стандартне — ' + it.def + '.') +
+      '</span>' + reset +
+    '</label>';
+  }
+
   function adminSettingsHtml(a) {
     var html = '<div class="section-title">Параметри</div>';
     if (!a.settings) return html + '<div class="empty">Завантаження…</div>';
@@ -1980,25 +2008,7 @@
     html += (a.settings.groups || []).map(function (g) {
       return '<div class="panel" data-settings-group="' + esc(g.title) + '">' +
         '<div class="panel__head"><div class="panel__title">' + esc(g.title) + '</div></div>' +
-        g.items.map(function (it) {
-          var unit = SETTING_UNIT[it.kind] || '';
-          return '<label class="field" style="margin-bottom:var(--w2b-space-3)">' +
-            '<span class="field__label">' + esc(it.label) +
-              (unit ? ', ' + esc(unit) : '') + '</span>' +
-            '<input class="field__input" type="number" inputmode="decimal"' +
-              ' data-setting="' + esc(it.key) + '"' +
-              ' value="' + esc(String(it.value)) + '"' +
-              ' min="' + it.min + '" max="' + it.max + '" step="' + it.step + '"/>' +
-            '<span class="field__hint">' +
-              (it.hint ? esc(it.hint) + ' ' : '') +
-              'Від ' + it.min + ' до ' + it.max + '. ' +
-              (it.isDefault ? 'Зараз стандартне значення.' : 'Стандартне — ' + it.def + '.') +
-            '</span>' +
-            (it.isDefault ? '' :
-              '<button class="btn btn--ghost btn--sm" type="button" style="margin-top:var(--w2b-space-2)"' +
-              ' data-setting-reset="' + esc(it.key) + '">Повернути ' + it.def + '</button>') +
-          '</label>';
-        }).join('') +
+        g.items.map(settingFieldHtml).join('') +
         '<button class="btn btn--primary" data-settings-save="' + esc(g.title) + '">Зберегти</button>' +
       '</div>';
     }).join('');
@@ -2551,9 +2561,18 @@
       '</form>');
   }
 
-  function sheetNewPurchase(preselectId) {
+  // `prefill` comes from a deal somebody has just marked «купив»: the client,
+  // the item, its price and the catalogue it came from are all already known,
+  // and re-typing them is how a sale ends up unrecorded. The SUM is still typed
+  // by hand — only a person knows what was actually agreed — and the card id
+  // travels along so the sale can later be attributed to a brand and a channel
+  // rather than guessed from a title.
+  function sheetNewPurchase(preselectId, prefill) {
+    var pre = prefill || {};
+    var currencies = ['UAH', 'USD', 'EUR'];
     openSheet('Додати покупку',
       '<form class="stack" id="purchaseForm">' +
+        (pre.note ? '<div class="panel"><div class="panel__note">' + esc(pre.note) + '</div></div>' : '') +
         '<label class="field"><span class="field__label">Клієнт</span>' +
           '<select class="field__select" name="customerId">' +
             state.admin.customers.map(function (c) {
@@ -2561,18 +2580,25 @@
                 '>' + esc(c.name) + '</option>';
             }).join('') +
           '</select></label>' +
+        (pre.postId ? '<input type="hidden" name="postId" value="' + esc(String(pre.postId)) + '" />' : '') +
         '<label class="field"><span class="field__label">Товар</span>' +
-          '<input class="field__input" name="title" placeholder="Michael Kors сумка" /></label>' +
+          '<input class="field__input" name="title" value="' + esc(pre.title || '') + '" placeholder="Michael Kors сумка" /></label>' +
         '<div class="form-grid">' +
           '<label class="field"><span class="field__label">Сума</span>' +
-            '<input class="field__input" name="amount" type="number" step="0.01" required placeholder="410" /></label>' +
+            '<input class="field__input" name="amount" type="number" step="0.01" required' +
+              (pre.amount ? ' value="' + esc(String(pre.amount)) + '"' : '') + ' placeholder="410" /></label>' +
           '<label class="field"><span class="field__label">Валюта</span>' +
-            '<select class="field__select" name="currency"><option>UAH</option><option>USD</option><option>EUR</option></select></label>' +
+            '<select class="field__select" name="currency">' +
+              currencies.map(function (cur) {
+                return '<option' + (cur === (pre.currency || 'UAH') ? ' selected' : '') + '>' + cur + '</option>';
+              }).join('') +
+            '</select></label>' +
         '</div>' +
         '<label class="field"><span class="field__label">Канал</span>' +
           '<select class="field__select" name="channel">' +
             state.config.channels.map(function (c) {
-              return '<option value="' + esc(c.key) + '">' + esc(c.title) + '</option>';
+              return '<option value="' + esc(c.key) + '"' +
+                (pre.channelKey && c.key === pre.channelKey ? ' selected' : '') + '>' + esc(c.title) + '</option>';
             }).join('') +
           '</select></label>' +
         // Cost entered here means no reminder tomorrow.
@@ -2874,6 +2900,35 @@
     state.admin.popular = r;
   }
 
+  // Открыть «Додати покупку» по закрытой сделке.
+  //
+  // Cancelling the form changes nothing: the status is already saved and the
+  // deal is already in «Купили». That order is deliberate — the answer somebody
+  // gave with a swipe must not depend on them finishing a second form.
+  async function purchaseFromDeal(deal) {
+    var items = deal.items || [];
+    var one = items.length === 1 ? items[0] : null;
+    try {
+      // The customer select needs the list; a manager who opened the cabinet on
+      // «Заявки» may not have loaded it yet.
+      if (!(state.admin.customers || []).length && can('customers.read')) {
+        state.admin.customers = (await api.admin.customers()).customers || [];
+      }
+    } catch (e) { /* the select falls back to whatever is there */ }
+    if (!(state.admin.customers || []).length) return;   // нечего подставлять
+
+    sheetNewPurchase(deal.customerId, {
+      title: one ? (one.title || '') + (one.article ? ' · арт. ' + one.article : '') : '',
+      amount: one && one.price ? one.price : '',
+      currency: one && one.currency ? one.currency : 'USD',
+      channelKey: one ? one.channelKey : '',
+      postId: one ? one.postId : null,
+      note: items.length > 1
+        ? 'Заявка на ' + items.length + ' позицій — впишіть суму всього замовлення або додайте покупки окремо.'
+        : 'Заявка #' + deal.id + ' · ' + (deal.customerName || '') + ' — залишилось вписати суму.',
+    });
+  }
+
   // One read answers the list AND the three tab counters, so switching tabs
   // never shows a stale number next to a fresh list.
   async function loadInquiries() {
@@ -2889,6 +2944,10 @@
   var DEAL_TOAST = { in_progress: 'Повернуто в процес', bought: 'Купив ✓', not_bought: 'Не купив ✕' };
   async function setDeal(id, status) {
     if (!id || !status) return;
+    // Captured BEFORE the call: a successful save reloads the list and the deal
+    // leaves this tab, taking its items with it — and those items are what the
+    // purchase form is filled from.
+    var deal = (state.admin.inquiries || []).filter(function (q) { return q.id === id; })[0];
     try {
       await api.admin.setDealStatus(id, status);
       state.admin.dealEdit = null;
@@ -2897,6 +2956,10 @@
       $app.innerHTML = renderAdmin();
       tg.haptic('success');
       toast(DEAL_TOAST[status] || 'Статус оновлено');
+      // «Купив» is only half the record: the status says the deal closed, the
+      // sum is what feeds cashback and profit. So the form opens right here,
+      // already knowing who and what — the person only types the amount.
+      if (status === 'bought' && deal && can('purchases.write')) await purchaseFromDeal(deal);
     } catch (err) {
       tg.haptic('error');
       // The card was dragged off its place by the swipe; the repaint puts every
@@ -3123,14 +3186,18 @@
       for (var i = 0; i < inputs.length; i += 1) {
         var el = inputs[i];
         var key = el.getAttribute('data-setting');
-        var raw = String(el.value).trim().replace(',', '.');
-        if (raw === '' || isNaN(Number(raw))) { invalid = el; break; }
-        var v = Number(raw);
-        var lo = Number(el.getAttribute('min'));
-        var hi = Number(el.getAttribute('max'));
-        if (v < lo || v > hi) { invalid = el; break; }
-        // The current server value, straight off the rendered attribute.
-        if (String(v) !== String(Number(el.getAttribute('value')))) values[key] = v;
+        var v;
+        if (el.getAttribute('data-kind') === 'switch') {
+          v = Number(el.getAttribute('data-value'));
+        } else {
+          var raw = String(el.value).trim().replace(',', '.');
+          if (raw === '' || isNaN(Number(raw))) { invalid = el; break; }
+          v = Number(raw);
+          var lo = Number(el.getAttribute('min'));
+          var hi = Number(el.getAttribute('max'));
+          if (v < lo || v > hi) { invalid = el; break; }
+        }
+        if (String(v) !== String(Number(el.getAttribute('data-current')))) values[key] = v;
       }
       if (invalid) {
         invalid.focus();
@@ -3147,6 +3214,31 @@
       } catch (err) {
         setSave.disabled = false;
         toast(err.message, 'error');
+      }
+      return;
+    }
+
+    // Flipping a switch does not save and does not re-render: the card may hold
+    // a half-typed number in another field, and a repaint would throw it away.
+    // Збільшення: 1.5 → 2 → 2.5 → 1.5, одразу для всіх артиклів.
+    var zoomBtn = t.closest('[data-zoom-cycle]');
+    if (zoomBtn) {
+      var factor = cycleZoom();
+      tg.haptic('light');
+      toast('Збільшення ' + factor + 'x — затисніть фото на картці');
+      return;
+    }
+
+    var setSwitch = t.closest('[data-setting-switch]');
+    if (setSwitch) {
+      var seg = setSwitch.closest('[data-kind="switch"]');
+      if (seg) {
+        seg.setAttribute('data-value', setSwitch.getAttribute('data-setting-switch'));
+        var halves = seg.querySelectorAll('[data-setting-switch]');
+        for (var h = 0; h < halves.length; h += 1) {
+          halves[h].classList.toggle('is-active', halves[h] === setSwitch);
+        }
+        tg.haptic('light');
       }
       return;
     }
@@ -3576,6 +3668,9 @@
           amount: Number(data.amount), currency: data.currency, channel: data.channel,
           costUsd: data.costUsd === '' ? null : Number(data.costUsd),
           discountUsd: data.discountUsd === '' ? 0 : Number(data.discountUsd),
+          // Present only when the form was opened from a deal — the server
+          // attaches the sale to that card (post_id/article on `purchases`).
+          postId: data.postId ? Number(data.postId) : undefined,
         });
         closeSheet();
         toast(pres.costMissing

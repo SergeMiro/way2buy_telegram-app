@@ -12,7 +12,7 @@ in one zero-build Node application on Postgres.
 [![Telegram](https://img.shields.io/badge/Telegram-Mini_App_%2B_Bot_API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/webapps)
 [![Gemini](https://img.shields.io/badge/Gemini-1.5_Flash-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
 [![Zero build](https://img.shields.io/badge/build_step-none-6BA81E)](#architecture)
-[![Tests](https://img.shields.io/badge/tests-280_node%3Atest-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-285_node%3Atest-brightgreen)](#testing)
 [![Vercel](https://img.shields.io/badge/Vercel-demo-000000?logo=vercel&logoColor=white)](https://way2buy-miniapp.vercel.app)
 
 🌐 **Demo:** [way2buy-miniapp.vercel.app](https://way2buy-miniapp.vercel.app) — runs with
@@ -111,11 +111,16 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
   **купили** / **не купили**, set by a swipe or by ✓ / ✕ on the card and corrected with the
   pencil. Every N days an untouched deal writes to Maryna and Dasha — *this client has been in
   progress for so many days, did they buy?* — with a button that opens the cabinet on that one
-  deal. Doing nothing is a valid answer: the deal stays open and asks again
+  deal. Doing nothing is a valid answer: the deal stays open and asks again. Marking one
+  **купив** opens «Додати покупку» already knowing the client, the item, its currency and its
+  catalogue — and carrying the card id, so the sale is attributed to a brand and a channel
+  instead of being guessed from a title. Only the sum is typed, because only a person knows it
 - **«Параметри»** (`settings.js`, `app_settings`) — every tunable number in the shop as a row
   you edit in the cabinet: the follow-up interval, the abandoned-fitting-room rule, how many
   months of a channel the vitrine keeps, sync pages and pacing, photo width/quality/size,
-  the vision batch, model timeout and budget, the scheduler interval. Each was an environment
+  the vision batch, model timeout and budget, the scheduler interval — plus two switches that
+  turn the deal nudges and the abandoned-cart discount off entirely, stored as 1/0 in the same
+  column so there is one code path for reads, writes and validation. Each was an environment
   variable, which on Vercel made «7 днів замість 5» a redeploy; now it takes effect at once,
   with no restart. The labels and bounds live in code beside the consumers, so a row nobody
   defines is ignored rather than obeyed, and a value out of range is refused rather than
@@ -153,7 +158,7 @@ discounts, reminders and margin bookkeeping *around* a conversation that stays h
 | AI | **Google Gemini 1.5 Flash** over REST, with a template fallback | Free tier — reports cost nothing to run |
 | Scheduling | In-process `setInterval` tick, plus `POST /api/admin/tick` for an external cron | Serverless hosts have no long-lived process |
 | Config | **dotenv** + a validated `env.js` | Boots fully configured, or in demo mode |
-| Tests | **`node:test`** — 125 tests across 11 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
+| Tests | **`node:test`** — 285 tests across 23 suites, on **PGlite** | Postgres 17 compiled to WASM, in-process: the suite exercises the real dialect with no server to start |
 | Hosting | **Vercel** — static `public/`, one serverless function (`api/index.js`) | Demo stand |
 | Tooling | `scripts/telegram.mjs` (bot/webhook setup) · `scripts/import-history.mjs` (purchase history import) | — |
 
@@ -304,7 +309,7 @@ Everything is optional — the app runs in demo mode with an empty `.env`.
 | `CASHBACK_REWARD_USD` | `100` | Reward per step |
 | `GEMINI_API_KEY` | — | AI reports; empty falls back to the template narrative |
 | `SCHEDULER_INTERVAL_MIN` | `15` | Tick interval — **first-boot seed only**, see below |
-| `W2B_DEAL_FOLLOWUP_ENABLED` | on | `0` stops the deal nudges; the three tabs keep working |
+| `W2B_DEAL_FOLLOWUP_ENABLED` | on | Seeds the deal-nudge switch; after first boot it is a toggle in «Параметри» |
 | `DATABASE_URL` | — | Postgres connection string. **Empty runs an in-process PGlite** — that is what makes the zero-config demo work. |
 | `W2B_AUTO_MIGRATE` | — | `1` applies the schema on boot. Off by default: DDL does not belong on a request path. |
 | `W2B_DB_POOL_MAX` | `10` (`1` on Vercel) | Connection pool size |
@@ -318,7 +323,8 @@ applied immediately. `server/settings.js` holds the definitions: label, unit, bo
 
 The matching environment variables (`W2B_ABANDON_*`, `W2B_CATALOG_MONTHS`, `W2B_SYNC_PAGES`,
 `W2B_TME_DELAY_MS`, `W2B_PHOTO_*`, `W2B_VISION_BATCH`, `W2B_LLM_*`, `W2B_DEAL_FOLLOWUP_DAYS`,
-`SCHEDULER_INTERVAL_MIN`) survive as the **first-boot seed**: each row is created once with the
+`SCHEDULER_INTERVAL_MIN`, and the two switches `W2B_ABANDON_ENABLED` /
+`W2B_DEAL_FOLLOWUP_ENABLED`) survive as the **first-boot seed**: each row is created once with the
 variable's value if it is set, and never overwritten — so a shop already running on
 `W2B_ABANDON_HOURS=8` keeps 8, and after that the number belongs to the cabinet. Editing one of
 them on a database that already has its rows does nothing.
@@ -425,7 +431,7 @@ serverless host there is no long-lived process, so the same work is exposed as
 npm test
 ```
 
-280 tests across 23 suites, on the Node built-in test runner — no test framework dependency,
+285 tests across 23 suites, on the Node built-in test runner — no test framework dependency,
 and on real Postgres rather than a stand-in:
 
 | Suite | Covers |
@@ -476,7 +482,7 @@ server/
   index.js        Express router — 53 endpoints
   db.js           drivers (pg / PGlite), statements, transactions, seed
   sql.js          statement translation, value normalisation, jsonb helper
-  sql/schema.sql  the schema: 20 tables, 79 indexes, views, RLS posture
+  sql/schema.sql  the schema: 23 tables, 90 indexes, views, RLS posture
   env.js          validated configuration
   catalog.js      the vitrine query: selection, facets, keyset paging
   sync.js         «Синхронізувати»: reconcile a catalogue with its channel,
@@ -487,12 +493,14 @@ server/
   campaigns.js    scheduled campaigns and materialisation
   rules.js        editable discount rules
   cart.js         fitting room, cart events, popularity
+  deals.js        did they buy it: three statuses on the inquiry, and the nudge
+  settings.js     every tunable number: definitions, bounds, cache, first-boot seed
   profit.js       sale vs factory cost, margin, pending-cost reminders
   telegram.js     Bot API — publish, channel_post webhook, DM, photo proxy
   tme.js          a public channel's own web page — the only path to its history
   polling.js      long-polling fallback for local development
   notify.js       customer notifications
-  scheduler.js    idempotent 15-minute tick
+  scheduler.js    idempotent tick, on an interval it re-reads from «Параметри»
   ai.js           Gemini reports and the proposal loop
 public/
   index.html      the Mini App shell
@@ -508,7 +516,7 @@ scripts/          telegram.mjs (bot setup)
                   import-history.mjs (catalogues ← Telegram Desktop export)
                   migrate-sqlite-to-postgres.mjs (one-off data import)
                   sql/keepalive.sql (anti-pause heartbeat for the Free plan)
-tests/            11 node:test suites, 125 tests
+tests/            23 node:test suites, 285 tests
 docs/             BUSINESS-LOGIC.md · SCOPE.md · SETUP-TELEGRAM.md
 ```
 
