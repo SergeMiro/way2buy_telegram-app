@@ -104,6 +104,9 @@
     facets: function (sel) { return request('GET', '/api/facets', undefined, selection(sel)); },
     catalogs: function () { return request('GET', '/api/catalogs'); },
     purchases: function () { return request('GET', '/api/purchases'); },
+    // The client's own price/availability requests — their half of the history
+    // the cabinet keeps.
+    inquiries: function () { return request('GET', '/api/inquiries'); },
     discounts: function () { return request('GET', '/api/discounts'); },
     notifications: function () { return request('GET', '/api/notifications'); },
     demoProfiles: function () { return request('GET', '/api/demo/profiles'); },

@@ -30,6 +30,8 @@
     notifications: { notifications: [], unread: 0 },
     birthday: null,
     cart: { items: [], count: 0, promo: null, draft: '' },
+    // The client's own price/availability requests, for «Знижки».
+    inquiries: [],
     cartCount: 0,
     catalogs: [],
     catalogTotal: 0,
@@ -1287,13 +1289,30 @@
     // to compose and the list was already the whole question. Naming the ASK
     // instead of the channel is what makes the empty textarea safe to leave
     // empty — and the button says what comes back, not what leaves.
-    html += '<div class="section-title">Запит на наявність і ціну</div>' +
-      '<form class="stack" id="inquiryForm">' +
+    html += '<div class="section-title">Запит на наявність і ціну</div>';
+
+    // The part that is sent no matter what, shown exactly as it will arrive —
+    // and deliberately NOT in a textarea. A field you can type in is a field you
+    // can empty, and a client who empties this one has sent a manager a message
+    // that asks about nothing. It is built from the fitting room, so the only
+    // way to change it is to change the fitting room: remove an item above.
+    html += '<div class="locked">' +
+      '<div class="locked__head">🔒 Це піде ' + esc(support().dative) + ' — змінюється лише списком вище</div>' +
+      '<div class="locked__body">' +
+        c.items.map(function (i) {
+          return '• ' + esc(i.title || 'Позиція') + (i.article ? esc(' · арт. ' + i.article) : '');
+        }).join('<br>') +
+      '</div>' +
+    '</div>';
+
+    html += '<form class="stack" id="inquiryForm">' +
         '<label class="field">' +
-          '<textarea class="field__textarea" name="message" rows="5" ' +
-            // Starts empty. A pre-written message came back as "the client's
-            // question" restating the list the manager had just read.
-            'placeholder="Необовʼязково: розмір, колір або питання"></textarea>' +
+          '<span class="field__label">Додати від себе — необовʼязково</span>' +
+          '<textarea class="field__textarea" name="message" rows="4" ' +
+            // Starts empty, and holds ONLY the client's own words. It used to be
+            // pre-written, and came back to the manager as "the client's
+            // question" restating the list she had just read.
+            'placeholder="Розмір, колір або питання"></textarea>' +
           '<span class="field__hint">' + esc(support().name) +
             ' перевірить наявність кожної позиції та напише вам ціну.</span>' +
         '</label>' +
@@ -1314,9 +1333,47 @@
 
   // Promo codes + purchase history. Shown as sections of the «Знижки» tab, so a
   // client has one place for everything money-related instead of two tabs.
+  // What this client has asked about, newest first.
+  //
+  // The fitting room empties itself when an inquiry is sent, so without this
+  // the list a client assembled — sometimes over several evenings — vanished
+  // the moment they pressed the button, and «про що я вже питала?» had no
+  // answer anywhere in the app. Each item keeps the link it was sent with, so
+  // a request from three weeks ago still opens the post.
+  //
+  // Status is one word and one bit: whether anybody has picked it up. The
+  // shop's own «в процесі / купив / не купив» is how Maryna tracks herself and
+  // is not addressed to the client.
+  function inquiriesSectionHtml() {
+    var list = state.inquiries || [];
+    var html = '<div class="section-title">Запити на наявність і ціну</div>';
+    if (!list.length) {
+      return html + '<div class="empty">Ви ще нічого не питали. Додайте річ у примірочну ' +
+        'і натисніть «Дізнатися наявність і ціну».</div>';
+    }
+    return html + list.map(function (q) {
+      var names = (q.items || []).map(function (i) {
+        var label = esc(i.title || 'Позиція');
+        return i.url
+          ? '<a class="link" href="' + esc(i.url) + '" target="_blank" rel="noopener">' + label + '</a>'
+          : label;
+      }).join(' · ');
+      return '<div class="row">' +
+        '<div class="row__body">' +
+          '<div class="row__title">' + esc(dateShort(q.createdAt)) + ' · ' + q.itemsCount + ' ' +
+            plural(q.itemsCount, ['позиція', 'позиції', 'позицій']) + '</div>' +
+          '<div class="row__sub">' + names + '</div>' +
+          (q.message ? '<div class="row__sub">«' + esc(q.message) + '»</div>' : '') +
+        '</div>' +
+        '<div class="row__amount"><span>' +
+          (q.answered ? 'відповіли' : 'очікує') + '</span></div>' +
+      '</div>';
+    }).join('');
+  }
+
   function historySectionsHtml() {
     var p = state.purchases;
-    var html = '';
+    var html = inquiriesSectionHtml();
 
     html += '<div class="section-title">Промокоди</div>';
     html += p.promos.length
@@ -2693,11 +2750,12 @@
 
   async function loadTab(tab) {
     if (tab === 'home') {
-      var r = await Promise.all([api.me(), api.discounts(), api.notifications(), api.purchases()]);
+      var r = await Promise.all([api.me(), api.discounts(), api.notifications(), api.purchases(), api.inquiries()]);
       state.me = r[0];
       state.discounts = r[1];
       state.notifications = r[2];
       state.purchases = r[3];
+      state.inquiries = (r[4] && r[4].inquiries) || [];
       state.birthday = r[1].birthday || (r[0].birthday || null);
     } else if (tab === 'catalog') {
       var loaded = await Promise.all([

@@ -304,6 +304,11 @@
   color: var(--w2b-text);
   font-family: var(--w2b-font-body);
   font-size: var(--w2b-fs-base);
+  /* The caret defaults to a hairline of currentColor — dark ink on a pale field
+     at 13px, which on a phone is indistinguishable from the text beside it, and
+     somebody who cannot see where they are typing stops typing. In the accent
+     it is the one mark on the field that is not the colour of a letter. */
+  caret-color: var(--w2b-accent);
 }
 /* One height for every single-line control, computed from the values above:
    text + padding + border. Without it each control is as tall as its own
@@ -351,6 +356,36 @@
   cursor: pointer;
 }
 .field__input::placeholder, .field__textarea::placeholder { color: var(--w2b-text-subtle); }
+
+/* The half of the inquiry the client does not write and cannot delete: the list
+   they assembled upstairs, shown as it will arrive. It has to read as a
+   QUOTATION rather than as a disabled form control — a greyed-out textarea says
+   "broken", a quoted block says "this is already decided". Hence the rule down
+   the side and the softer ground, and no border: nothing here is a box you
+   could have typed in. */
+.locked {
+  border-radius: var(--w2b-radius-md);
+  background: var(--w2b-surface-2);
+  border-inline-start: 3px solid var(--w2b-accent);
+  padding: var(--w2b-space-3) var(--w2b-space-4);
+}
+.locked__head {
+  font-size: var(--w2b-fs-xs);
+  color: var(--w2b-text-muted);
+  margin-bottom: var(--w2b-space-2);
+}
+.locked__body {
+  color: var(--w2b-text);
+  font-size: var(--w2b-fs-sm);
+  line-height: 1.5;
+  /* The client may copy it; they may not edit it. */
+  user-select: text;
+}
+
+/* An item name that still opens its post — used in the request history, where
+   a line from three weeks ago is the only way back to the thing it names. */
+.link { color: var(--w2b-accent); text-decoration: none; }
+.link:hover { text-decoration: underline; }
 .field__input.is-error, .field__select.is-error { border-color: var(--w2b-danger); }
 .field__hint { color: var(--w2b-text-subtle); font-size: var(--w2b-fs-xs); margin-top: var(--w2b-space-2); }
 /* minmax(0, 1fr), not 1fr: a bare `1fr` is minmax(auto, 1fr), so a control that

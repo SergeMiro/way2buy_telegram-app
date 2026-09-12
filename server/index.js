@@ -460,6 +460,14 @@ app.post('/api/cart/send', async (req, res) => {
   res.json(result);
 });
 
+// What this client has asked about, and when. Their own rows only — the id is
+// never read from the query, so there is no inquiry to ask for but your own.
+app.get('/api/inquiries', async (req, res) => {
+  const c = await findCustomer(tgid(req));
+  if (!c) return res.json({ inquiries: [] });
+  res.json({ inquiries: await cart.customerInquiries(c.id) });
+});
+
 // ── purchases + cashback ────────────────────────────────────────────────
 app.get('/api/purchases', async (req, res) => {
   const c = await findCustomer(tgid(req));

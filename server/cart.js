@@ -506,6 +506,39 @@ export async function listInquiries({ id = null, status = null, deal = null, lim
   }));
 }
 
+// The client's own history of asking.
+//
+// listInquiries above is the CABINET's view of the same rows and answers "who
+// is this and how do we reach them". This one answers "what have I asked for",
+// and everything that is the shop's business is left out of it: who picked the
+// inquiry up, and whether the shop counted the deal as won or lost. A client
+// reading «не купив» about her own request would be reading a note that was
+// never addressed to her.
+export async function customerInquiries(customerId, { limit = 50 } = {}) {
+  const lim = Math.min(Math.max(Number(limit) || 50, 1), 100);
+  const rows = await db.prepare(
+    `SELECT id, message, items_json, items_count, promo_label, answered_at, created_at
+       FROM inquiries WHERE customer_id=? ORDER BY created_at DESC LIMIT ?`
+  ).all(customerId, lim);
+
+  return rows.map((r) => ({
+    id: r.id,
+    createdAt: r.created_at,
+    // The snapshot taken when it was sent — the card as it was, with the link
+    // that still opens the post. Months later this is the only record of what
+    // «Сумка» meant that day.
+    items: (safeJson(r.items_json) || []).map((i) => ({
+      title: i.title, article: i.article, url: i.url, photo: i.photo, emoji: i.emoji,
+    })),
+    itemsCount: r.items_count,
+    message: r.message,
+    promoLabel: r.promo_label,
+    // Whether anybody has picked it up yet. One boolean, not the three-state
+    // funnel: «в процесі / купив / не купив» is how the shop tracks itself.
+    answered: Boolean(r.answered_at),
+  }));
+}
+
 export async function setInquiryStatus(id, { status, by = null, now = Date.now() }) {
   const allowed = ['new', 'answered', 'closed'];
   if (!allowed.includes(status)) throw new Error(`status must be one of ${allowed.join('|')}`);

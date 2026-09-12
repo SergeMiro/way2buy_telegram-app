@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
 import {
   addToCart, removeFromCart, listCart, cartCount, cartView, bestPromo,
-  sendInquiry, listInquiries, setInquiryStatus, formatPhone,
+  sendInquiry, listInquiries, setInquiryStatus, formatPhone, customerInquiries,
   popularItems, popularityStats, resolvePeriod,
 } from '../server/cart.js';
 
@@ -207,6 +207,57 @@ test('an inquiry with no text says what the client wants by listing it', async (
   assert.doesNotMatch(alert.body, /Питання клієнта/);
 });
 
+/* ── the client's own history of asking ──────────────────────────────────── */
+
+test('a client can see what they asked about after the fitting room emptied', async () => {
+  const c = await customer('Леся');
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Dior · сумка', article: 'D1' }), now: NOW });
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Chanel · прикраси' }), now: NOW });
+  await sendInquiry({ customer: c, message: 'Чи є 38 розмір?', now: NOW });
+
+  // Sending empties the fitting room, so without this the list assembled over
+  // several evenings vanished the moment the button was pressed.
+  assert.equal(await cartCount(c.id), 0);
+
+  const mine = await customerInquiries(c.id);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].itemsCount, 2);
+  assert.equal(mine[0].message, 'Чи є 38 розмір?');
+  // As a set: both items were added in the same millisecond, so the order the
+  // snapshot preserves is the database's, not one this test may assert.
+  assert.deepEqual(mine[0].items.map((i) => i.title).sort(), ['Chanel · прикраси', 'Dior · сумка']);
+  assert.equal(mine[0].answered, false);
+});
+
+test('the shop\'s own funnel is not part of what the client is shown', async () => {
+  const c = await customer('Оксана');
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Prada' }), now: NOW });
+  const r = await sendInquiry({ customer: c, now: NOW });
+  await db.prepare("UPDATE inquiries SET deal_status='not_bought', deal_status_by='Марина' WHERE id=?").run(r.inquiryId);
+  await setInquiryStatus(r.inquiryId, { status: 'answered', by: 'Даша', now: NOW });
+
+  const [mine] = await customerInquiries(c.id);
+  // «не купив» is how Maryna tracks herself. It is a note about the client, not
+  // to her, and it must never reach the screen she reads.
+  const keys = Object.keys(mine);
+  for (const leak of ['dealStatus', 'deal_status', 'answeredBy', 'answered_by', 'phone', 'tgId']) {
+    assert.ok(!keys.includes(leak), `the client is shown ${leak}`);
+  }
+  assert.doesNotMatch(JSON.stringify(mine), /not_bought|Марина|Даша/);
+  // What they DO get is the one bit that concerns them: somebody has it.
+  assert.equal(mine.answered, true);
+});
+
+test('one client never sees another client\'s requests', async () => {
+  const a = await customer('Анна');
+  const b = await customer('Богдана');
+  await addToCart({ customerId: a.id, postId: await post({ title: 'Hermes' }), now: NOW });
+  await sendInquiry({ customer: a, now: NOW });
+
+  assert.equal((await customerInquiries(b.id)).length, 0);
+  assert.equal((await customerInquiries(a.id)).length, 1);
+});
+
 test('a phone is dialable, and a country the shop cannot know is never invented', async () => {
   // Every client on file gave a country code; a device that autofills the
   // national form slips past the join form. 0X XXXXXXXX is Ukraine and France
@@ -246,7 +297,10 @@ test('the usable coupon is attached to the inquiry automatically', async () => {
   const r = await sendInquiry({ customer: c, message: '', now: NOW });
 
   assert.equal(r.promo.label, '$50');
-  const q = (await listInquiries({ limit: 5 })).find((x) => x.id === r.inquiryId);
+  // By id, not by paging: `listInquiries({limit: 5})` found this row only while
+  // it happened to be among the five newest in the whole shop, so adding a test
+  // above this one used to break it.
+  const [q] = await listInquiries({ id: r.inquiryId });
   assert.equal(q.promoLabel, '$50');
 });
 
