@@ -600,7 +600,20 @@ export async function sendToUser(tgUserId, text, extra = {}) {
     if (sent.length > OUTBOX_MAX) sent.shift();
     return { simulated: true, text };
   }
-  return await tg('sendMessage', { chat_id: tgUserId, text, parse_mode: 'HTML', ...extra });
+  return await tg('sendMessage', {
+    chat_id: tgUserId,
+    text,
+    parse_mode: 'HTML',
+    // No preview, on every message this bot sends.
+    //
+    // An inquiry links each item to its post, and Telegram answers by unfurling
+    // the FIRST of them into a picture card under the message — one item out of
+    // five, chosen by position, pushing the phone number off the screen. The
+    // links are there to be tapped, not to be illustrated. `extra` can still
+    // override this for a message that genuinely wants a card.
+    link_preview_options: { is_disabled: true },
+    ...extra,
+  });
 }
 
 // ── private chat: /start → the button that opens the Mini App ─────────────

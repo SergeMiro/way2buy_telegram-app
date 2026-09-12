@@ -1291,7 +1291,9 @@
       '<form class="stack" id="inquiryForm">' +
         '<label class="field">' +
           '<textarea class="field__textarea" name="message" rows="5" ' +
-            'placeholder="Необовʼязково: розмір, колір або питання">' + esc(c.draft || '') + '</textarea>' +
+            // Starts empty. A pre-written message came back as "the client's
+            // question" restating the list the manager had just read.
+            'placeholder="Необовʼязково: розмір, колір або питання"></textarea>' +
           '<span class="field__hint">' + esc(support().name) +
             ' перевірить наявність кожної позиції та напише вам ціну.</span>' +
         '</label>' +

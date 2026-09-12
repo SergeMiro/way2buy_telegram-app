@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
 import {
   addToCart, removeFromCart, listCart, cartCount, cartView, bestPromo,
-  sendInquiry, listInquiries, setInquiryStatus,
+  sendInquiry, listInquiries, setInquiryStatus, formatPhone,
   popularItems, popularityStats, resolvePeriod,
 } from '../server/cart.js';
 
@@ -91,14 +91,20 @@ test('one client cannot remove another client\'s item', async () => {
   assert.equal(await cartCount(a.id), 1);
 });
 
-test('the fitting room view pre-writes the message so the client types nothing', async () => {
+test('the fitting room asks the client to type nothing at all', async () => {
   const c = await customer();
   await addToCart({ customerId: c.id, postId: await post({ title: 'Gucci Marmont', article: 'GM7' }), now: NOW });
   const view = await cartView(c.id, NOW);
 
   assert.equal(view.count, 1);
-  assert.match(view.draft, /Gucci Marmont/);
-  assert.match(view.draft, /GM7/);
+  // The box starts EMPTY. It used to arrive pre-written — «Доброго дня! Мене
+  // цікавить: 1… 2… 3…» — which nobody edited, so the manager received the list
+  // twice: once as items and once as "the client's question". The list is the
+  // question; the box is for what the list cannot say.
+  assert.equal(view.draft, '');
+  // The item itself still carries everything the message is built from.
+  assert.equal(view.items[0].title, 'Gucci Marmont');
+  assert.equal(view.items[0].article, 'GM7');
 });
 
 // ── the coupon that applies itself ────────────────────────────────────────
@@ -156,8 +162,12 @@ test('sending builds the message Maryna asked for and notifies the admins', asyn
   assert.match(alert.title, /цікавиться товаром/);
   assert.match(alert.body, /Chanel Classic/);
   assert.match(alert.body, /LV Neverfull/);
-  assert.match(alert.body, /задав питання адміністратору Даші/);
+  assert.match(alert.body, /Питання клієнта:/);
   assert.match(alert.body, /«Чи є чорний колір\?»/);
+  // The catalogue each item came from is NOT repeated on its line: «Dior ·
+  // сумка · Сумки жіночі» adds a third word that the two before it already
+  // said, five times over, in the message somebody has to read on a phone.
+  assert.doesNotMatch(alert.body, /· Сумки жіночі/);
 
   // The client gets their own confirmation, and it answers the question they
   // actually asked: not "your message was delivered" but "somebody is checking
@@ -183,13 +193,45 @@ test('sending empties the fitting room but keeps the items on the inquiry', asyn
   assert.equal(q.status, 'new');
 });
 
-test('an inquiry with no text still says what the client wants', async () => {
+test('an inquiry with no text says what the client wants by listing it', async () => {
   const c = await customer();
   await addToCart({ customerId: c.id, postId: await post({ title: 'Hermes Evelyne' }), now: NOW });
   await sendInquiry({ customer: c, message: '', now: NOW });
 
   const alert = await db.prepare("SELECT * FROM notifications WHERE customer_id IS NULL AND kind='inquiry' ORDER BY id DESC").get();
-  assert.match(alert.body, /просить ціну та наявність/);
+  assert.match(alert.body, /Hermes Evelyne/);
+  // A client who typed nothing is the normal case, not an omission to report.
+  // The line that used to announce it — «Питання не додав» — was a sentence
+  // about absence in a message that is already a complete request.
+  assert.doesNotMatch(alert.body, /Питання не додав/);
+  assert.doesNotMatch(alert.body, /Питання клієнта/);
+});
+
+test('a phone is dialable, and a country the shop cannot know is never invented', async () => {
+  // Every client on file gave a country code; a device that autofills the
+  // national form slips past the join form. 0X XXXXXXXX is Ukraine and France
+  // both, and this shop has clients in both — so it is handed over as written,
+  // marked, rather than guessed into a number that reaches a stranger.
+  assert.equal(formatPhone('+33 7 54 38 67 68'), '+33754386768');
+  assert.equal(formatPhone('+380 67 111 22 33'), '+380671112233');
+  assert.equal(formatPhone('0033754386768'), '+33754386768');
+  assert.equal(formatPhone('07 54 38 67 68'), '07 54 38 67 68 (без коду країни)');
+  assert.equal(formatPhone(''), null);
+  assert.equal(formatPhone(null), null);
+});
+
+test('the message names the client by the id that can be looked up', async () => {
+  const c = await customer('Оксана');
+  await db.prepare('UPDATE customers SET phone=? WHERE id=?').run('+33 7 54 38 67 68', c.id);
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Celine Triomphe' }), now: NOW });
+  await sendInquiry({ customer: await db.prepare('SELECT * FROM customers WHERE id=?').get(c.id), now: NOW });
+
+  const alert = await db.prepare("SELECT * FROM notifications WHERE customer_id IS NULL AND kind='inquiry' ORDER BY id DESC").get();
+  assert.match(alert.body, /📞 \+33754386768/);
+  // «TG id 1712121543» reads as a debugging leftover to the person who has to
+  // paste it into a search box.
+  assert.match(alert.body, /Telegram User ID: /);
+  assert.doesNotMatch(alert.body, /TG id/);
 });
 
 test('the usable coupon is attached to the inquiry automatically', async () => {

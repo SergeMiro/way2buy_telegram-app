@@ -240,16 +240,16 @@ export async function cartView(customerId, now = Date.now()) {
     count: items.length,
     basket,
     promo: await bestPromo(customerId, basket.totalUsd, now),
-    // The pre-built message: the client only has to press send.
-    draft: draftMessage(items),
+    // Always empty, and kept only so a Mini App still open on an older bundle
+    // does not break on a missing field.
+    //
+    // It used to hold a pre-written «Доброго дня! Мене цікавить: 1… 2… 3…
+    // Підкажіть ціну та наявність» — which nobody edited, so it arrived at the
+    // manager as "the client's question", restating the list she had just read.
+    // The list IS the question. The box is for the thing the list cannot say:
+    // a size, a colour, a deadline.
+    draft: '',
   };
-}
-
-function draftMessage(items) {
-  if (!items.length) return '';
-  const lines = items.map((i, n) =>
-    `${n + 1}. ${i.title || 'Позиція'}${i.article ? ` (арт. ${i.article})` : ''}`);
-  return `Доброго дня! Мене цікавить:\n${lines.join('\n')}\nПідкажіть, будь ласка, ціну та наявність.`;
 }
 
 // ── sending the inquiry ───────────────────────────────────────────────────
@@ -299,14 +299,40 @@ const itemLabel = (i) =>
 // Two renderings of one list. The stored/plain one keeps the URL on its own
 // line, because the cabinet shows this as text; the DM one puts the link on the
 // title, because Telegram will render it and a wall of raw URLs is unreadable.
+//
+// The CATALOGUE the item came from is deliberately not named. «Dior · сумка ·
+// Сумки жіночі» tells whoever answers nothing they did not already read two
+// words earlier, and five of those lines is a message you have to work through
+// instead of glance at. The link goes to the post; the post says where it lives.
 function itemLine(i) {
-  return `• ${itemLabel(i)}${i.channel ? ` · ${i.channel}` : ''}${i.url ? `\n  ${i.url}` : ''}`;
+  return `• ${itemLabel(i)}${i.url ? `\n  ${i.url}` : ''}`;
 }
 
 function itemLineHtml(i) {
   const label = escapeHtml(itemLabel(i));
-  return `• ${i.url ? `<a href="${escapeHtml(i.url)}">${label}</a>` : label}` +
-    (i.channel ? ` · ${escapeHtml(i.channel)}` : '');
+  return `• ${i.url ? `<a href="${escapeHtml(i.url)}">${label}</a>` : label}`;
+}
+
+// ── the phone, as something you can actually dial ─────────────────────────
+//
+// Every client on file gave a number with a country code: +380…, +1…. The join
+// form asks for one and shows «+1…» as the example. A device that autofills the
+// national form ("07 54 38 67 68") slips past that, and the result is the one
+// field the manager needs most, written in a way she cannot dial from abroad.
+//
+// So: compact what is unambiguous, and NEVER invent a country. A bare national
+// number is genuinely ambiguous — 0X XXXXXXXX is Ukraine and France both, and
+// this shop has clients in Ukraine, the United States and France — so it is
+// handed over as written, marked, for a human to ask about. A guess here writes
+// a wrong number into the only way to reach somebody.
+export function formatPhone(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const compact = s.replace(/[^\d+]/g, '');
+  if (compact.startsWith('+')) return compact;
+  // 00 is the international prefix spelled the old way.
+  if (compact.startsWith('00')) return `+${compact.slice(2)}`;
+  return `${s} (без коду країни)`;
 }
 
 // Send the fitting room as one inquiry. Returns { ok, inquiryId, message } and
@@ -357,9 +383,11 @@ export async function sendInquiry({ customer, message = '', now = Date.now(), la
   // the wording of the message can drift apart, one day they will.
   const tail = (esc) => {
     const q = esc ? escapeHtml : (s) => s;
-    return (clientText
-      ? `\nі задав питання адміністратору ${q(who.dative)}:\n«${q(clientText)}»`
-      : '\nПитання не додав — просить ціну та наявність.') +
+    // Only what the client actually WROTE. The fitting room no longer pre-fills
+    // the box, so text here is a person typing, not a template coming back —
+    // and there is no line saying they typed nothing, because the list already
+    // says everything a silent client is asking.
+    return (clientText ? `\nПитання клієнта:\n«${q(clientText)}»` : '') +
       // The coupon is stated either way: an unusable one still matters, because
       // Maryna is the person who sets the price the minimum is measured against.
       (promo
@@ -368,8 +396,8 @@ export async function sendInquiry({ customer, message = '', now = Date.now(), la
           : `\n\nЗнижка клієнта: ${q(promo.label)} (${q(promo.code)})` +
             (promo.minOrderUsd ? ` — діє від замовлення $${promo.minOrderUsd}, врахуйте при розрахунку` : '')
         : '') +
-      (customer.phone ? `\n\n📞 ${q(customer.phone)}` : '') +
-      (customer.tg_user_id ? `\nTG id ${q(String(customer.tg_user_id))}` : '');
+      (customer.phone ? `\n\n📞 ${q(formatPhone(customer.phone))}` : '') +
+      (customer.tg_user_id ? `\nTelegram User ID: ${q(String(customer.tg_user_id))}` : '');
   };
 
   const lead = `Клієнт ${shortName(customer)} цікавиться товаром:`;
