@@ -169,9 +169,12 @@
   box-shadow: none;
   overflow: hidden;
 }
-/* Consecutive posts share their rules and read as one column of paper rather
-   than a stack of floating boxes. */
-.stack > .post + .post { margin-top: calc(-1 * var(--w2b-space-3) - 1px); }
+/* Consecutive posts used to share their rules and read as one column of paper:
+   a −13px pull against the stack's 14px gap left exactly the 1px of shared
+   border. It read as one continuous sheet, and the line where one publication
+   ended and the next began stopped being visible at all. A few pixels separate
+   them without turning the column into a stack of floating boxes. */
+.stack > .post + .post { margin-top: calc(-1 * var(--w2b-space-3) + 4px); }
 
 /* An album is a scroll-snap strip — a real gallery for six lines of CSS and no
    script. The aspect sits on the STRIP, not on each picture, so every post in
@@ -2042,6 +2045,11 @@ body {
   pointer-events: none;
 }
 
+/* `display: flex` on .filterbtn outranks the browser's own [hidden] rule, so a
+   hidden chip would otherwise stay on screen. Same shape as .sheet[hidden] and
+   .toast[hidden] elsewhere in this codebase. */
+.filterbtn[hidden] { display: none; }
+
 /* The chip that changes it, in the search row beside the filter button. */
 .filterbtn--zoom,
 .filterbtn--layout {
@@ -2121,7 +2129,15 @@ body {
   grid-template-columns: 1fr;
   gap: 18px;
 }
-.tiles--feed .tile__media { aspect-ratio: 4 / 5; }
+.tiles--feed .tile__media {
+  aspect-ratio: 4 / 5;
+  /* No loupe here. The photograph is already the width of the screen, so
+     magnifying it enlarges what is on show rather than revealing anything —
+     and a hint promising 1.5x over a picture the gesture no longer answers on
+     is worse than no hint. The gesture is switched off in app.js to match. */
+  cursor: auto;
+}
+.tiles--feed .tile__media:has(img)::after { content: none; }
 .tiles--feed .tile__title { min-height: 0; font-size: 14px; }
 .tiles--feed .tile__price { font-size: 16px; }
 .tiles--feed .tile__body { padding: 14px 14px 15px; }

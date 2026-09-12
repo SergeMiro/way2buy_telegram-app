@@ -263,6 +263,11 @@
   function paintLayoutButton() {
     var chips = document.querySelectorAll('[data-layout-cycle]');
     for (var i = 0; i < chips.length; i += 1) chips[i].textContent = LAYOUT_LABEL[layoutMode];
+    // The 🔍 chip configures the loupe and nothing else, and «Великі» has no
+    // loupe — so in that view it is a control that changes nothing. Hidden
+    // rather than disabled: a dead button invites the tap that proves it dead.
+    var zoomChips = document.querySelectorAll('[data-zoom-cycle]');
+    for (var j = 0; j < zoomChips.length; j += 1) zoomChips[j].hidden = layoutMode === 'feed';
   }
 
   function cycleLayout() {
@@ -331,6 +336,10 @@
         '.tile__media img, .post__gallery img, .fit-row__thumb img'
       );
       if (!image) return null;
+      // «Великі» is already showing the photograph at the width of the screen.
+      // A magnifier over it enlarges what is on show instead of revealing
+      // anything, so the hold does nothing and the page keeps scrolling.
+      if (image.closest('.tiles--feed')) return null;
       return { image: image, media: image.closest('.tile__media, .post__gallery img, .fit-row__thumb') };
     }
 
@@ -1123,7 +1132,11 @@
       // and a control inside it could never be pressed. Its label is updated in
       // place by paintZoomLabel() — this row is deliberately not re-rendered
       // with the vitrine, so nothing here may depend on a repaint.
+      // `hidden` from the first paint, not only after a switch: this row is not
+      // re-rendered with the vitrine, so a chip that only paintLayoutButton()
+      // could hide would be visible until somebody changed the view.
       '<button class="filterbtn filterbtn--zoom" type="button" data-zoom-cycle' +
+        (layoutMode === 'feed' ? ' hidden' : '') +
         ' aria-label="Збільшення лупи">🔍 ' + zoomLabel() + '</button>' +
       // Вигляд вітрини — the same cycling chip as the loupe factor, for the same
       // reason: three states is one tap each, and a three-way switch would cost
