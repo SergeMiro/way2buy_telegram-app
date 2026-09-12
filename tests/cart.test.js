@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { migrate, db } from '../server/db.js';
 import {
   addToCart, removeFromCart, listCart, cartCount, cartView, bestPromo,
-  sendInquiry, listInquiries, setInquiryStatus, formatPhone, customerInquiries,
+  sendInquiry, listInquiries, setInquiryStatus, customerInquiries,
   popularItems, popularityStats, resolvePeriod,
 } from '../server/cart.js';
 
@@ -258,19 +258,7 @@ test('one client never sees another client\'s requests', async () => {
   assert.equal((await customerInquiries(a.id)).length, 1);
 });
 
-test('a phone is dialable, and a country the shop cannot know is never invented', async () => {
-  // Every client on file gave a country code; a device that autofills the
-  // national form slips past the join form. 0X XXXXXXXX is Ukraine and France
-  // both, and this shop has clients in both — so it is handed over as written,
-  // marked, rather than guessed into a number that reaches a stranger.
-  assert.equal(formatPhone('+33 7 54 38 67 68'), '+33754386768');
-  assert.equal(formatPhone('+380 67 111 22 33'), '+380671112233');
-  assert.equal(formatPhone('0033754386768'), '+33754386768');
-  assert.equal(formatPhone('07 54 38 67 68'), '07 54 38 67 68 (без коду країни)');
-  assert.equal(formatPhone(''), null);
-  assert.equal(formatPhone(null), null);
-});
-
+// The number itself is tests/phone.test.js; this is only that the inquiry uses it.
 test('the message names the client by the id that can be looked up', async () => {
   const c = await customer('Оксана');
   await db.prepare('UPDATE customers SET phone=? WHERE id=?').run('+33 7 54 38 67 68', c.id);

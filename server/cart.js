@@ -29,6 +29,7 @@ import { notifyCustomer, notifyAdmins, adminIds } from './notify.js';
 import { sendToUser } from './telegram.js';
 import { asJson } from './sql.js';
 import { mediaUrl, isEmojiRef } from './media.js';
+import { formatPhone } from './phone.js';
 
 const iso = (ms) => new Date(ms).toISOString();
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -313,27 +314,6 @@ function itemLineHtml(i) {
   return `• ${i.url ? `<a href="${escapeHtml(i.url)}">${label}</a>` : label}`;
 }
 
-// ── the phone, as something you can actually dial ─────────────────────────
-//
-// Every client on file gave a number with a country code: +380…, +1…. The join
-// form asks for one and shows «+1…» as the example. A device that autofills the
-// national form ("07 54 38 67 68") slips past that, and the result is the one
-// field the manager needs most, written in a way she cannot dial from abroad.
-//
-// So: compact what is unambiguous, and NEVER invent a country. A bare national
-// number is genuinely ambiguous — 0X XXXXXXXX is Ukraine and France both, and
-// this shop has clients in Ukraine, the United States and France — so it is
-// handed over as written, marked, for a human to ask about. A guess here writes
-// a wrong number into the only way to reach somebody.
-export function formatPhone(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return null;
-  const compact = s.replace(/[^\d+]/g, '');
-  if (compact.startsWith('+')) return compact;
-  // 00 is the international prefix spelled the old way.
-  if (compact.startsWith('00')) return `+${compact.slice(2)}`;
-  return `${s} (без коду країни)`;
-}
 
 // Send the fitting room as one inquiry. Returns { ok, inquiryId, message } and
 // never throws for business reasons.

@@ -856,6 +856,20 @@
     return html;
   }
 
+  // Mirrors normalizePhone() in server/phone.js. The server is the rule — a form
+  // can be bypassed and this one runs on somebody's phone — but a client should
+  // be told about a missing «+» while looking at the field, not after a round
+  // trip that reads as "the app is broken".
+  function checkPhone(raw) {
+    var s = String(raw || '').trim();
+    if (!s) return { ok: true, value: '' };
+    var compact = s.replace(/[^\d+]/g, '');
+    var e164 = compact.indexOf('00') === 0 ? '+' + compact.slice(2) : compact;
+    if (e164.charAt(0) !== '+') return { ok: false, reason: 'no_country_code' };
+    if (!/^\+\d{7,15}$/.test(e164)) return { ok: false, reason: 'malformed' };
+    return { ok: true, value: e164 };
+  }
+
   function renderJoin() {
     var cb = state.config.cashback || {};
     var draft = state.joinDraft || {};
@@ -893,8 +907,11 @@
               'value="' + esc(address) + '" required placeholder="Місто, вулиця, будинок, квартира" /></label>' +
           '<div class="form-grid">' +
             '<label class="field"><span class="field__label">Номер телефону</span>' +
+              // The example IS the instruction. «+1…» was a placeholder somebody
+              // could read as decoration; a whole number in the shape we need is
+              // what a phone's autofill has to be corrected against.
               '<input class="field__input" name="phone" type="tel" inputmode="tel" autocomplete="tel" ' +
-                'value="' + esc(phone) + '" required placeholder="+1…" /></label>' +
+                'value="' + esc(phone) + '" required placeholder="+380 67 123 45 67" /></label>' +
             '<label class="field"><span class="field__label">Дата народження</span>' +
               '<input class="field__input" name="birthday" type="date" autocomplete="bday" ' +
                 'value="' + esc(birthday) + '" required /></label>' +
@@ -903,6 +920,8 @@
             ? '<p class="autofill-note"><span aria-hidden="true">✓</span>' +
                 '<span>Імʼя вже заповнено. Телефон і адресу може запропонувати ваш пристрій.</span></p>'
             : '') +
+          '<p class="field__hint">Телефон — обовʼязково з кодом країни: +380, +33, +1. ' +
+            'Без нього ми не зможемо вам зателефонувати.</p>' +
           '<p class="field__hint">Дату народження ми записуємо один раз — вона потрібна для знижки ' +
             'і надалі не змінюється без менеджера.</p>' +
           '<label class="inline"><input type="checkbox" name="consent"' + (consent ? ' checked' : '') + ' /> ' +
@@ -3085,6 +3104,9 @@
   document.addEventListener('input', function (e) {
     var input = e.target;
     if (!input || !input.form || input.form.id !== 'joinForm' || !input.name) return;
+    // Typing is the answer to being told the field is wrong; the red outline
+    // must not outlive the correction.
+    input.classList.remove('is-error');
     state.joinDraft[input.name] = input.type === 'checkbox' ? input.checked : input.value;
   });
 
@@ -3622,8 +3644,20 @@
         await go('admin');
         toast('Додано');
       } else if (form.id === 'joinForm') {
+        var ph = checkPhone(data.phone);
+        if (!ph.ok) {
+          var phoneInput = form.querySelector('[name="phone"]');
+          if (phoneInput) { phoneInput.classList.add('is-error'); phoneInput.focus(); }
+          // Word for word what the server would answer, so a client who somehow
+          // reaches it is not told the same thing twice in two ways.
+          toast(ph.reason === 'no_country_code'
+            ? 'Вкажіть номер з кодом країни, наприклад +380 67 123 45 67.'
+            : 'Перевірте номер: має бути код країни і 7–15 цифр, наприклад +380 67 123 45 67.', 'error');
+          // `finally` below puts the button back, so this is not a dead form.
+          return;
+        }
         await api.register({
-          name: data.name, phone: data.phone, address: data.address,
+          name: data.name, phone: ph.value, address: data.address,
           birthday: data.birthday, consent: data.consent ? 1 : 0,
           login: tg.username || undefined,
         });

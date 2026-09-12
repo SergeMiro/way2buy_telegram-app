@@ -33,6 +33,7 @@ import * as deals from './deals.js';
 import * as settings from './settings.js';
 import { asJson } from './sql.js';
 import { normalizeLang } from './i18n.js';
+import { normalizePhone, PHONE_ERRORS } from './phone.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await init();
@@ -242,6 +243,17 @@ app.post('/api/register', async (req, res) => {
 
   const parsedBday = bday ? birthday.parseBirthday(bday) : null;
   if (bday && !parsedBday) return res.status(400).json({ error: 'invalid birthday' });
+
+  // The country code is required, and the refusal happens HERE as well as in the
+  // form: the form is a courtesy, this is the rule. What is stored is the
+  // normalized number, so «+380 67 123 45 67» and «0038067…» become one string
+  // and every later reader — the inquiry, the cabinet — gets something dialable
+  // without having to clean it up again.
+  const parsedPhone = normalizePhone(phone);
+  if (!parsedPhone.ok) {
+    return res.status(400).json({ error: PHONE_ERRORS[parsedPhone.reason], reason: parsedPhone.reason, field: 'phone' });
+  }
+  const storedPhone = parsedPhone.value;
   const storedBday = parsedBday
     ? `${parsedBday.year || 1900}-${birthday.mmdd(parsedBday)}`
     : null;
@@ -253,7 +265,7 @@ app.post('/api/register', async (req, res) => {
     // is an admin action (see /api/admin/customers/:id/birthday).
     const keepBday = exists.birthday || storedBday;
     await db.prepare('UPDATE customers SET name=?,phone=?,address=?,birthday=?,city=COALESCE(?,city),consent=? WHERE id=?')
-      .run(name, phone || null, address || null, keepBday, city || null, Boolean(consent), exists.id);
+      .run(name, storedPhone, address || null, keepBday, city || null, Boolean(consent), exists.id);
     if (!exists.birthday && storedBday) {
       await db.prepare('UPDATE customers SET birthday_source=?, birthday_recorded_at=? WHERE id=?')
         .run('claim', now(), exists.id);
@@ -265,7 +277,7 @@ app.post('/api/register', async (req, res) => {
   const info = await db.prepare(`INSERT INTO customers
       (tg_user_id,login,name,phone,address,birthday,birthday_source,birthday_recorded_at,city,consent,created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, req.body.login || null, name, phone || null, address || null,
+    .run(id, req.body.login || null, name, storedPhone, address || null,
       storedBday, storedBday ? 'claim' : null, storedBday ? now() : null,
       city || null, Boolean(consent), now());
   await db.prepare('INSERT INTO events (customer_id,type,created_at) VALUES (?,?,?)').run(info.lastInsertRowid, 'join', now());
