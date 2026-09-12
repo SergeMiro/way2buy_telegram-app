@@ -381,28 +381,47 @@ export async function sendInquiry({ customer, message = '', now = Date.now(), la
 
   // One text, two escapings — never two texts. If the wording of the record and
   // the wording of the message can drift apart, one day they will.
+  //
+  // Assembled as BLOCKS joined once, not as fragments each carrying its own
+  // leading newlines. The old shape left a hole behind whichever block turned
+  // out to be absent, and the blocks here are absent most of the time: a client
+  // who typed nothing and holds no coupon is the ordinary case.
   const tail = (esc) => {
     const q = esc ? escapeHtml : (s) => s;
+    const blocks = [];
+
     // Only what the client actually WROTE. The fitting room no longer pre-fills
-    // the box, so text here is a person typing, not a template coming back —
-    // and there is no line saying they typed nothing, because the list already
-    // says everything a silent client is asking.
-    return (clientText ? `\nПитання клієнта:\n«${q(clientText)}»` : '') +
-      // The coupon is stated either way: an unusable one still matters, because
-      // Maryna is the person who sets the price the minimum is measured against.
-      (promo
-        ? promo.usable
-          ? `\n\nЗнижка клієнта: ${q(promo.label)} (${q(promo.code)}) — застосована`
-          : `\n\nЗнижка клієнта: ${q(promo.label)} (${q(promo.code)})` +
-            (promo.minOrderUsd ? ` — діє від замовлення $${promo.minOrderUsd}, врахуйте при розрахунку` : '')
-        : '') +
-      (customer.phone ? `\n\n📞 ${q(formatPhone(customer.phone))}` : '') +
-      (customer.tg_user_id ? `\nTelegram User ID: ${q(String(customer.tg_user_id))}` : '');
+    // the box, so text here is a person typing, not a template coming back.
+    if (clientText) blocks.push(`Питання клієнта:\n«${q(clientText)}»`);
+
+    // The coupon is stated either way: an unusable one still matters, because
+    // Maryna is the person who sets the price the minimum is measured against.
+    if (promo) {
+      blocks.push(promo.usable
+        ? `Знижка клієнта: ${q(promo.label)} (${q(promo.code)}) — застосована`
+        : `Знижка клієнта: ${q(promo.label)} (${q(promo.code)})` +
+          (promo.minOrderUsd ? ` — діє від замовлення $${promo.minOrderUsd}, врахуйте при розрахунку` : ''));
+    }
+
+    // How to reach them, as one block: two ways of doing the same thing belong
+    // on adjacent lines, not separated by the blank line that divides subjects.
+    const contact = [
+      customer.phone ? `📞 ${q(formatPhone(customer.phone))}` : null,
+      customer.tg_user_id ? `Telegram User ID: ${q(String(customer.tg_user_id))}` : null,
+    ].filter(Boolean);
+    if (contact.length) blocks.push(contact.join('\n'));
+
+    return blocks.join('\n\n');
   };
 
   const lead = `Клієнт ${shortName(customer)} цікавиться товаром:`;
-  const body = `${lead}\n${items.map(itemLine).join('\n')}\n${tail(false)}`;
-  const bodyHtml = `${escapeHtml(lead)}\n${items.map(itemLineHtml).join('\n')}\n${tail(true)}`;
+  const compose = (line, esc) => [
+    `${esc ? escapeHtml(lead) : lead}\n${items.map(line).join('\n')}`,
+    tail(esc),
+  ].filter(Boolean).join('\n\n');
+
+  const body = compose(itemLine, false);
+  const bodyHtml = compose(itemLineHtml, true);
 
   // Maryna (admins) get it in the admin alert feed + DM. The client is never
   // told this happened — nothing in the response or in their notification feed

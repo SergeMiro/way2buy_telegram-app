@@ -232,6 +232,11 @@ test('the message names the client by the id that can be looked up', async () =>
   // paste it into a search box.
   assert.match(alert.body, /Telegram User ID: /);
   assert.doesNotMatch(alert.body, /TG id/);
+  // The two ways to reach one person sit together, with no blank line between.
+  assert.match(alert.body, /📞 \+33754386768\nTelegram User ID: /);
+  // No hole where an absent block used to be. This client typed nothing and
+  // holds no coupon — the ordinary case, and the one that used to open a gap.
+  assert.doesNotMatch(alert.body, /\n{3}/, 'a removed block left a blank line behind');
 });
 
 test('the usable coupon is attached to the inquiry automatically', async () => {
