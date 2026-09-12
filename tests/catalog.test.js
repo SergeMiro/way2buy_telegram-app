@@ -59,6 +59,37 @@ test('a chip narrows to one catalogue', async () => {
   assert.deepEqual(rows.map((r) => r.title).sort(), ['Chanel Slingback', 'Louboutin So Kate']);
 });
 
+test('several catalogues are one selection, not two requests', async () => {
+  // «Hermès і Chanel» is one question. Asked as two requests and merged on the
+  // client it would page wrongly: keyset paging walks one ordered result set.
+  const { rows } = await catalog.listPosts(sel({ channel: 'bags,shoes' }));
+  assert.equal(rows.length, 5);
+
+  // Order, spacing and repetition in the parameter must not change the answer.
+  for (const written of ['bags,shoes', 'shoes,bags', ' bags , shoes ', 'bags,shoes,bags']) {
+    const r = await catalog.listPosts(sel({ channel: written }));
+    assert.equal(r.rows.length, 5, written);
+  }
+});
+
+test('«all» is the word for no catalogue filter, not a catalogue to look up', async () => {
+  // The old chip row sent `channel=all`. An empty list means the same thing,
+  // and a Mini App still open on that bundle must not get an empty vitrine.
+  assert.deepEqual(catalog.selectionFrom({ channel: 'all' }).channels, []);
+  assert.deepEqual(catalog.selectionFrom({ channel: 'bags,all' }).channels, ['bags']);
+  const { rows } = await catalog.listPosts(sel({ channel: 'all' }));
+  assert.equal(rows.length, 5, 'every enabled catalogue');
+});
+
+test('the facets of several catalogues are the facets of their union', async () => {
+  const both = await catalog.facetsFor(sel({ channel: 'bags,shoes' }));
+  const categories = both.categories.map((c) => c.value).sort();
+  assert.deepEqual(categories, ['взуття', 'сумка'], 'a filter from each catalogue');
+  assert.equal(both.total, 5);
+  // Chanel appears in both catalogues and is counted once across the union.
+  assert.equal(both.brands.find((b) => b.value === 'Chanel').count, 3);
+});
+
 test('search is case-insensitive and covers title, body and article', async () => {
   // The regression this guards: SQLite's LIKE ignores ASCII case, Postgres's
   // does not. With LIKE the client typing "chanel" would find nothing.

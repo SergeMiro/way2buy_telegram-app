@@ -23,7 +23,6 @@
     config: null,
     me: null,
     tab: 'catalog',
-    feedChannel: 'all',
     discounts: { promos: [], publicCampaigns: [] },
     purchases: { purchases: [], promos: [], loyalty: null },
     feed: [],
@@ -43,7 +42,11 @@
     // The vitrine's selection and what the server says can be filtered inside
     // it. Nothing here is a hardcoded list: a new catalogue full of a brand
     // nobody has posted before grows its own chip.
-    filters: { brand: null, category: null },
+    // One description of "what am I looking at". The catalogue used to live
+    // apart from the content filters, in its own always-visible row; it is a
+    // filter like the others and is chosen in the same sheet. A LIST, because
+    // «Hermès і Chanel» is one question.
+    filters: { channels: [], brand: null, category: null },
     facets: { total: 0, brands: [], categories: [] },
     nextCursor: null,
     loadingMore: false,
@@ -1146,46 +1149,23 @@
     '</div>';
   }
 
-  function chipsHtml() {
-    var list = state.catalogs || [];
-    var selected = list.filter(function (c) { return c.key === state.feedChannel; })[0];
-    var remaining = list.filter(function (c) { return !selected || c.key !== selected.key; });
-    var stock = remaining.filter(function (c) { return c.inStock; });
-    var rest = remaining.filter(function (c) { return !c.inStock; });
-
-    var chip = function (c) {
-      var active = state.feedChannel === c.key;
-      return '<button class="chip' + (c.inStock ? ' chip--stock' : '') + (active ? ' is-active' : '') +
-        '" type="button" data-channel="' + esc(c.key) + '"' +
-        (active ? ' data-clear-channel aria-label="Прибрати фільтр ' + esc(c.title) + '"' : '') + '>' +
-        '<span class="chip__label">' + esc(c.title) + '</span>' +
-        (c.count ? '<span class="chip__count">' + c.count + '</span>' : '') +
-        (active ? '<span class="chip__remove" aria-hidden="true">×</span>' : '') + '</button>';
-    };
-
-    return '<div class="chips">' +
-      (selected ? chip(selected) : '') +
-      (state.feedChannel === 'all'
-        ? '<button class="chip is-active" type="button" data-channel="all">Усе' +
-          (state.catalogTotal ? '<span class="chip__count">' + state.catalogTotal + '</span>' : '') +
-          '</button>'
-        : '') +
-      stock.map(chip).join('') +
-      (state.feedChannel === 'all'
-        ? ''
-        : '<button class="chip" type="button" data-channel="all">Усе' +
-          (state.catalogTotal ? '<span class="chip__count">' + state.catalogTotal + '</span>' : '') +
-          '</button>') +
-      rest.map(chip).join('') +
-    '</div>';
-  }
-
   // What is applied right now, in one list — the badges and the button count
   // both read from it, so they cannot disagree.
   function activeFilters() {
     var out = [];
-    if (state.filters.brand) out.push({ kind: 'brand', value: state.filters.brand });
-    if (state.filters.category) out.push({ kind: 'category', value: state.filters.category });
+    // Catalogues first, because they are what the other two are filters INSIDE
+    // of: «Chanel» under «Сумки» reads differently from «Chanel» across
+    // everything, and the badges are read left to right.
+    (state.filters.channels || []).forEach(function (key) {
+      var c = (state.catalogs || []).filter(function (x) { return x.key === key; })[0];
+      out.push({ kind: 'channel', value: key, label: (c && c.title) || key });
+    });
+    if (state.filters.brand) {
+      out.push({ kind: 'brand', value: state.filters.brand, label: state.filters.brand });
+    }
+    if (state.filters.category) {
+      out.push({ kind: 'category', value: state.filters.category, label: state.filters.category });
+    }
     return out;
   }
 
@@ -1197,8 +1177,13 @@
     if (!applied.length) return '';
     return '<div class="applied">' +
       applied.map(function (f) {
-        return '<button class="fbadge" type="button" data-drop-filter="' + esc(f.kind) + '">' +
-          esc(f.value) + '<span class="fbadge__x" aria-hidden="true">×</span></button>';
+        // `data-drop-value` matters only for catalogues: there can be several,
+        // so the badge has to say WHICH one it removes.
+        return '<button class="fbadge' + (f.kind === 'channel' ? ' fbadge--channel' : '') +
+          '" type="button" data-drop-filter="' + esc(f.kind) + '"' +
+          ' data-drop-value="' + esc(f.value) + '"' +
+          ' aria-label="Прибрати фільтр ' + esc(f.label) + '">' +
+          esc(f.label) + '<span class="fbadge__x" aria-hidden="true">×</span></button>';
       }).join('') +
       (applied.length > 1
         ? '<button class="applied__clear" type="button" data-drop-filter="all">Скинути все</button>'
@@ -1215,6 +1200,47 @@
   // every screen of the vitrine, and the one thing they never showed was what
   // was actually applied. The sheet holds as many values as the data has, and
   // the badges under the search say what is on.
+  // The catalogues, as the first thing in the sheet.
+  //
+  // They used to be a permanently open row under the search — eighteen chips
+  // scrolling sideways above every screen of the vitrine, separate from the
+  // sheet that held everything else, so «які фільтри в мене стоять» had two
+  // places to look and neither showed both. A catalogue IS a filter. Several
+  // can be on at once, and the sections below are recomputed from the server
+  // for exactly the ones that are: choose «Hermès» and the brands underneath
+  // become the brands Hermès actually has.
+  function catalogSectionHtml() {
+    var list = state.catalogs || [];
+    if (!list.length) return '';
+    var chosen = state.filters.channels || [];
+    var on = function (key) { return chosen.indexOf(key) !== -1; };
+    // Chosen first, then «в наявності», then the fullest — so what is applied
+    // stays visible when the sheet is reopened, and can be removed with the
+    // same tap that set it.
+    var ordered = list.filter(function (c) { return on(c.key); })
+      .concat(list.filter(function (c) { return !on(c.key); }));
+
+    return '<div class="fsheet">' +
+      '<div class="fsheet__label">Каталоги</div>' +
+      '<div class="fsheet__grid">' +
+        ordered.map(function (c) {
+          return '<button class="fchip' + (c.inStock ? ' fchip--stock' : '') +
+            (on(c.key) ? ' is-active' : '') + '" type="button"' +
+            ' data-facet="channel" data-value="' + esc(c.key) + '"' +
+            (on(c.key) ? ' aria-label="Прибрати каталог ' + esc(c.title) + '"' : '') + '>' +
+            esc(c.title) + (c.count ? '<span class="fchip__count">' + c.count + '</span>' : '') +
+            (on(c.key) ? '<span class="fchip__remove" aria-hidden="true">×</span>' : '') +
+          '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="fsheet__hint">' +
+        (chosen.length
+          ? 'Нижче — фільтри лише обраних каталогів.'
+          : 'Нічого не обрано: показано всі каталоги і всі їхні фільтри.') +
+      '</div>' +
+    '</div>';
+  }
+
   function filtersSheetHtml() {
     var f = state.facets || {};
     var section = function (kind, label, values, active) {
@@ -1237,7 +1263,8 @@
         '</div></div>';
     };
 
-    var body = section('brand', 'Бренд', f.brands, state.filters.brand) +
+    var body = catalogSectionHtml() +
+      section('brand', 'Бренд', f.brands, state.filters.brand) +
       section('category', 'Категорія', f.categories, state.filters.category);
 
     if (!body) return '<p class="panel__note">Тут поки нема за чим фільтрувати.</p>';
@@ -1260,18 +1287,22 @@
   // and its caret — retyping a word because the field blurred mid-letter is the
   // kind of thing that makes an app feel broken.
   function vitrineBodyHtml() {
-    var current = (state.catalogs || []).filter(function (c) { return c.key === state.feedChannel; })[0];
+    var chosen = state.filters.channels || [];
+    var one = chosen.length === 1
+      ? (state.catalogs || []).filter(function (c) { return c.key === chosen[0]; })[0]
+      : null;
     var title = state.search
       ? 'Пошук'
-      : (state.filters.brand || (current ? current.title : 'Усі каталоги'));
+      : (state.filters.brand
+        || (one ? one.title : '')
+        || (chosen.length ? chosen.length + ' ' + plural(chosen.length, ['каталог', 'каталоги', 'каталогів']) : 'Усі каталоги'));
 
     // The count is the size of the whole selection, not of the page in hand:
     // «60 позицій» under a filter holding 900 of them is a number the client
     // would act on.
     var total = state.facets && state.facets.total ? state.facets.total : state.feed.length;
 
-    var html = activeFiltersHtml() +
-      '<div class="vitrine-head">' +
+    var html = '<div class="vitrine-head">' +
         '<span class="vitrine-head__title">' + esc(title) + '</span>' +
         '<span class="vitrine-head__count">' + total + ' ' +
           plural(total, ['позиція', 'позиції', 'позицій']) + '</span>' +
@@ -1293,8 +1324,20 @@
     return html;
   }
 
+  // The search box, the filter button and the badges of what is applied, as one
+  // block that stays on screen while the vitrine scrolls under it. Adding or
+  // dropping a catalogue — or typing — must never require scrolling back to the
+  // top past four hundred photographs to reach the controls.
+  //
+  // Two children, repainted on different schedules and deliberately so: the
+  // search row is never re-rendered (that would take the focus out of the input
+  // mid-word), and the badges are re-rendered on every selection change.
   function renderCatalog() {
-    return topbarHtml() + '<div class="stack">' + searchHtml() + chipsHtml() +
+    return topbarHtml() + '<div class="stack">' +
+      '<div class="vbar">' +
+        searchHtml() +
+        '<div id="appliedBar">' + activeFiltersHtml() + '</div>' +
+      '</div>' +
       '<div id="vitrine">' + vitrineBodyHtml() + '</div>' +
     '</div>';
   }
@@ -1302,6 +1345,8 @@
   function repaintVitrine() {
     var host = document.getElementById('vitrine');
     if (host) host.innerHTML = vitrineBodyHtml();
+    var bar = document.getElementById('appliedBar');
+    if (bar) bar.innerHTML = activeFiltersHtml();
     paintFilterButton();
   }
 
@@ -2994,7 +3039,7 @@
   // search spans every catalogue).
   function selection(extra) {
     var sel = {
-      channel: state.feedChannel,
+      channel: (state.filters.channels || []).join(','),
       q: state.search,
       brand: state.filters.brand,
       category: state.filters.category,
@@ -3214,6 +3259,25 @@
     badge.hidden = !count;
   }
 
+  // The hairline under the sticky bar shows only while the bar is actually
+  // holding — an always-on rule under the search box is a line drawn for no
+  // reason on a screen that has not been scrolled.
+  //
+  // Watched, not polled: a scroll handler measuring on every frame is the other
+  // way to do this and it is the way that stutters on a phone. `rootMargin`
+  // of −1px is what makes the bar stop being "fully visible" the moment it
+  // reaches the top, so no sentinel element is needed in the layout.
+  var stickyBarObserver = null;
+  function watchStickyBar() {
+    if (stickyBarObserver) { stickyBarObserver.disconnect(); stickyBarObserver = null; }
+    var bar = $app.querySelector('.vbar');
+    if (!bar || !window.IntersectionObserver) return;
+    stickyBarObserver = new window.IntersectionObserver(function (entries) {
+      bar.classList.toggle('is-stuck', entries[0].intersectionRatio < 1);
+    }, { threshold: [1], rootMargin: '-1px 0px 0px 0px' });
+    stickyBarObserver.observe(bar);
+  }
+
   async function go(tab, opts) {
     state.tab = tab;
     if (!(opts && opts.keepScroll)) window.scrollTo(0, 0);
@@ -3221,6 +3285,7 @@
     try {
       await loadTab(tab);
       $app.innerHTML = VIEWS[tab]();
+      watchStickyBar();
       revealCards();
       // The wordmark is re-rendered with the view, so its two lines have to be
       // measured against each other again.
@@ -3284,23 +3349,6 @@
       return;
     }
 
-    var chip = t.closest('[data-channel]');
-    if (chip) {
-      // The active catalogue is also its own clear button: one tap removes it.
-      state.feedChannel = chip.hasAttribute('data-clear-channel')
-        ? 'all'
-        : chip.getAttribute('data-channel');
-      tg.haptic('light');
-      // Tapping a catalogue is an explicit choice — it clears an active search.
-      state.search = '';
-      // …and the content filters, which belonged to the previous catalogue: a
-      // brand carried over into a catalogue that has none leaves the client
-      // staring at «нічого немає» with no idea why.
-      state.filters = { brand: null, category: null };
-      go('catalog');
-      return;
-    }
-
     if (t.closest('[data-open-filters]')) {
       tg.haptic('light');
       openFiltersSheet();
@@ -3310,8 +3358,16 @@
     var drop = t.closest('[data-drop-filter]');
     if (drop) {
       var which = drop.getAttribute('data-drop-filter');
-      if (which === 'all') state.filters = { brand: null, category: null };
-      else state.filters[which] = null;
+      if (which === 'all') {
+        state.filters = { channels: [], brand: null, category: null };
+      } else if (which === 'channel') {
+        var dropped = drop.getAttribute('data-drop-value');
+        state.filters.channels = (state.filters.channels || []).filter(function (k) {
+          return k !== dropped;
+        });
+      } else {
+        state.filters[which] = null;
+      }
       tg.haptic('light');
       await refreshVitrine();
       // The sheet stays open while filters are being changed from inside it.
@@ -3324,8 +3380,18 @@
     if (facet) {
       var kind = facet.getAttribute('data-facet');
       var value = facet.getAttribute('data-value') || null;
-      // Tapping the active value clears it, so a filter is never a trap.
-      state.filters[kind] = state.filters[kind] === value ? null : value;
+      if (kind === 'channel') {
+        // Catalogues ACCUMULATE — that is the whole point of choosing them
+        // here rather than in a row where one was active at a time. Tapping a
+        // chosen one removes it, so a filter is never a trap.
+        var chosen = state.filters.channels || [];
+        state.filters.channels = chosen.indexOf(value) === -1
+          ? chosen.concat([value])
+          : chosen.filter(function (k) { return k !== value; });
+      } else {
+        // Tapping the active value clears it, for the same reason.
+        state.filters[kind] = state.filters[kind] === value ? null : value;
+      }
       tg.haptic('light');
       await refreshVitrine();
       // Re-render the sheet in place so the choice is visibly taken and a second
@@ -3912,7 +3978,6 @@
         });
         closeSheet();
         toast(r.live ? 'Опубліковано в каналі' : 'Опубліковано (демо-режим)');
-        state.feedChannel = data.channel;
         await go('feed');
       } else if (form.id === 'campaignForm') {
         var payload = {

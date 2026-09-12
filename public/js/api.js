@@ -30,10 +30,16 @@
   function selection(sel) {
     var s = sel || {};
     var out = {};
-    // A search spans every catalogue: the chip is deliberately not applied,
-    // because someone typing "kelly" wants the bag wherever it lives.
+    // Search and catalogues COMPOSE. A search used to replace the catalogue
+    // selection — reasonable while the catalogue was a chip somebody had
+    // passively tapped in a row that was always on screen. It is now a badge
+    // sitting above the results with an × on it, and a filter the client can
+    // see has to be a filter that applies, or the screen is lying about what it
+    // is showing. Wanting to search everything is one tap on that ×.
     if (s.q) out.q = s.q;
-    else if (s.channel && s.channel !== 'all') out.channel = s.channel;
+    if (s.channel) out.channel = s.channel;
+    // No catalogue chosen means every catalogue — and not the main channel,
+    // which is «Стрічка» and has its own tab.
     if (!out.channel) out.kind = 'catalog';
     if (s.brand) out.brand = s.brand;
     if (s.category) out.category = s.category;

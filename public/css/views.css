@@ -134,26 +134,6 @@
 .badge-chip--locked { opacity: 0.42; filter: grayscale(1); }
 
 /* ── channel chips ───────────────────────────────────────────────────────── */
-.chips { display: flex; gap: var(--w2b-space-2); overflow-x: auto; padding-bottom: var(--w2b-space-1); }
-.chip {
-  flex: none;
-  padding: 8px 14px;
-  border-radius: 0;
-  border: 1px solid var(--w2b-line);
-  background: var(--w2b-surface-1);
-  color: var(--w2b-text-muted);
-  font-size: var(--w2b-fs-sm);
-  font-weight: var(--w2b-fw-medium);
-  cursor: pointer;
-  transition: color var(--w2b-dur-fast) var(--w2b-ease-out),
-              border-color var(--w2b-dur-fast) var(--w2b-ease-out);
-}
-.chip.is-active {
-  color: var(--w2b-ink);
-  background: var(--w2b-gold-fill);
-  border-color: transparent;
-  font-weight: var(--w2b-fw-semi);
-}
 
 /* ── стрічка: a channel post is a photograph and a caption ────────────────────
    This tab IS the Telegram channel, and it was drawn as a table row: a 46px
@@ -592,60 +572,6 @@
   font-size: var(--w2b-fs-sm);
   padding: 4px;
 }
-
-/* ── filter row: text labels, an underline for the active one ─────────────── */
-.chips {
-  display: flex;
-  gap: var(--w2b-space-4);
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding: 0 0 var(--w2b-space-2);
-  border-bottom: 1px solid var(--w2b-line);
-}
-.chips::-webkit-scrollbar { display: none; }
-.chip {
-  flex: none;
-  padding: 6px 0;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  background: none;
-  color: var(--w2b-text-subtle);
-  text-transform: uppercase;
-  letter-spacing: var(--w2b-ls-caps);
-  font-size: var(--w2b-fs-2xs);
-  font-weight: var(--w2b-fw-regular);
-  white-space: nowrap;
-}
-.chip__count { margin-left: 5px; opacity: 0.55; letter-spacing: 0; }
-.chip.is-active {
-  color: var(--w2b-text);
-  background: none;
-  border-bottom-color: var(--w2b-text);
-  font-weight: var(--w2b-fw-medium);
-}
-/* «Товари в наявності» — the only coloured control in the app. */
-.chip--stock {
-  color: var(--w2b-accent);
-  padding: 6px 12px;
-  border: 1px solid var(--w2b-accent);
-  margin-right: var(--w2b-space-2);
-}
-.chip--stock::before {
-  content: "";
-  display: inline-block;
-  width: 5px; height: 5px;
-  margin-right: 7px;
-  border-radius: 50%;
-  background: var(--w2b-accent);
-  vertical-align: middle;
-}
-.chip--stock.is-active {
-  background: var(--w2b-accent);
-  color: #fff;
-  border-color: var(--w2b-accent);
-}
-.chip--stock.is-active::before { background: #fff; }
 
 /* ── a channel row in the admin office, with its sync controls ─────────────── */
 .row--sync { align-items: flex-start; flex-wrap: wrap; }
@@ -1661,40 +1587,6 @@ body {
   border-radius: 9px;
   background: var(--w2b-surface-3);
 }
-
-.chips {
-  gap: 7px;
-  margin: 0 -14px;
-  padding: 3px 14px 5px;
-  border-bottom: 0;
-  scroll-padding-inline: 14px;
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 7px 13px;
-  background: rgba(255, 253, 252, 0.72);
-  border: 1px solid var(--w2b-line);
-  border-radius: 999px;
-  color: var(--w2b-text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: none;
-}
-.chip__count { margin-left: 0; }
-.chip.is-active {
-  position: sticky;
-  left: 14px;
-  z-index: 2;
-  color: var(--w2b-on-primary);
-  background: var(--w2b-primary);
-  border-color: var(--w2b-primary);
-  box-shadow: 8px 0 12px rgba(34, 28, 27, 0.08);
-}
-.chip__remove,
 .fchip__remove {
   display: inline-grid;
   width: 18px;
@@ -1707,14 +1599,6 @@ body {
   font-weight: 400;
   line-height: 1;
 }
-.chip--stock {
-  margin-right: 0;
-  color: var(--w2b-accent);
-  background: var(--w2b-accent-soft);
-  border-color: transparent;
-}
-.chip--stock::before { width: 6px; height: 6px; margin-right: 0; }
-.chip--stock.is-active { background: var(--w2b-accent); border-color: var(--w2b-accent); }
 
 .vitrine-head { margin: 11px 2px 0; align-items: center; }
 .vitrine-head__title {
@@ -2050,6 +1934,57 @@ body {
    .toast[hidden] elsewhere in this codebase. */
 .filterbtn[hidden] { display: none; }
 
+/* ── the bar that stays ────────────────────────────────────────────────────
+   Search, the filter button and the badges of what is applied, held at the top
+   while the vitrine scrolls under them. Four hundred photographs used to sit
+   between a client and the controls that produced them: narrowing a selection
+   meant scrolling all the way back up, and the way you find out whether that is
+   a problem is by watching somebody give up instead.
+
+   The negative margin pulls the bar out to the page edges so nothing shows
+   through beside it, and the padding puts the content back where it was. */
+.vbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 calc(-1 * var(--w2b-space-4));
+  padding: var(--w2b-space-2) var(--w2b-space-4) var(--w2b-space-2);
+  background: var(--w2b-bg);
+}
+/* A hairline that appears only once the bar is actually holding — otherwise
+   every screen would open with a rule under the search box for no reason. */
+.vbar::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--w2b-line);
+  opacity: 0;
+  transition: opacity var(--w2b-dur-fast);
+}
+.vbar.is-stuck::after { opacity: 1; }
+/* Empty until something is applied — and then it must not add a gap of its own
+   on top of the row's. */
+.vbar .applied { margin-top: var(--w2b-space-2); }
+.vbar #appliedBar:empty { display: none; }
+
+/* The badge of a catalogue reads as the heading the other badges sit under. */
+.fbadge--channel { font-weight: 700; }
+
+/* «В наявності» is the one coloured thing in the app, in the sheet as well as
+   in the row it replaced. */
+.fchip--stock { border-color: var(--w2b-accent); color: var(--w2b-accent); }
+
+/* What choosing a catalogue does to everything below it, said once. */
+.fsheet__hint {
+  margin-top: var(--w2b-space-2);
+  color: var(--w2b-text-subtle);
+  font-size: var(--w2b-fs-xs);
+  line-height: 1.4;
+}
+
 /* The chip that changes it, in the search row beside the filter button. */
 .filterbtn--zoom,
 .filterbtn--layout {
@@ -2219,7 +2154,7 @@ body.is-zooming .fit-row__thumb img { transition: none; }
 
 @media (max-width: 370px) {
   .app { padding-right: 10px; padding-left: 10px; }
-  .chips { margin-right: -10px; margin-left: -10px; padding-right: 10px; padding-left: 10px; }
+
   .tiles { gap: 9px; }
   .tile { border-radius: 17px; }
   .tile__body { padding: 10px; }

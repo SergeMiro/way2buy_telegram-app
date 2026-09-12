@@ -22,10 +22,28 @@ import { listChannels } from './telegram.js';
 export const SEARCH_EXPR =
   "(coalesce(title,'') || ' ' || coalesce(body,'') || ' ' || coalesce(article,''))";
 
+// A catalogue selection is a LIST, not a value: «Hermès і Chanel» is one
+// question. Asking it as two requests and merging on the client would page
+// wrongly — keyset paging walks ONE ordered result set, and two interleaved
+// pages have no single cursor.
+//
+// Arrives as `?channel=hermes,chanel`. A single key still parses into a
+// one-element list, so a Mini App still open on an older bundle keeps working.
+// 'all' is dropped rather than looked up: it was the old row's word for "no
+// catalogue filter", which is what an empty list means here.
+const CHANNEL_MAX = 30;
+function channelList(raw) {
+  const items = String(raw ?? '')
+    .split(',')
+    .map((s) => s.trim().slice(0, 40))
+    .filter((s) => s && s !== 'all');
+  return [...new Set(items)].slice(0, CHANNEL_MAX);
+}
+
 /** The filters, clamped to what the server will accept. */
 export function selectionFrom(query = {}) {
   return {
-    channel: query.channel || null,
+    channels: channelList(query.channel),
     kind: query.kind || null,
     // Search runs across ALL catalogues, not just the selected one: a client
     // who types "kelly" wants the bag, not "the bag inside the chip they
@@ -48,13 +66,13 @@ export function selectionFrom(query = {}) {
  *   — as opposed to no filter at all, which is what an empty WHERE would mean.
  */
 export async function feedWhere(selection = {}, { skip = null } = {}) {
-  const { channel, kind, q, brand, category } = selection;
+  const { channels = [], kind, q, brand, category } = selection;
   const where = ["status='published'"];
   const params = [];
 
-  if (channel && channel !== 'all') {
-    where.push('channel = ?');
-    params.push(channel);
+  if (channels.length) {
+    where.push(`channel IN (${channels.map(() => '?').join(',')})`);
+    params.push(...channels);
   } else if (kind === 'main' || kind === 'catalog') {
     const keys = (await listChannels()).filter((c) => c.kind === kind).map((c) => c.key);
     if (!keys.length) return null;
