@@ -231,6 +231,47 @@
     return zoomFactor();
   }
 
+  // ── три вигляди вітрини ───────────────────────────────────────────────────
+  //
+  // One list of things to buy, three ways of looking at it, because they answer
+  // different questions:
+  //
+  //   grid  two across — for browsing. Enough picture to want something, two at
+  //         a time so they can be compared.
+  //   list  a line each — for finding. Somebody who remembers the bag but not
+  //         the photograph needs twenty names on a screen, not four pictures.
+  //   feed  one across, large — for looking, at the size the channel posted it.
+  //
+  // One markup, three layouts: the difference is a class on the container, so
+  // nothing that reads a card — the loupe, «Хочу», the cart — has to know which
+  // view it is in.
+  //
+  // Remembered per person. This is a preference, not a filter; making somebody
+  // choose it again every launch is the fastest way to make them stop.
+  var LAYOUTS = ['grid', 'list', 'feed'];
+  var LAYOUT_LABEL = { grid: '▦ Сітка', list: '☰ Список', feed: '▢ Великі' };
+  var LAYOUT_KEY = 'w2b:layout';
+  var layoutMode = 'grid';
+  try {
+    var savedLayout = window.localStorage.getItem(LAYOUT_KEY);
+    if (LAYOUTS.indexOf(savedLayout) !== -1) layoutMode = savedLayout;
+  } catch (e) { /* private mode — the default answers */ }
+
+  // Patched in place, like the zoom chip and for the same reason: the row it
+  // sits in is deliberately not re-rendered with the vitrine, because that
+  // would take the focus out of the search input mid-word.
+  function paintLayoutButton() {
+    var chips = document.querySelectorAll('[data-layout-cycle]');
+    for (var i = 0; i < chips.length; i += 1) chips[i].textContent = LAYOUT_LABEL[layoutMode];
+  }
+
+  function cycleLayout() {
+    layoutMode = LAYOUTS[(LAYOUTS.indexOf(layoutMode) + 1) % LAYOUTS.length];
+    try { window.localStorage.setItem(LAYOUT_KEY, layoutMode); } catch (e) { /* ignore */ }
+    paintLayoutButton();
+    return layoutMode;
+  }
+
   // Written once at boot, so the hints on the cards say the remembered factor
   // from the first paint. Without this they show the CSS fallback until somebody
   // presses the chip — and a card promising 1.5x while the loupe does 2.5x is
@@ -250,10 +291,28 @@
       '<span class="product-loupe__zoom"></span>';
     document.body.appendChild(loupe);
 
+    // The list's answer to the same gesture.
+    //
+    // In «Список» the picture is the size of a postage stamp, so a magnifier
+    // held over it would enlarge a thumbnail — more pixels, no more thing. What
+    // the list is missing is not detail, it is the PHOTOGRAPH, so holding a row
+    // shows the whole article, large, for as long as the finger is down.
+    var peek = document.createElement('div');
+    peek.className = 'peek';
+    peek.setAttribute('aria-hidden', 'true');
+    peek.innerHTML = '<div class="peek__card">' +
+      '<img class="peek__image" alt="" draggable="false" />' +
+      '<div class="peek__title"></div>' +
+      '</div>';
+    document.body.appendChild(peek);
+    var peekImage = peek.querySelector('.peek__image');
+    var peekTitle = peek.querySelector('.peek__title');
+
     var loupeImage = loupe.querySelector('.product-loupe__image');
     var holdTimer = null;
     var target = null;
     var media = null;
+    var peekTile = null;
     var pointerId = null;
     var startX = 0;
     var startY = 0;
@@ -273,6 +332,15 @@
       );
       if (!image) return null;
       return { image: image, media: image.closest('.tile__media, .post__gallery img, .fit-row__thumb') };
+    }
+
+    // A row in «Список» — anywhere on it, not only on the thumbnail, because in
+    // a list the row IS the article. «Хочу» is excluded: a button that is held
+    // rather than tapped should still be a button.
+    function peekTileFromEvent(eventTarget) {
+      if (!eventTarget || !eventTarget.closest) return null;
+      if (eventTarget.closest('button')) return null;
+      return eventTarget.closest('.tiles--list .tile');
     }
 
     function paintedImageBox(image, frame) {
@@ -325,8 +393,27 @@
       loupe.classList.toggle('is-flipped', flipped);
     }
 
+    function showPeek() {
+      var image = peekTile.querySelector('.tile__media img');
+      var titleEl = peekTile.querySelector('.tile__title');
+      var priceEl = peekTile.querySelector('.tile__price');
+      // Nothing to show is not a gesture to swallow: without a photograph the
+      // row stays a row and the finger keeps scrolling.
+      if (!image) { peekTile = null; return; }
+
+      active = true;
+      suppressContextMenuUntil = Date.now() + 1000;
+      peekImage.src = image.currentSrc || image.src;
+      peekTitle.textContent = (titleEl ? titleEl.textContent : '') +
+        (priceEl ? ' · ' + priceEl.textContent : '');
+      peek.classList.add('is-visible');
+      document.body.classList.add('is-zooming');
+      tg.haptic('light');
+    }
+
     function showLoupe() {
       holdTimer = null;
+      if (peekTile) return showPeek();
       if (!target || !media) return;
       active = true;
       suppressContextMenuUntil = Date.now() + 1000;
@@ -345,22 +432,29 @@
       holdTimer = null;
       if (active) {
         loupe.classList.remove('is-visible', 'is-flipped');
+        peek.classList.remove('is-visible');
         document.body.classList.remove('is-zooming');
       }
       active = false;
       target = null;
       media = null;
+      peekTile = null;
       pointerId = null;
     }
 
     document.addEventListener('pointerdown', function (e) {
       if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
-      var found = zoomMediaFromEvent(e.target);
-      if (!found) return;
+      // In the list the row answers; everywhere else the photograph does. Asked
+      // in that order, because a list row CONTAINS a .tile__media img and would
+      // otherwise be caught by the magnifier that cannot help it.
+      var tile = peekTileFromEvent(e.target);
+      var found = tile ? null : zoomMediaFromEvent(e.target);
+      if (!tile && !found) return;
 
       clearTimeout(holdTimer);
-      target = found.image;
-      media = found.media;
+      peekTile = tile;
+      target = found ? found.image : null;
+      media = found ? found.media : null;
       pointerId = e.pointerId;
       startX = lastX = e.clientX;
       startY = lastY = e.clientY;
@@ -368,7 +462,7 @@
     }, { passive: true });
 
     document.addEventListener('pointermove', function (e) {
-      if (e.pointerId !== pointerId || !target) return;
+      if (e.pointerId !== pointerId || (!target && !peekTile)) return;
       lastX = e.clientX;
       lastY = e.clientY;
 
@@ -404,7 +498,7 @@
     // end the hold — otherwise `active` could outlive the gesture and the page
     // would stay locked.
     document.addEventListener('touchend', function () {
-      if (active && !document.querySelector('.product-loupe.is-visible')) resetLoupe();
+      if (active && !document.querySelector('.product-loupe.is-visible, .peek.is-visible')) resetLoupe();
     }, { passive: true });
     document.addEventListener('pointercancel', resetLoupe, { passive: true });
     window.addEventListener('blur', resetLoupe);
@@ -412,7 +506,8 @@
       if (!active) resetLoupe();
     }, { passive: true });
     document.addEventListener('contextmenu', function (e) {
-      if (zoomMediaFromEvent(e.target) && Date.now() < suppressContextMenuUntil) e.preventDefault();
+      if ((zoomMediaFromEvent(e.target) || peekTileFromEvent(e.target)) &&
+          Date.now() < suppressContextMenuUntil) e.preventDefault();
     });
   }
 
@@ -1018,6 +1113,11 @@
       // with the vitrine, so nothing here may depend on a repaint.
       '<button class="filterbtn filterbtn--zoom" type="button" data-zoom-cycle' +
         ' aria-label="Збільшення лупи">🔍 ' + zoomLabel() + '</button>' +
+      // Вигляд вітрини — the same cycling chip as the loupe factor, for the same
+      // reason: three states is one tap each, and a three-way switch would cost
+      // width this row does not have at 390px.
+      '<button class="filterbtn filterbtn--layout" type="button" data-layout-cycle' +
+        ' aria-label="Вигляд вітрини">' + LAYOUT_LABEL[layoutMode] + '</button>' +
     '</div>';
   }
 
@@ -1153,7 +1253,7 @@
       '</div>';
 
     html += state.feed.length
-      ? '<div class="tiles">' + state.feed.map(tileHtml).join('') + '</div>'
+      ? '<div class="tiles tiles--' + layoutMode + '">' + state.feed.map(tileHtml).join('') + '</div>'
       : '<div class="empty">' + (state.search
           ? 'За запитом «' + esc(state.search) + '» нічого не знайшли'
           : (state.filters.brand || state.filters.category
@@ -3313,6 +3413,19 @@
       var factor = cycleZoom();
       tg.haptic('light');
       toast('Збільшення ' + factor + 'x — затисніть фото на картці');
+      return;
+    }
+
+    // Вигляд вітрини: сітка → список → великі. Only the tile container is
+    // repainted, so the search box keeps whatever is half-typed in it.
+    var layoutBtn = t.closest('[data-layout-cycle]');
+    if (layoutBtn) {
+      var mode = cycleLayout();
+      tg.haptic('light');
+      repaintVitrine();
+      toast(mode === 'list'
+        ? 'Список — затисніть рядок, щоб побачити річ повністю'
+        : 'Вигляд: ' + LAYOUT_LABEL[mode].replace(/^\S+\s/, ''));
       return;
     }
 

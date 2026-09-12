@@ -2018,12 +2018,136 @@ body {
 }
 
 /* The chip that changes it, in the search row beside the filter button. */
-.filterbtn--zoom {
+.filterbtn--zoom,
+.filterbtn--layout {
   gap: 3px;
   font-size: var(--w2b-fs-2xs);
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+
+/* ── три вигляди вітрини ───────────────────────────────────────────────────
+   One markup, three layouts. `.tiles--grid` is the default shape already
+   declared above; the other two restate only what differs, so a change to a
+   card is a change to all three. */
+
+/* Список — a line each, for finding rather than browsing. The picture shrinks
+   to a stamp that says WHICH thing this is; holding the row is what shows the
+   thing itself (see .peek). */
+.tiles.tiles--list {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.tiles--list .tile {
+  flex-direction: row;
+  align-items: stretch;
+}
+.tiles--list .tile__media {
+  /* A fixed square, stated as both sides and taken OUT of the stretch.
+     Left to itself the thumbnail is sized by the photograph's own proportions —
+     a 4:5 picture makes a 95px row, a square one makes 76 — and a list whose
+     rows change height per photograph is a list that is hard to read down.
+     `object-fit: cover` on the image absorbs the difference instead. */
+  flex: 0 0 76px;
+  align-self: center;
+  width: 76px;
+  height: 76px;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+/* The catalogue badge needs a corner, and in a row there is not one to spare. */
+.tiles--list .tile__chan { display: none; }
+/* Title and price stacked on the left, «Хочу» on the right, everything on one
+   line of reading. A grid rather than a wrapper element: the three children are
+   the same three the other two views use, and a list must not fork the markup.
+
+   Stated on .tile__body directly, because the base rule sets `display: flex`
+   and a column direction that would otherwise survive into here. */
+.tiles.tiles--list .tile__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title btn" "meta btn";
+  align-content: center;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 8px 12px;
+}
+.tiles--list .tile__title {
+  grid-area: title;
+  /* Reserved two lines to square off a grid cell; a row is not one. */
+  min-height: 0;
+}
+.tiles--list .tile__meta { grid-area: meta; }
+.tiles--list .tile__btn {
+  grid-area: btn;
+  align-self: center;
+  min-height: 34px;
+  margin-top: 0;
+  padding: 8px 14px;
+}
+/* The 1.5x hint belongs to the loupe, and the loupe is not what a held row
+   does here. */
+.tiles--list .tile__media:has(img)::after { content: none; }
+
+/* Великі — one across, the photograph at the size the channel posted it. The
+   loupe works exactly as it does in the grid; there is simply more to magnify. */
+.tiles.tiles--feed {
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+.tiles--feed .tile__media { aspect-ratio: 4 / 5; }
+.tiles--feed .tile__title { min-height: 0; font-size: 14px; }
+.tiles--feed .tile__price { font-size: 16px; }
+.tiles--feed .tile__body { padding: 14px 14px 15px; }
+.tiles--feed .tile__btn { min-height: 44px; font-size: 11px; }
+
+/* ── the held row's answer ─────────────────────────────────────────────────
+   Not a magnifier: a magnifier over an 84px thumbnail enlarges a thumbnail.
+   What the list is missing is the photograph, so it gets the photograph —
+   about a third of the screen, for as long as the finger is down. */
+.peek {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--w2b-space-4);
+  background: rgba(39, 31, 35, 0.55);
+  opacity: 0;
+  /* The finger under it keeps driving the gesture, exactly as with the loupe. */
+  pointer-events: none;
+  transition: opacity var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.peek.is-visible { opacity: 1; }
+.peek__card {
+  max-width: min(88vw, 420px);
+  overflow: hidden;
+  background: var(--w2b-surface-1);
+  border-radius: 20px;
+  box-shadow: 0 18px 48px rgba(30, 18, 24, 0.32);
+  transform: scale(0.96);
+  transition: transform var(--w2b-dur-fast) var(--w2b-ease-out);
+}
+.peek.is-visible .peek__card { transform: scale(1); }
+.peek__image {
+  display: block;
+  width: 100%;
+  /* A third of the screen, stated as one height rather than a range, so every
+     article opens to the same size whatever shape it was photographed in —
+     `contain` letterboxes the difference and shows the whole thing either way.
+     A range looked reasonable and then took half the screen on a real phone,
+     because the tall end of it is what most catalogue photographs hit. */
+  height: 34vh;
+  object-fit: contain;
+  background: var(--w2b-surface-3);
+}
+.peek__title {
+  padding: 10px 14px 13px;
+  color: var(--w2b-text);
+  font-size: var(--w2b-fs-sm);
+  font-weight: 700;
+  text-align: center;
 }
 .product-loupe__viewport {
   position: absolute;
