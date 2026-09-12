@@ -381,6 +381,14 @@
   /* The client may copy it; they may not edit it. */
   user-select: text;
 }
+/* «Запитує ціну» / «Цікавиться постами» — the same two headings the message
+   carries, so the preview and the thing previewed have one shape. */
+.locked__group {
+  margin-bottom: 1px;
+  color: var(--w2b-text-muted);
+  font-size: var(--w2b-fs-xs);
+  font-weight: 700;
+}
 
 /* An item name that still opens its post — used in the request history, where
    a line from three weeks ago is the only way back to the thing it names. */

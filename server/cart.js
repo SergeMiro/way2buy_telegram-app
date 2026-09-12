@@ -75,19 +75,25 @@ const toUsd = (amount, currency) =>
 // The stored `channel` is a slug ('clothes'); nobody outside the code should
 // ever see it. The human title is looked up, with the slug as a last resort in
 // case the channel row was removed.
-const channelTitle = async (key) => {
-  if (!key) return null;
-  const row = await db.prepare('SELECT title FROM channels WHERE key=?').get(key);
-  return row?.title || key;
+// `kind` comes back with the title because the two are always wanted together:
+// it is what separates an ARTICLE in a catalogue from a POST in the feed, and
+// the inquiry asks two different questions about them.
+const channelInfo = async (key) => {
+  if (!key) return { title: null, kind: 'catalog' };
+  const row = await db.prepare('SELECT title, kind FROM channels WHERE key=?').get(key);
+  return { title: row?.title || key, kind: row?.kind || 'catalog' };
 };
 
 export async function shapeItem(r) {
+  const ch = await channelInfo(r.channel);
   return {
     id: r.id,
     postId: r.post_id,
     title: r.title,
     article: r.article,
-    channel: await channelTitle(r.channel),
+    channel: ch.title,
+    // 'main' — це пост зі «Стрічки»; 'catalog' — артикул із каталогу.
+    channelKind: ch.kind,
     channelKey: r.channel,
     price: r.price,
     currency: r.currency,
@@ -394,12 +400,28 @@ export async function sendInquiry({ customer, message = '', now = Date.now(), la
     return blocks.join('\n\n');
   };
 
+  // Two questions, asked apart.
+  //
+  // A catalogue article and a post in the feed reach the fitting room by the
+  // same button, and they are not the same request: «скільки коштує ця сумка»
+  // has an answer, «мене цікавить оцей пост» is a conversation. Run together in
+  // one list they read as one question, and whoever answers has to open five
+  // links to find out which of them is which.
+  //
+  // The headers appear whenever their group has anything in it — including when
+  // it is the only group. A format that changes shape depending on what happens
+  // to be in it is a format somebody has to read carefully every time.
+  const articles = items.filter((i) => i.channelKind !== 'main');
+  const posts = items.filter((i) => i.channelKind === 'main');
+
   // No lead line. `title` above already says «Клієнт X цікавиться товаром», and
   // a DM renders the two one under the other — the same sentence twice, differing
   // by an emoji and a colon. The title is stored separately on the row, so a
   // cabinet panel reading this later still has both halves.
+  const group = (head, rows, line) => (rows.length ? `${head}\n${rows.map(line).join('\n')}` : '');
   const compose = (line, esc) => [
-    items.map(line).join('\n'),
+    group('Запитує ціну та наявність:', articles, line),
+    group(posts.length === 1 ? 'Цікавиться постом:' : 'Цікавиться постами:', posts, line),
     tail(esc),
   ].filter(Boolean).join('\n\n');
 

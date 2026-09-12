@@ -1347,9 +1347,14 @@
             (caption ? '<div class="post__caption">' + linkifyMentions(caption) + '</div>' : '') +
             '<div class="post__foot">' +
               (p.price ? '<span class="post__price">' + esc(money(p.price, p.currency)) + '</span>' : '<span></span>') +
+              // «Цікавить», not «Хочу». In the catalogue «Хочу» names a thing
+              // with a price to ask about; a post in the feed is a photograph
+              // somebody put up, and what a client means by tapping it is "tell
+              // me about this", not "quote me this". The inquiry keeps the two
+              // apart as well — see the two groups in sendInquiry().
               '<button class="btn btn--ghost btn--sm' + (inCart ? ' is-in' : '') +
                 '" data-add="' + p.id + '"' + (inCart ? ' disabled' : '') + '>' +
-                (inCart ? 'У примірочній ✓' : 'Хочу') + '</button>' +
+                (inCart ? 'У примірочній ✓' : 'Цікавить') + '</button>' +
             '</div>' +
           '</div>' +
         '</article>';
@@ -1415,13 +1420,30 @@
     // can empty, and a client who empties this one has sent a manager a message
     // that asks about nothing. It is built from the fitting room, so the only
     // way to change it is to change the fitting room: remove an item above.
+    // Grouped exactly as the message will be — see sendInquiry(). A preview
+    // that shows a different shape from the thing it previews is worse than no
+    // preview, because it teaches the wrong expectation.
+    var lockedLines = function (rows) {
+      return rows.map(function (i) {
+        return '• ' + esc(i.title || 'Позиція') + (i.article ? esc(' · арт. ' + i.article) : '');
+      }).join('<br>');
+    };
+    var askItems = c.items.filter(function (i) { return i.channelKind !== 'main'; });
+    var postItems = c.items.filter(function (i) { return i.channelKind === 'main'; });
+    var lockedBody = '';
+    if (askItems.length) {
+      lockedBody += '<div class="locked__group">Запитує ціну та наявність:</div>' + lockedLines(askItems);
+    }
+    if (postItems.length) {
+      lockedBody += (lockedBody ? '<br><br>' : '') +
+        '<div class="locked__group">' +
+        (postItems.length === 1 ? 'Цікавиться постом:' : 'Цікавиться постами:') + '</div>' +
+        lockedLines(postItems);
+    }
+
     html += '<div class="locked">' +
       '<div class="locked__head">🔒 Це піде ' + esc(support().dative) + ' — змінюється лише списком вище</div>' +
-      '<div class="locked__body">' +
-        c.items.map(function (i) {
-          return '• ' + esc(i.title || 'Позиція') + (i.article ? esc(' · арт. ' + i.article) : '');
-        }).join('<br>') +
-      '</div>' +
+      '<div class="locked__body">' + lockedBody + '</div>' +
     '</div>';
 
     html += '<form class="stack" id="inquiryForm">' +

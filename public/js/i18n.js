@@ -118,6 +118,12 @@
       'You have not asked about anything yet. Add a piece to the fitting room and tap “Check availability & price”.',
       'Вы ещё ничего не спрашивали. Добавьте вещь в примерочную и нажмите «Узнать наличие и цену».'],
     ['відповіли', 'answered', 'ответили'], ['очікує', 'waiting', 'ожидает'],
+    // The feed asks a different question from the catalogue, and says so.
+    ['Цікавить', 'Interested', 'Интересует'],
+    ['Запитує ціну та наявність:', 'Asking about price and availability:',
+      'Запрашивает цену и наличие:'],
+    ['Цікавиться постом:', 'Interested in a post:', 'Интересует пост:'],
+    ['Цікавиться постами:', 'Interested in these posts:', 'Интересуют посты:'],
     // The phone rule, said the same way by the form, the toast and the server.
     ['Телефон — обовʼязково з кодом країни: +380, +33, +1. Без нього ми не зможемо вам зателефонувати.',
       'The phone number must include a country code: +380, +33, +1. Without it we cannot call you.',

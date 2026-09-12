@@ -258,6 +258,68 @@ test('one client never sees another client\'s requests', async () => {
   assert.equal((await customerInquiries(a.id)).length, 1);
 });
 
+/* ── two questions, asked apart ──────────────────────────────────────────── */
+
+// «Скільки коштує ця сумка» has an answer; «мене цікавить оцей пост» is a
+// conversation. Both reach the fitting room through the same button, and run
+// together in one list they read as one question — so whoever answers opens
+// five links to find out which of them is which.
+test('articles and feed posts are two groups, not one list', async () => {
+  await db.prepare(
+    "INSERT INTO channels (key,title,kind) VALUES ('lenta','Головний канал','main') ON CONFLICT (key) DO UPDATE SET kind='main'"
+  ).run();
+
+  const c = await customer('Ярина');
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Dior · сумка', channel: 'bags' }), now: NOW });
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Chanel · прикраси', channel: 'bags' }), now: NOW });
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Вечірня сукня', channel: 'lenta' }), now: NOW });
+
+  await sendInquiry({ customer: c, now: NOW });
+  const alert = await db.prepare(
+    "SELECT body FROM notifications WHERE customer_id IS NULL AND kind='inquiry' ORDER BY id DESC"
+  ).get();
+
+  assert.match(alert.body, /Запитує ціну та наявність:/);
+  assert.match(alert.body, /Цікавиться постом:/);
+  // Each name under its own heading, and in that order.
+  const askAt = alert.body.indexOf('Запитує ціну');
+  const postAt = alert.body.indexOf('Цікавиться постом');
+  assert.ok(askAt < alert.body.indexOf('Dior · сумка'));
+  assert.ok(alert.body.indexOf('Chanel · прикраси') < postAt, 'an article landed under the posts heading');
+  assert.ok(postAt < alert.body.indexOf('Вечірня сукня'));
+});
+
+test('the heading is there even when only one kind was asked about', async () => {
+  // A format that changes shape depending on what is in it is one somebody has
+  // to read carefully every time.
+  const c = await customer('Уляна');
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Prada Re-Edition', channel: 'bags' }), now: NOW });
+  await sendInquiry({ customer: c, now: NOW });
+
+  const alert = await db.prepare(
+    "SELECT body FROM notifications WHERE customer_id IS NULL AND kind='inquiry' ORDER BY id DESC"
+  ).get();
+  assert.match(alert.body, /Запитує ціну та наявність:/);
+  assert.doesNotMatch(alert.body, /Цікавиться пост/, 'an empty group printed its heading');
+});
+
+test('several posts are addressed in the plural', async () => {
+  await db.prepare(
+    "INSERT INTO channels (key,title,kind) VALUES ('lenta','Головний канал','main') ON CONFLICT (key) DO UPDATE SET kind='main'"
+  ).run();
+
+  const c = await customer('Христина');
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Пост А', channel: 'lenta' }), now: NOW });
+  await addToCart({ customerId: c.id, postId: await post({ title: 'Пост Б', channel: 'lenta' }), now: NOW });
+  await sendInquiry({ customer: c, now: NOW });
+
+  const alert = await db.prepare(
+    "SELECT body FROM notifications WHERE customer_id IS NULL AND kind='inquiry' ORDER BY id DESC"
+  ).get();
+  assert.match(alert.body, /Цікавиться постами:/);
+  assert.doesNotMatch(alert.body, /Запитує ціну/, 'an empty group printed its heading');
+});
+
 // The number itself is tests/phone.test.js; this is only that the inquiry uses it.
 test('the message names the client by the id that can be looked up', async () => {
   const c = await customer('Оксана');
