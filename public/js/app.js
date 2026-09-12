@@ -522,8 +522,8 @@
       '<div class="thanks__avatar">' + face + '</div>' +
       '<div class="thanks__name">' + esc(s.name) + '</div>' +
       (s.role ? '<div class="thanks__role">' + esc(s.role) + '</div>' : '') +
-      '<p class="thanks__text">Дякуємо! Ваш запит уже в роботі — ' + esc(s.name) +
-        ' звʼяжеться з вами найближчим часом.</p>' +
+      '<p class="thanks__text">Дякуємо! ' + esc(s.name) +
+        ' перевірить наявність і напише вам ціну найближчим часом.</p>' +
       (res && res.promo
         ? '<div class="thanks__note">Вашу знижку ' + esc(res.promo.label) + ' враховано</div>'
         : '') +
@@ -1282,15 +1282,20 @@
       '</div>';
     }
 
-    // Pre-filled text: they may send as-is or add a line of their own.
-    html += '<div class="section-title">Повідомлення ' + esc(support().dative) + '</div>' +
+    // What this actually is: a question about stock and price, not a letter.
+    // «Повідомлення Даші» made the client compose something; most had nothing
+    // to compose and the list was already the whole question. Naming the ASK
+    // instead of the channel is what makes the empty textarea safe to leave
+    // empty — and the button says what comes back, not what leaves.
+    html += '<div class="section-title">Запит на наявність і ціну</div>' +
       '<form class="stack" id="inquiryForm">' +
         '<label class="field">' +
           '<textarea class="field__textarea" name="message" rows="5" ' +
-            'placeholder="Можете дописати, що саме вас цікавить">' + esc(c.draft || '') + '</textarea>' +
-          '<span class="field__hint">' + esc(support().name) + ' отримає це повідомлення разом зі списком обраних позицій.</span>' +
+            'placeholder="Необовʼязково: розмір, колір або питання">' + esc(c.draft || '') + '</textarea>' +
+          '<span class="field__hint">' + esc(support().name) +
+            ' перевірить наявність кожної позиції та напише вам ціну.</span>' +
         '</label>' +
-        '<button class="btn btn--primary btn--send" type="submit">Відправити ' + esc(support().dative) + '</button>' +
+        '<button class="btn btn--primary btn--send" type="submit">Дізнатися наявність і ціну</button>' +
       '</form>';
 
     // The escape hatch: a client who does not trust a form can always write
@@ -3767,6 +3772,12 @@
   /* ── boot ───────────────────────────────────────────────────────────────── */
 
   document.addEventListener('w2b:localechange', function () {
+    // Tell the server, so the messages it sends LATER — the birthday greeting,
+    // the fitting-room reminder — arrive in the language just chosen. Any call
+    // carries the new Accept-Language header; /api/me is the cheap one, and the
+    // one the server records from. Fire-and-forget: a client who switched
+    // language must never see an error about it.
+    if (state.me && state.me.registered) api.me().catch(function () { /* next call will do */ });
     closeSheet();
     if (state.config && VIEWS[state.tab]) {
       $app.innerHTML = VIEWS[state.tab]();

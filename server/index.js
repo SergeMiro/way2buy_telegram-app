@@ -32,6 +32,7 @@ import * as abandoned from './abandoned.js';
 import * as deals from './deals.js';
 import * as settings from './settings.js';
 import { asJson } from './sql.js';
+import { normalizeLang } from './i18n.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 await init();
@@ -117,6 +118,26 @@ app.use((req, res, next) => {
 const tgid = (req) => (req.w2b ? req.w2b.id : '');
 const signedIn = (req) => Boolean(req.w2b && req.w2b.verified);
 const findCustomer = async (id) => await db.prepare('SELECT * FROM customers WHERE tg_user_id=?').get(id);
+
+// Which language this request is being read in. The app has sent it on every
+// call since the header was added (public/js/api.js) — it was simply never
+// listened to.
+const reqLang = (req) => normalizeLang(req.headers['accept-language']);
+
+// Remember it, so a message sent LATER — a birthday greeting, a fitting-room
+// reminder, anything on the scheduler's clock — can still be written in the
+// language this person reads. Costs one UPDATE on the rare call where the
+// answer changed, and nothing at all on every other call.
+//
+// Called only where the customer row is already in hand; making this a
+// middleware would mean a lookup on every request to learn something that
+// changes about twice in a customer's life.
+const rememberLang = async (req, c) => {
+  const lang = reqLang(req);
+  if (!c || !lang || c.lang === lang) return c;
+  await db.prepare('UPDATE customers SET lang=? WHERE id=?').run(lang, c.id);
+  return { ...c, lang };
+};
 // ── authorisation ──────────────────────────────────────────────────────────
 // Authentication answered "who". This answers "what may they do", and the two
 // are kept apart: a valid signature makes you a person, not an administrator.
@@ -193,7 +214,9 @@ app.get('/api/config', async (req, res) => {
 
 // ── me / register ────────────────────────────────────────────────────────
 app.get('/api/me', async (req, res) => {
-  const c = await findCustomer(tgid(req));
+  // The app calls this on every open and after every language switch, which
+  // makes it the one place worth learning the language from.
+  const c = await rememberLang(req, await findCustomer(tgid(req)));
   const role = await roleOf(req);
   // `admin` stays a boolean for older bundles; `role` and `can` are what the
   // cabinet draws itself from, so a manager is never shown a section that would
@@ -235,7 +258,7 @@ app.post('/api/register', async (req, res) => {
       await db.prepare('UPDATE customers SET birthday_source=?, birthday_recorded_at=? WHERE id=?')
         .run('claim', now(), exists.id);
     }
-    const fresh = await findCustomer(id);
+    const fresh = await rememberLang(req, await findCustomer(id));
     return res.json({ registered: true, customer: await customerCard(fresh), birthday: await birthday.birthdayStatus(fresh) });
   }
 
@@ -246,7 +269,9 @@ app.post('/api/register', async (req, res) => {
       storedBday, storedBday ? 'claim' : null, storedBday ? now() : null,
       city || null, Boolean(consent), now());
   await db.prepare('INSERT INTO events (customer_id,type,created_at) VALUES (?,?,?)').run(info.lastInsertRowid, 'join', now());
-  const fresh = await findCustomer(id);
+  // Joining is the first moment there is a row to hang the language on, and the
+  // birthday greeting a year from now is written from it.
+  const fresh = await rememberLang(req, await findCustomer(id));
   res.json({ registered: true, customer: await customerCard(fresh), birthday: await birthday.birthdayStatus(fresh) });
 });
 
@@ -261,7 +286,9 @@ app.post('/api/birthday/claim', async (req, res) => {
   const c = await findCustomer(tgid(req));
   if (!c) return res.status(404).json({ error: 'not registered' });
   try {
-    const result = await birthday.claimBirthdayDiscount({ customer: c, birthdayInput: req.body?.birthday });
+    const result = await birthday.claimBirthdayDiscount({
+      customer: c, birthdayInput: req.body?.birthday, lang: reqLang(req),
+    });
     res.status(result.ok ? 200 : 409).json({ ...result, status: await birthday.birthdayStatus(await findCustomer(tgid(req))) });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
@@ -428,7 +455,7 @@ app.post('/api/cart/remove', async (req, res) => {
 app.post('/api/cart/send', async (req, res) => {
   const c = await findCustomer(tgid(req));
   if (!c) return res.status(404).json({ error: 'not registered' });
-  const result = await cart.sendInquiry({ customer: c, message: req.body?.message || '' });
+  const result = await cart.sendInquiry({ customer: c, message: req.body?.message || '', lang: reqLang(req) });
   if (!result.ok) return res.status(409).json(result);
   res.json(result);
 });

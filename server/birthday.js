@@ -117,7 +117,8 @@ const genCode = (customerId) =>
 // The single entry point. `customer` is a full row from `customers`.
 // Returns { ok, verdict, message, discount?, promo?, window? } — never throws
 // for business reasons, only for programming errors.
-export async function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now() }) {
+// `lang` is the language of the request that carried the tap — see notifyCustomer.
+export async function claimBirthdayDiscount({ customer, birthdayInput, now = Date.now(), lang = null }) {
   const rule = await birthdayRule();
   const year = new Date(now).getUTCFullYear();
   const onFile = customer.birthday || null;
@@ -211,12 +212,21 @@ export async function claimBirthdayDiscount({ customer, birthdayInput, now = Dat
   await logClaim({ customerId: customer.id, claimed: claimedMmdd, onFile, year, verdict: 'granted', promoCodeId: promoId });
 
   const amountLabel = rule.mode === 'percent' ? `${rule.value}%` : `$${rule.value}`;
-  const minLabel = rule.min_order_usd ? ` від замовлення $${rule.min_order_usd}` : '';
   await notifyCustomer({
     customerId: customer.id,
     kind: 'birthday',
-    title: 'Вітаємо з днем народження! 🎂',
-    body: `Ваша знижка ${amountLabel}${minLabel}. Промокод ${code}, діє до ${iso(win.endsAt).slice(0, 10)}.`,
+    message: {
+      key: 'birthday_granted',
+      params: {
+        amountLabel,
+        minOrderUsd: Number(rule.min_order_usd || 0),
+        code,
+        until: iso(win.endsAt).slice(0, 10),
+      },
+    },
+    // The client is in the app right now — they just tapped «Отримати знижку» —
+    // so the language of THIS request outranks whatever was stored last time.
+    lang,
     promoCodeId: promoId,
     dedupeKey: `bday:${customer.id}:${year}`,
   });

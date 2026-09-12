@@ -159,10 +159,16 @@ test('sending builds the message Maryna asked for and notifies the admins', asyn
   assert.match(alert.body, /задав питання адміністратору Даші/);
   assert.match(alert.body, /«Чи є чорний колір\?»/);
 
-  // The client gets their own confirmation.
+  // The client gets their own confirmation, and it answers the question they
+  // actually asked: not "your message was delivered" but "somebody is checking
+  // whether you can have this, and what it costs".
   const ack = await db.prepare("SELECT * FROM notifications WHERE customer_id=? AND kind='inquiry_sent'").get(c.id);
   assert.ok(ack);
-  assert.match(ack.body, /звʼяжеться/);
+  assert.match(ack.body, /перевірить наявність/);
+  assert.match(ack.body, /ціну/);
+  // Stored in Ukrainian whatever the client reads — the row is the record the
+  // cabinet shows, and the browser translates it (see tests/i18n.test.js).
+  assert.match(ack.title, /Запит надіслано/);
 });
 
 test('sending empties the fitting room but keeps the items on the inquiry', async () => {

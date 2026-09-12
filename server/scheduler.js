@@ -51,12 +51,19 @@ async function announceBirthdays(now) {
     const status = await birthdayStatus(customer, now);
     if (!status.enabled || status.claimedThisYear || status.state !== 'available') continue;
     const label = status.mode === 'percent' ? `${status.value}%` : `$${status.value}`;
-    const min = status.minOrderUsd ? ` від замовлення $${status.minOrderUsd}` : '';
     const id = await notifyCustomer({
       customerId: customer.id,
       kind: 'birthday_available',
-      title: 'З днем народження! 🎂',
-      body: `Ваша знижка ${label}${min} чекає в застосунку — натисніть «Отримати знижку». Діє ${status.validDays} днів.`,
+      // Sent on the scheduler's clock, with nobody in the app: the language
+      // stored on the customer row is the only one there is to go on.
+      message: {
+        key: 'birthday_available',
+        params: {
+          amountLabel: label,
+          minOrderUsd: Number(status.minOrderUsd || 0),
+          validDays: status.validDays,
+        },
+      },
       dedupeKey: `bday-open:${customer.id}:${year}`,
     });
     if (id) sent += 1;

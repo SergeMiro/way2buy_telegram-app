@@ -130,12 +130,13 @@ export async function remindAbandoned(now = Date.now()) {
     await notifyCustomer({
       customerId,
       kind: 'abandoned_cart',
-      title: 'Ваші речі чекають у примірочній 👜',
-      body: `Ви обрали ${n} ${plural(n, ['позицію', 'позиції', 'позицій'])}, але ще не написали ` +
-            `менеджеру. Тримайте −${cfg.percent}% на це замовлення: промокод ${code}` +
-            (cfg.minOrderUsd ? ` (від замовлення $${cfg.minOrderUsd})` : '') +
-            `. Діє ${cfg.validDays} ${plural(cfg.validDays, ['день', 'дні', 'днів'])} — ` +
-            `відкрийте «Примірочну» і натисніть «Відправити».`,
+      // No `lang` here on purpose: this runs on the scheduler's clock, hours
+      // after the client closed the app, so the stored column is the only
+      // record of what they read.
+      message: {
+        key: 'abandoned_cart',
+        params: { items: n, percent: cfg.percent, code, minOrderUsd: cfg.minOrderUsd, validDays: cfg.validDays },
+      },
       promoCodeId: promoId,
       // One per person per rule, which the grant already guarantees; this keeps
       // the notification table honest if the rule is ever re-run by hand.
@@ -145,13 +146,4 @@ export async function remindAbandoned(now = Date.now()) {
   }
 
   return { candidates: rows.length, granted, alreadyHad, grantKey: cfg.grantKey, hours: cfg.hours, percent: cfg.percent };
-}
-
-function plural(n, forms) {
-  const a = Math.abs(n) % 100;
-  const b = a % 10;
-  if (a > 10 && a < 20) return forms[2];
-  if (b > 1 && b < 5) return forms[1];
-  if (b === 1) return forms[0];
-  return forms[2];
 }

@@ -135,6 +135,14 @@ alter table posts    add column if not exists curated     boolean not null defau
 --                 same photograph is not paid for twice.
 --   null          nothing has answered yet — this is the backfill's work queue.
 alter table posts    add column if not exists brand_source text;
+-- Which language this client reads: 'uk' | 'ru' | 'en'. The interface has
+-- offered all three from the start, but a Telegram DM has no DOM for
+-- public/js/i18n.js to re-write, so the choice has to survive the request that
+-- made it. Learned from the Accept-Language header the app already sends on
+-- every call; NULL means nobody has said yet, and Ukrainian answers for them.
+-- Not a CHECK constraint: an unknown value must degrade to Ukrainian (see
+-- normalizeLang in server/i18n.js), never refuse the write that carried it.
+alter table customers add column if not exists lang text;
 alter table channels add column if not exists synced_at   timestamptz;
 -- Where the deep backfill stopped, so «вся історія» resumes instead of re-reading
 -- the newest pages. NULL means "start from the top".

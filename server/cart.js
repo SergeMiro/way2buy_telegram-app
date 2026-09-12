@@ -311,7 +311,7 @@ function itemLineHtml(i) {
 
 // Send the fitting room as one inquiry. Returns { ok, inquiryId, message } and
 // never throws for business reasons.
-export async function sendInquiry({ customer, message = '', now = Date.now() }) {
+export async function sendInquiry({ customer, message = '', now = Date.now(), lang = null }) {
   // The links are resolved once, here, and travel with the stored inquiry — so
   // the cabinet can offer them months later even if the post has since been
   // hidden or the channel renamed.
@@ -392,8 +392,10 @@ export async function sendInquiry({ customer, message = '', now = Date.now() }) 
   await notifyCustomer({
     customerId: customer.id,
     kind: 'inquiry_sent',
-    title: 'Заявку надіслано ✅',
-    body: `${who.name} звʼяжеться з вами дуже скоро щодо ${items.length === 1 ? 'позиції' : items.length + ' позицій'}.`,
+    message: { key: 'inquiry_sent', params: { who: who.name, items: items.length } },
+    // They are looking at the app this second; the request knows their language
+    // better than the row does.
+    lang,
     dedupeKey: `inquiry-ack:${inquiryId}`,
   });
 
@@ -402,7 +404,10 @@ export async function sendInquiry({ customer, message = '', now = Date.now() }) 
     inquiryId,
     items: items.length,
     promo: promo && promo.usable ? { code: promo.code, label: promo.label } : null,
-    message: `${who.name} звʼяжеться з вами дуже скоро 💛`,
+    // Returned in Ukrainian and translated in the browser like every other
+    // string the client sees on screen (public/js/i18n.js) — only the DM, which
+    // has no DOM, is rendered server-side.
+    message: `${who.name} перевірить наявність і скоро напише вам 💛`,
   };
 }
 

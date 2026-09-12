@@ -580,8 +580,26 @@ export async function publishPost({ channel, title, body, price, currency, artic
   return { id: Number(info.lastInsertRowid), tg_message_id, live: liveMode() };
 }
 
+// ── what WOULD have been sent ─────────────────────────────────────────────
+//
+// With no bot token there is no Telegram to ask what went out, and "the DM said
+// the right thing" is otherwise unobservable — the demo cannot show it and a
+// test cannot assert it. So a simulated send is recorded here and nowhere else:
+// in live mode this stays empty, because then Telegram holds the record.
+//
+// Bounded on purpose. This is a window onto the last few messages, not a log.
+const OUTBOX_MAX = 50;
+const sent = [];
+/** The simulated sends, oldest first. Empty in live mode. */
+export const outbox = () => sent.slice();
+export const clearOutbox = () => { sent.length = 0; };
+
 export async function sendToUser(tgUserId, text, extra = {}) {
-  if (!liveMode()) return { simulated: true, text };
+  if (!liveMode()) {
+    sent.push({ to: String(tgUserId ?? ''), text, at: Date.now() });
+    if (sent.length > OUTBOX_MAX) sent.shift();
+    return { simulated: true, text };
+  }
   return await tg('sendMessage', { chat_id: tgUserId, text, parse_mode: 'HTML', ...extra });
 }
 

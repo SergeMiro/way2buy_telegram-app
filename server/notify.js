@@ -9,6 +9,7 @@
 import { db } from './db.js';
 import { sendToUser, liveMode } from './telegram.js';
 import { alertIds } from './roles.js';
+import { render, normalizeLang, DEFAULT_LANG } from './i18n.js';
 
 const now = () => new Date().toISOString();
 
@@ -47,11 +48,38 @@ async function dm(tgUserId, text, notificationId, extra = {}) {
 }
 
 // Notify one client: the row is written and awaited, the DM is fire-and-forget.
-export async function notifyCustomer({ customerId, kind, title, body = '', promoCodeId = null, campaignId = null, dedupeKey }) {
-  const id = await writeRow({ customerId, kind, title, body, promoCodeId, campaignId, dedupeKey });
+//
+// Two ways to say what the message is, and they are not equivalent:
+//
+//   message: {key, params}  the message is in the catalogue (server/i18n.js).
+//                           The ROW is written in Ukrainian — it is the
+//                           authoritative record and the cabinet reads it —
+//                           while the DM is rendered in the client's language,
+//                           because Telegram has no DOM for the browser
+//                           translator to reach. Use this for anything a client
+//                           reads.
+//   title / body            a finished string, sent as given in both places.
+//                           Kept for the messages nobody translates.
+//
+// `lang` is the language of the REQUEST that caused this message — the client is
+// on the other end right now, and what they just chose outranks what they chose
+// last time. Omit it and the stored column answers, which is what the scheduler
+// relies on: it sends birthdays and reminders when nobody is looking.
+export async function notifyCustomer({
+  customerId, kind, title, body = '', message = null, lang = null,
+  promoCodeId = null, campaignId = null, dedupeKey,
+}) {
+  const stored = message ? render(DEFAULT_LANG, message.key, message.params) : { title, body };
+  const id = await writeRow({
+    customerId, kind, title: stored.title, body: stored.body, promoCodeId, campaignId, dedupeKey,
+  });
   if (!id) return null;
-  const c = await db.prepare('SELECT tg_user_id FROM customers WHERE id=?').get(customerId);
-  void dm(c?.tg_user_id, `<b>${escapeHtml(title)}</b>\n${escapeHtml(body)}`, id);
+  const c = await db.prepare('SELECT tg_user_id, lang FROM customers WHERE id=?').get(customerId);
+  const target = message
+    ? (normalizeLang(lang) || normalizeLang(c?.lang) || DEFAULT_LANG)
+    : DEFAULT_LANG;
+  const out = target === DEFAULT_LANG ? stored : render(target, message.key, message.params);
+  void dm(c?.tg_user_id, `<b>${escapeHtml(out.title)}</b>\n${escapeHtml(out.body)}`, id);
   return id;
 }
 
