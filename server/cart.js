@@ -414,9 +414,12 @@ export async function sendInquiry({ customer, message = '', now = Date.now(), la
     return blocks.join('\n\n');
   };
 
-  const lead = `Клієнт ${shortName(customer)} цікавиться товаром:`;
+  // No lead line. `title` above already says «Клієнт X цікавиться товаром», and
+  // a DM renders the two one under the other — the same sentence twice, differing
+  // by an emoji and a colon. The title is stored separately on the row, so a
+  // cabinet panel reading this later still has both halves.
   const compose = (line, esc) => [
-    `${esc ? escapeHtml(lead) : lead}\n${items.map(line).join('\n')}`,
+    items.map(line).join('\n'),
     tail(esc),
   ].filter(Boolean).join('\n\n');
 
