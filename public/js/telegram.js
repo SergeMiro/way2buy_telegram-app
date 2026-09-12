@@ -79,6 +79,11 @@
       : null,
     username: inTelegram ? wa.initDataUnsafe.user.username || null : null,
     languageCode: inTelegram ? wa.initDataUnsafe.user.language_code || null : null,
+    // The client's own Telegram avatar, when the launch carried one. Telegram
+    // only fills `photo_url` for some launch contexts, so this is the fast path
+    // and not the only one: /api/me resolves the same face through the bot for
+    // everybody else (see avatarUrlFor in server/index.js).
+    photoUrl: inTelegram ? wa.initDataUnsafe.user.photo_url || null : null,
 
     setUserId: function (id) {
       tg.userId = String(id);

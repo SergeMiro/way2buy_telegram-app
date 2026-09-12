@@ -737,6 +737,13 @@
     var initials = profileName
       ? profileName.split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('')
       : '👤';
+    // The face Telegram already shows this person, rather than the first letters
+    // of their name. Two sources and a fallback, in order of what costs least:
+    // the launch payload carries `photo_url` in some contexts and needs no
+    // request at all; /api/me resolves the same face through the bot for
+    // everybody else; initials answer when neither can (the demo has no bot
+    // token, and somebody who never started the bot is invisible to it).
+    var avatarSrc = tg.photoUrl || (state.me && state.me.avatar) || '';
     var tiersOn = state.config && state.config.features && state.config.features.tiers;
     var sub = c && c.loyalty
       ? (tiersOn ? c.loyalty.tierName + ' · ' : '') + usd(c.loyalty.totalSpent) + ' покупок'
@@ -781,7 +788,12 @@
         '</div>' +
       '</div>' +
       '<header class="topbar">' +
-      '<div class="topbar__avatar">' + esc(initials) + '</div>' +
+      '<div class="topbar__avatar">' +
+        (avatarSrc
+          ? '<img class="topbar__photo" src="' + esc(avatarSrc) + '" alt="" ' +
+            'data-initials="' + esc(initials) + '" />'
+          : esc(initials)) +
+      '</div>' +
       '<div class="topbar__meta">' +
         '<div class="topbar__name">' + esc(profileName || 'Вітаємо у Way2Buy') + '</div>' +
         '<div class="topbar__sub">' + esc(sub) + '</div>' +
@@ -3701,6 +3713,13 @@
   // retry cannot fire the handler again on the same element.
   document.addEventListener('error', function (e) {
     var el = e.target;
+    // An avatar that does not arrive becomes the initials it replaced — never a
+    // broken-image icon in the one place every screen shows.
+    if (el && el.tagName === 'IMG' && el.classList.contains('topbar__photo')) {
+      var box = el.parentNode;
+      if (box) box.textContent = el.getAttribute('data-initials') || '👤';
+      return;
+    }
     if (el && el.tagName === 'IMG' && el.hasAttribute('data-fallback')) {
       var span = document.createElement('span');
       span.className = 'ph';

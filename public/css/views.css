@@ -381,6 +381,23 @@
   /* The client may copy it; they may not edit it. */
   user-select: text;
 }
+/* The client's own Telegram face, in the box the initials used to occupy. The
+   box keeps its own size and shape in every theme (it is restated three times
+   further up), so the photograph is told to fill whatever that turns out to be
+   rather than carrying dimensions of its own. */
+/* Clipped by the box, so the photograph takes whatever corner the theme in
+   force gives the avatar — 14px here, square elsewhere — instead of laying a
+   rectangle over a rounded one. */
+.topbar__avatar { overflow: hidden; }
+.topbar__photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* «Запитує ціну» / «Цікавиться постами» — the same two headings the message
    carries, so the preview and the thing previewed have one shape. */
 .locked__group {

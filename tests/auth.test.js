@@ -173,6 +173,24 @@ test('a signed client reads as the id Telegram named, not the one the URL claims
   assert.equal(String(me.customer.tgId), String(CLIENT_ID));
 });
 
+test('the avatar is a link to that proxy, not an endpoint an <img> must prove itself to', async () => {
+  // An <img> sends no headers, so /api/avatar?tgid=… would be an identity
+  // CLAIMED without a signature — which production refuses, correctly. So the
+  // identity work happens on a request that CAN be signed, and what comes back
+  // is a link to the photo proxy below, keyed by an opaque file_id.
+  const me = await (await fetch(`${base}/api/me?tgid=${CLIENT_ID}`)).json();
+  // Present in both branches, so the client never reads undefined and paints
+  // the word into the one box that is on every screen.
+  assert.ok('avatar' in me, 'the registered branch dropped the field');
+  // No bot token here — the same answer the zero-config demo gets, and the one
+  // that sends the client back to initials.
+  assert.equal(me.avatar, null);
+
+  const stranger = await (await fetch(`${base}/api/me?tgid=nobody-${Date.now()}`)).json();
+  assert.equal(stranger.registered, false);
+  assert.ok('avatar' in stranger, 'the unregistered branch dropped the field');
+});
+
 test('the photo proxy carries no identity and must not start demanding one', async () => {
   // <img src> cannot send a header. If this ever 401s, every photograph in the
   // vitrine goes blank.

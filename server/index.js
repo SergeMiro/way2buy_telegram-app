@@ -176,6 +176,24 @@ const badRequest = (res, e) => {
   return res.status(validation ? 400 : 500).json({ error: String(e.message || e) });
 };
 
+// Somebody's own Telegram avatar, as a URL the browser can put in an <img>.
+//
+// Resolved HERE rather than handed out as an endpoint of its own, because an
+// <img> request carries no `X-Telegram-Init-Data` header: /api/avatar?tgid=…
+// would be an identity claimed without a signature, which production refuses —
+// correctly. So the identity work happens on a signed request (/api/me) and
+// what comes back is a link to the photo proxy, which is public and keyed by an
+// opaque file_id that cannot be guessed or enumerated.
+//
+// Null is an ordinary answer: no bot token (the demo), no avatar set, or an
+// avatar the bot may not see because that person never started it. The client
+// falls back to initials.
+const avatarUrlFor = async (tgUserId) => {
+  if (!tgUserId) return null;
+  const fileId = await userProfilePhotoId(tgUserId);
+  return fileId ? `/api/photo/${encodeURIComponent(fileId)}` : null;
+};
+
 const customerCard = async (c) => ({
   id: c.id, tgId: c.tg_user_id, name: c.name, login: c.login,
   phone: c.phone, address: c.address, birthday: c.birthday,
@@ -223,10 +241,14 @@ app.get('/api/me', async (req, res) => {
   // cabinet draws itself from, so a manager is never shown a section that would
   // then refuse her.
   const who = { role, can: roles.capabilitiesOf(role) };
-  if (!c) return res.json({ registered: false, admin: Boolean(role), ...who });
+  // The caller's own face, whoever they are — a client looking at their wallet
+  // and a manager looking at the cabinet are the same person to this line.
+  const avatar = await avatarUrlFor(tgid(req));
+  if (!c) return res.json({ registered: false, admin: Boolean(role), avatar, ...who });
   res.json({
     registered: true,
     admin: Boolean(role),
+    avatar,
     ...who,
     customer: await customerCard(c),
     birthday: await birthday.birthdayStatus(c),
