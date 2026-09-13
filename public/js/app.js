@@ -336,14 +336,14 @@
 
     function zoomMediaFromEvent(eventTarget) {
       var image = eventTarget && eventTarget.closest && eventTarget.closest(
-        '.tile__media img, .post__gallery img, .fit-row__thumb img'
+        '.tile__media img, .fit-row__thumb img'
       );
       if (!image) return null;
       // «Великі» is already showing the photograph at the width of the screen.
       // A magnifier over it enlarges what is on show instead of revealing
       // anything, so the hold does nothing and the page keeps scrolling.
       if (image.closest('.tiles--feed')) return null;
-      return { image: image, media: image.closest('.tile__media, .post__gallery img, .fit-row__thumb') };
+      return { image: image, media: image.closest('.tile__media, .fit-row__thumb') };
     }
 
     // A row in «Список» — anywhere on it, not only on the thumbnail, because in
