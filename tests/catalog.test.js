@@ -81,6 +81,39 @@ test('«all» is the word for no catalogue filter, not a catalogue to look up', 
   assert.equal(rows.length, 5, 'every enabled catalogue');
 });
 
+test('several brands are OR, not an impossible AND', async () => {
+  // One card has one brand, so «Chanel AND Hermès» matches nothing forever.
+  // Choosing both has to mean "either of these", which is what somebody
+  // deciding between two houses is actually asking.
+  const { rows } = await catalog.listPosts(sel({ brand: 'Chanel,Hermès' }));
+  assert.deepEqual(
+    rows.map((r) => r.title).sort(),
+    ['Chanel 19', 'Chanel Classic Flap', 'Chanel Slingback', 'Hermès Kelly'],
+  );
+});
+
+test('brands and categories narrow each other', async () => {
+  // Two lists are OR inside and AND between: «(Chanel or Hermès) and a bag».
+  const { rows } = await catalog.listPosts(sel({ brand: 'Chanel,Hermès', category: 'сумка' }));
+  assert.deepEqual(
+    rows.map((r) => r.title).sort(),
+    ['Chanel 19', 'Chanel Classic Flap', 'Hermès Kelly'],
+    'the slingback is a Chanel but not a bag',
+  );
+});
+
+test('a facet still counts as if its own filter were off', async () => {
+  // The trick that keeps the sheet usable: with Chanel chosen, the brand list
+  // must still show Hermès and its real count, or a second brand could never be
+  // added without clearing the first.
+  const f = await catalog.facetsFor(sel({ brand: 'Chanel' }));
+  const names = f.brands.map((b) => b.value);
+  assert.ok(names.includes('Hermès'), 'the brand list collapsed to the chosen brand');
+  assert.equal(f.brands.find((b) => b.value === 'Hermès').count, 1);
+  // The total, though, is the selection as it stands.
+  assert.equal(f.total, 3);
+});
+
 test('the facets of several catalogues are the facets of their union', async () => {
   const both = await catalog.facetsFor(sel({ channel: 'bags,shoes' }));
   const categories = both.categories.map((c) => c.value).sort();

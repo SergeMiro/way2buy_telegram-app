@@ -46,7 +46,7 @@
     // apart from the content filters, in its own always-visible row; it is a
     // filter like the others and is chosen in the same sheet. A LIST, because
     // «Hermès і Chanel» is one question.
-    filters: { channels: [], brand: null, category: null },
+    filters: { channels: [], brands: [], categories: [] },
     facets: { total: 0, brands: [], categories: [] },
     nextCursor: null,
     loadingMore: false,
@@ -1151,6 +1151,12 @@
 
   // What is applied right now, in one list — the badges and the button count
   // both read from it, so they cannot disagree.
+  // The singular name a chip or a badge carries → the list it belongs to. The
+  // two differ because the API takes `?brand=` and the state holds `brands`,
+  // and writing that mapping down once is what lets toggling, dropping and
+  // rendering treat all three filters identically.
+  var FILTER_BUCKET = { channel: 'channels', brand: 'brands', category: 'categories' };
+
   function activeFilters() {
     var out = [];
     // Catalogues first, because they are what the other two are filters INSIDE
@@ -1160,12 +1166,12 @@
       var c = (state.catalogs || []).filter(function (x) { return x.key === key; })[0];
       out.push({ kind: 'channel', value: key, label: (c && c.title) || key });
     });
-    if (state.filters.brand) {
-      out.push({ kind: 'brand', value: state.filters.brand, label: state.filters.brand });
-    }
-    if (state.filters.category) {
-      out.push({ kind: 'category', value: state.filters.category, label: state.filters.category });
-    }
+    (state.filters.brands || []).forEach(function (v) {
+      out.push({ kind: 'brand', value: v, label: v });
+    });
+    (state.filters.categories || []).forEach(function (v) {
+      out.push({ kind: 'category', value: v, label: v });
+    });
     return out;
   }
 
@@ -1177,8 +1183,8 @@
     if (!applied.length) return '';
     return '<div class="applied">' +
       applied.map(function (f) {
-        // `data-drop-value` matters only for catalogues: there can be several,
-        // so the badge has to say WHICH one it removes.
+        // Each badge says WHICH value it drops: there can be several of every
+        // kind now.
         return '<button class="fbadge' + (f.kind === 'channel' ? ' fbadge--channel' : '') +
           '" type="button" data-drop-filter="' + esc(f.kind) + '"' +
           ' data-drop-value="' + esc(f.value) + '"' +
@@ -1243,29 +1249,36 @@
 
   function filtersSheetHtml() {
     var f = state.facets || {};
-    var section = function (kind, label, values, active) {
+    // `chosen` is a LIST for every section now. Several brands mean "either of
+    // these" — one card carries one brand, so «Chanel AND Dior» would match
+    // nothing for ever, and somebody deciding between two houses is asking to
+    // see both. The counts beside each value are still computed as if this
+    // section's own filter were off, which is what lets a second value be added
+    // without clearing the first.
+    var section = function (kind, label, values, chosen) {
       if (!values || !values.length) return '';
-      // Keep the chosen value at the beginning of the grid. It remains visible
-      // when the sheet is reopened and can be removed with the same tap.
-      var ordered = values.filter(function (v) { return v.value === active; })
-        .concat(values.filter(function (v) { return v.value !== active; }));
+      var on = function (v) { return (chosen || []).indexOf(v) !== -1; };
+      // Chosen values first, so what is applied stays visible when the sheet is
+      // reopened and can be removed with the same tap that set it.
+      var ordered = values.filter(function (v) { return on(v.value); })
+        .concat(values.filter(function (v) { return !on(v.value); }));
       return '<div class="fsheet">' +
         '<div class="fsheet__label">' + esc(label) + '</div>' +
         '<div class="fsheet__grid">' +
           ordered.map(function (v) {
-            return '<button class="fchip' + (active === v.value ? ' is-active' : '') +
+            return '<button class="fchip' + (on(v.value) ? ' is-active' : '') +
               '" type="button" data-facet="' + esc(kind) + '" data-value="' + esc(v.value) + '"' +
-              (active === v.value ? ' aria-label="Прибрати фільтр ' + esc(v.value) + '"' : '') + '>' +
+              (on(v.value) ? ' aria-label="Прибрати фільтр ' + esc(v.value) + '"' : '') + '>' +
               esc(v.value) + '<span class="fchip__count">' + v.count + '</span>' +
-              (active === v.value ? '<span class="fchip__remove" aria-hidden="true">×</span>' : '') +
+              (on(v.value) ? '<span class="fchip__remove" aria-hidden="true">×</span>' : '') +
             '</button>';
           }).join('') +
         '</div></div>';
     };
 
     var body = catalogSectionHtml() +
-      section('brand', 'Бренд', f.brands, state.filters.brand) +
-      section('category', 'Категорія', f.categories, state.filters.category);
+      section('brand', 'Бренд', f.brands, state.filters.brands) +
+      section('category', 'Категорія', f.categories, state.filters.categories);
 
     if (!body) return '<p class="panel__note">Тут поки нема за чим фільтрувати.</p>';
 
@@ -1291,11 +1304,17 @@
     var one = chosen.length === 1
       ? (state.catalogs || []).filter(function (c) { return c.key === chosen[0]; })[0]
       : null;
+    var brands = state.filters.brands || [];
+    // The heading names the narrowest thing that is still ONE thing. Two brands
+    // or two catalogues are counted instead of listed: the badges above already
+    // spell them out, and a heading that grows with the selection pushes the
+    // count off the line.
     var title = state.search
       ? 'Пошук'
-      : (state.filters.brand
+      : (brands.length === 1 ? brands[0] : '')
+        || (brands.length > 1 ? brands.length + ' ' + plural(brands.length, ['бренд', 'бренди', 'брендів']) : '')
         || (one ? one.title : '')
-        || (chosen.length ? chosen.length + ' ' + plural(chosen.length, ['каталог', 'каталоги', 'каталогів']) : 'Усі каталоги'));
+        || (chosen.length ? chosen.length + ' ' + plural(chosen.length, ['каталог', 'каталоги', 'каталогів']) : 'Усі каталоги');
 
     // The count is the size of the whole selection, not of the page in hand:
     // «60 позицій» under a filter holding 900 of them is a number the client
@@ -1312,7 +1331,7 @@
       ? '<div class="tiles tiles--' + layoutMode + '">' + state.feed.map(tileHtml).join('') + '</div>'
       : '<div class="empty">' + (state.search
           ? 'За запитом «' + esc(state.search) + '» нічого не знайшли'
-          : (state.filters.brand || state.filters.category
+          : (activeFilters().length
               ? 'За цим фільтром нічого немає'
               : 'У цьому каталозі ще немає позицій')) + '</div>';
 
@@ -3041,8 +3060,8 @@
     var sel = {
       channel: (state.filters.channels || []).join(','),
       q: state.search,
-      brand: state.filters.brand,
-      category: state.filters.category,
+      brand: (state.filters.brands || []).join(','),
+      category: (state.filters.categories || []).join(','),
     };
     if (extra && extra.cursor) sel.cursor = extra.cursor;
     return sel;
@@ -3359,14 +3378,13 @@
     if (drop) {
       var which = drop.getAttribute('data-drop-filter');
       if (which === 'all') {
-        state.filters = { channels: [], brand: null, category: null };
-      } else if (which === 'channel') {
-        var dropped = drop.getAttribute('data-drop-value');
-        state.filters.channels = (state.filters.channels || []).filter(function (k) {
-          return k !== dropped;
-        });
+        state.filters = { channels: [], brands: [], categories: [] };
       } else {
-        state.filters[which] = null;
+        var dropped = drop.getAttribute('data-drop-value');
+        var bucket = FILTER_BUCKET[which];
+        state.filters[bucket] = (state.filters[bucket] || []).filter(function (v) {
+          return v !== dropped;
+        });
       }
       tg.haptic('light');
       await refreshVitrine();
@@ -3380,18 +3398,14 @@
     if (facet) {
       var kind = facet.getAttribute('data-facet');
       var value = facet.getAttribute('data-value') || null;
-      if (kind === 'channel') {
-        // Catalogues ACCUMULATE — that is the whole point of choosing them
-        // here rather than in a row where one was active at a time. Tapping a
-        // chosen one removes it, so a filter is never a trap.
-        var chosen = state.filters.channels || [];
-        state.filters.channels = chosen.indexOf(value) === -1
-          ? chosen.concat([value])
-          : chosen.filter(function (k) { return k !== value; });
-      } else {
-        // Tapping the active value clears it, for the same reason.
-        state.filters[kind] = state.filters[kind] === value ? null : value;
-      }
+      // Every filter ACCUMULATES — that is the point of choosing them here
+      // rather than in a row where one was active at a time. Tapping a chosen
+      // value removes it, so a filter is never a trap.
+      var into = FILTER_BUCKET[kind];
+      var chosen = state.filters[into] || [];
+      state.filters[into] = chosen.indexOf(value) === -1
+        ? chosen.concat([value])
+        : chosen.filter(function (v) { return v !== value; });
       tg.haptic('light');
       await refreshVitrine();
       // Re-render the sheet in place so the choice is visibly taken and a second

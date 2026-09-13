@@ -75,6 +75,12 @@
     ['Пошук за назвою або артикулом', 'Search by name or item number', 'Поиск по названию или артикулу'],
     ['Очистити', 'Clear', 'Очистить'], ['Прибрати фільтр', 'Remove filter', 'Снять фильтр'],
     ['Прибрати', 'Remove', 'Удалить'], ['Усе', 'All', 'Все'], ['Усі каталоги', 'All catalogs', 'Все каталоги'],
+    // The vitrine heading counts what it cannot name in one word. plural() in
+    // app.js hands English the THIRD form, so that is the slot the English
+    // plural has to sit in — the first two are only ever read in uk/ru.
+    ['каталог', 'catalogs', 'каталог'], ['каталоги', 'catalogs', 'каталога'],
+    ['каталогів', 'catalogs', 'каталогов'],
+    ['бренд', 'brands', 'бренд'], ['бренди', 'brands', 'бренда'], ['брендів', 'brands', 'брендов'],
     ['Товари в наявності', 'In stock', 'В наличии'], ['В наявності', 'In stock', 'В наличии'],
     ['Аксесуари', 'Accessories', 'Аксессуары'], ['Одяг жіночий', "Women's clothing", 'Женская одежда'],
     ['Чоловічий одяг', "Men's clothing", 'Мужская одежда'], ['Годинники', 'Watches', 'Часы'],

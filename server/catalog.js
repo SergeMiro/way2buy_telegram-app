@@ -22,35 +22,43 @@ import { listChannels } from './telegram.js';
 export const SEARCH_EXPR =
   "(coalesce(title,'') || ' ' || coalesce(body,'') || ' ' || coalesce(article,''))";
 
-// A catalogue selection is a LIST, not a value: «Hermès і Chanel» is one
-// question. Asking it as two requests and merging on the client would page
-// wrongly — keyset paging walks ONE ordered result set, and two interleaved
-// pages have no single cursor.
+// Every filter is a LIST, not a value: «Hermès і Chanel», «Chanel або Dior» —
+// each is ONE question about one shelf. Asking it as two requests and merging on
+// the client would page wrongly: keyset paging walks one ordered result set, and
+// two interleaved pages have no single cursor.
 //
-// Arrives as `?channel=hermes,chanel`. A single key still parses into a
-// one-element list, so a Mini App still open on an older bundle keeps working.
-// 'all' is dropped rather than looked up: it was the old row's word for "no
-// catalogue filter", which is what an empty list means here.
-const CHANNEL_MAX = 30;
-function channelList(raw) {
+// Arrives as `?channel=hermes,chanel&brand=Chanel,Dior`. A single value still
+// parses into a one-element list, so a Mini App open on an older bundle keeps
+// working, and 'all' — the old chip row's word for "no catalogue filter" — is
+// dropped rather than looked up, because an empty list already means that.
+//
+// The comma is safe as a separator because none of the three vocabularies
+// contains one: channel keys are slugs, categories are single parsed words, and
+// the brands in telegram.js are house names — «Dolce & Gabbana», «Saint
+// Laurent». A house arriving with a comma in its name is the day this needs a
+// different encoding, and it will say so by splitting into two filters that
+// match nothing.
+const LIST_MAX = 30;
+const VALUE_MAX = 40;
+function valueList(raw, { drop = null } = {}) {
   const items = String(raw ?? '')
     .split(',')
-    .map((s) => s.trim().slice(0, 40))
-    .filter((s) => s && s !== 'all');
-  return [...new Set(items)].slice(0, CHANNEL_MAX);
+    .map((s) => s.trim().slice(0, VALUE_MAX))
+    .filter((s) => s && s !== drop);
+  return [...new Set(items)].slice(0, LIST_MAX);
 }
 
 /** The filters, clamped to what the server will accept. */
 export function selectionFrom(query = {}) {
   return {
-    channels: channelList(query.channel),
+    channels: valueList(query.channel, { drop: 'all' }),
     kind: query.kind || null,
-    // Search runs across ALL catalogues, not just the selected one: a client
-    // who types "kelly" wants the bag, not "the bag inside the chip they
-    // happened to tap".
     q: String(query.q || '').trim().slice(0, 60),
-    brand: String(query.brand || '').trim().slice(0, 40) || null,
-    category: String(query.category || '').trim().slice(0, 40) || null,
+    // Lists too, for the same reason the catalogues are: «Chanel або Dior» is
+    // one question about one shelf, and asking it as two requests would page
+    // wrongly. A single value still parses into a one-element list.
+    brands: valueList(query.brand),
+    categories: valueList(query.category),
   };
 }
 
@@ -66,7 +74,7 @@ export function selectionFrom(query = {}) {
  *   — as opposed to no filter at all, which is what an empty WHERE would mean.
  */
 export async function feedWhere(selection = {}, { skip = null } = {}) {
-  const { channels = [], kind, q, brand, category } = selection;
+  const { channels = [], kind, q, brands = [], categories = [] } = selection;
   const where = ["status='published'"];
   const params = [];
 
@@ -95,13 +103,13 @@ export async function feedWhere(selection = {}, { skip = null } = {}) {
     params.push(`%${q.replace(/[%_\\]/g, (m) => `\\${m}`)}%`);
   }
 
-  if (brand && skip !== 'brand') {
-    where.push('brand = ?');
-    params.push(brand);
+  if (brands.length && skip !== 'brand') {
+    where.push(`brand IN (${brands.map(() => '?').join(',')})`);
+    params.push(...brands);
   }
-  if (category && skip !== 'category') {
-    where.push('category = ?');
-    params.push(category);
+  if (categories.length && skip !== 'category') {
+    where.push(`category IN (${categories.map(() => '?').join(',')})`);
+    params.push(...categories);
   }
 
   return { text: where.join(' AND '), params };
