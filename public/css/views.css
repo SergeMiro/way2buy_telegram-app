@@ -2425,3 +2425,114 @@ body.is-zooming .fit-row__thumb img { transition: none; }
   .deal__card { transition: none !important; }
   .deal.is-focused .deal__card { animation: none; }
 }
+
+/* ── запит: статус як позначка в куті ──────────────────────────────────────
+   The client's own request card. Its status used to be a word in the amount
+   column, which is a column: it reserved width on every card whether or not
+   anything needed saying, and the question the client actually wrote had to
+   share the line with it.
+
+   The mark is absolutely positioned instead, so the text runs the full width of
+   the card and the status costs it nothing. `.row` is a flex line shared by
+   purchases, promos and channels — the positioning context is put on the
+   modifier alone, so nothing else in that list starts containing absolute
+   children. The body keeps a right pad the width of the mark plus its gutter,
+   because a two-line question would otherwise run under the clock. */
+.row--inquiry { position: relative; align-items: flex-start; }
+.row--inquiry .row__body { padding-right: 24px; }
+.inqmark {
+  position: absolute;
+  top: var(--w2b-space-2);
+  right: var(--w2b-space-3);
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  /* Amber while it waits. It is a state, not a warning: nothing is wrong with a
+     request that has just been sent. */
+  color: var(--w2b-warn);
+}
+.inqmark svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* Answered. The check is drawn a hair heavier than the clock — it is the state
+   the client is waiting to see, and it should read from across the room. */
+.inqmark--done { color: var(--w2b-ok); }
+.inqmark--done svg { stroke-width: 2; }
+
+/* ── примірочна: the balance line above its tabs ───────────────────────────
+   «Бонуси» is one level in now, so the amount she can spend would have needed
+   a tap to find. This is that amount, on one line, tappable, and it leads to
+   the tab it is about. It renders only when there is something to say — see
+   fitBalanceHtml() — because a strip that announces nothing still costs a line
+   of a 390px screen.
+
+   Full width and left-aligned rather than a centred pill: it is a row of the
+   list below it, not a button competing with «Дізнатися наявність і ціну». */
+.fitbal {
+  display: flex;
+  align-items: center;
+  gap: var(--w2b-space-2);
+  width: 100%;
+  padding: var(--w2b-space-2) var(--w2b-space-3);
+  background: var(--w2b-surface-1);
+  border: 1px solid var(--w2b-line);
+  border-radius: 0;
+  font: inherit;
+  color: var(--w2b-text);
+  text-align: left;
+  cursor: pointer;
+}
+.fitbal__text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--w2b-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.fitbal__more { flex: none; color: var(--w2b-text-subtle); }
+.fitbal:active { background: var(--w2b-surface-2); }
+
+/* Four tabs across 390px. They fit — «Речі», «Запити», «Покупки», «Бонуси»
+   are short words — but a count turns one of them into «Запити 1», so the row
+   is allowed to scroll rather than squeeze a label into two lines. */
+.seg--fit { margin-bottom: var(--w2b-space-3); }
+
+/* ── компактність: екран телефона — це 844px, і вони не наші ──────────────
+   What this section is for: a 390×844 phone, inside Telegram, which has already
+   spent ~90px on its own header before this app draws anything. Measured on the
+   catalogue, the first bag started at y=317 — a third of the visible page went
+   to furniture. The wordmark moved to the join screen (see topbarHtml); these
+   are the rest of the savings, and every one of them is a size, never a
+   removal: nothing here hides information.
+
+   Tap targets are left alone. The bottom navigation keeps its height and the
+   buttons keep their padding — a compact app that is hard to hit is not
+   compact, it is cramped. */
+.topbar {
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  gap: 10px;
+}
+/* The avatar is a face, not a button: it needs to be recognisable, not
+   tappable, so it can lose the six pixels the topbar height is made of. */
+.topbar__avatar { width: 38px; height: 38px; border-radius: 12px; }
+.topbar__sub { margin-top: 1px; }
+
+/* A section heading is a signpost, and 28px of display type is a headline.
+   «ЗАПРОС НАЛИЧИЯ И ЦЕНЫ» was running to two lines at 390px — a heading taller
+   than the row it introduces. The rule beside it does the separating work, so
+   the type can come down and keep doing the naming work. */
+.section-title {
+  margin: 13px 2px 5px;
+  font-size: 19px;
+  letter-spacing: -0.015em;
+}
+/* First heading on a view sits right under the tabs — it needs no air above it,
+   the segmented control already provides the break. */
+.stack > .section-title:first-child { margin-top: 2px; }

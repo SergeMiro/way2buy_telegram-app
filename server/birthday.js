@@ -20,6 +20,7 @@
 import { db } from './db.js';
 import { getRule, computeDiscount } from './rules.js';
 import { notifyCustomer, notifyAdmins } from './notify.js';
+import { dmy } from './i18n.js';
 
 const DAY = 86400000;
 const iso = (ms) => new Date(ms).toISOString();
@@ -173,7 +174,7 @@ export async function claimBirthdayDiscount({ customer, birthdayInput, now = Dat
     return {
       ok: false,
       verdict: 'already_claimed',
-      message: `Знижку на день народження вже отримано цього року (${iso(already.created_at).slice(0, 10)}).`,
+      message: `Знижку на день народження вже отримано цього року (${dmy(already.created_at)}).`,
     };
   }
 
@@ -185,7 +186,7 @@ export async function claimBirthdayDiscount({ customer, birthdayInput, now = Dat
     return {
       ok: false,
       verdict: 'out_of_window',
-      message: `Знижка стане доступною ${new Date(win.startsAt).toISOString().slice(0, 10)} і діятиме ${validDays} днів.`,
+      message: `Знижка стане доступною ${dmy(win.startsAt)} і діятиме ${validDays} днів.`,
       window: { startsAt: iso(win.startsAt), endsAt: iso(win.endsAt), open: false },
     };
   }
@@ -221,7 +222,7 @@ export async function claimBirthdayDiscount({ customer, birthdayInput, now = Dat
         amountLabel,
         minOrderUsd: Number(rule.min_order_usd || 0),
         code,
-        until: iso(win.endsAt).slice(0, 10),
+        until: dmy(win.endsAt),
       },
     },
     // The client is in the app right now — they just tapped «Отримати знижку» —

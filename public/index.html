@@ -15,9 +15,17 @@
 <body>
   <main id="app" class="app"><div class="loader">Завантаження…</div></main>
 
-  <!-- Bottom navigation. One line weight, one 24-grid, and five glyphs taken
-       from the shop rather than from an icon set: paper bag, paper plane,
-       hanger, per cent, briefcase. Each is explained where it is drawn. -->
+  <!-- Bottom navigation. One line weight, one 24-grid, and glyphs taken from
+       the shop rather than from an icon set: paper bag, paper plane, hanger,
+       briefcase. Each is explained where it is drawn.
+
+       «Знижки» used to be a fifth button here, and it was the tab that held
+       everything about the client herself: her bonuses, her promo codes, her
+       purchases and the requests she had sent. Two of those four start in the
+       fitting room, so she had to leave it to see what came of what she put
+       there. It is all one place now — «Примірочна», with its own
+       tabs inside — and the bottom row is what the SHOP offers: the catalogues,
+       the channel, and her own room. -->
   <nav id="nav" class="nav" hidden>
     <button class="nav__btn" data-tab="catalog">
       <!-- The boutique paper bag. It was the wrong icon while «Примірочна» was
@@ -49,16 +57,6 @@
       </svg>
       <span>Примірочна</span>
       <span class="nav__badge" id="cartBadge" hidden>0</span>
-    </button>
-    <button class="nav__btn" data-tab="home">
-      <!-- A percent, not a tag. The tab is «Знижки», and a per-cent sign is the
-           one symbol every client already reads as "cheaper" without learning
-           anything — a tag only says "there is a price". -->
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M18.5 5.5 5.5 18.5"/>
-        <circle cx="7.8" cy="7.8" r="2.8"/><circle cx="16.2" cy="16.2" r="2.8"/>
-      </svg>
-      <span>Знижки</span>
     </button>
     <button class="nav__btn nav__btn--admin" data-tab="admin" hidden>
       <!-- A briefcase: «Кабінет» is an office, and this is the office. Sliders

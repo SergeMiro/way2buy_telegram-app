@@ -261,7 +261,7 @@ export async function cartView(customerId, now = Date.now()) {
 
 // ── sending the inquiry ───────────────────────────────────────────────────
 
-const shortName = (c) => (c.name || `#${c.id}`).trim();
+export const shortName = (c) => (c.name || `#${c.id}`).trim();
 
 // A direct link to the post the client tapped.
 //
@@ -428,16 +428,50 @@ export async function sendInquiry({ customer, message = '', now = Date.now(), la
   const body = compose(itemLine, false);
   const bodyHtml = compose(itemLineHtml, true);
 
+  // The one line that makes the answer path exist for the person using it.
+  //
+  // Replying is not a feature anybody discovers: a DM looks like a notification,
+  // and notifications are not things you talk back to. So the message says so,
+  // in the message itself — and only in the message. The stored `body` is the
+  // cabinet's record of what the client asked, and an instruction addressed to
+  // Dasha has no business in it.
+  const dmHtml = `${bodyHtml}\n\n<i>↩️ Відповідайте на це повідомлення — ` +
+    'передам відповідь клієнту і позначу заявку відповіданою.</i>';
+
   // Maryna (admins) get it in the admin alert feed + DM. The client is never
   // told this happened — nothing in the response or in their notification feed
   // names an admin, and the confirmation they see credits Dasha alone.
-  await notifyAdmins({ kind: 'inquiry', title, body, bodyHtml, dedupeKey: `inquiry:${inquiryId}` });
+  //
+  // Every delivery is remembered by the message it was sent as. That is what
+  // makes «answer by replying to this» work: a reply carries the id of the
+  // message it answers and nothing else, so without this row the reply is just
+  // a sentence in a chat. See answers.js.
+  const remember = async (sentMessage) => {
+    const chatId = String(sentMessage?.chat?.id ?? '');
+    const messageId = Number(sentMessage?.message_id);
+    if (!chatId || !Number.isFinite(messageId)) return;
+    await db.prepare(
+      `INSERT INTO inquiry_dm (chat_id, message_id, inquiry_id, created_at)
+       VALUES (?,?,?,?) ON CONFLICT (chat_id, message_id) DO NOTHING`
+    ).run(chatId, messageId, inquiryId, iso(now));
+  };
+
+  await notifyAdmins({
+    kind: 'inquiry', title, body, bodyHtml: dmHtml, dedupeKey: `inquiry:${inquiryId}`,
+    onDm: (_tgId, sentMessage) => remember(sentMessage),
+  });
   // Dasha gets the same message as a DM. Separate ids so support can be someone
   // who is not an admin of the panel; anyone on both lists is not sent twice.
   const alerted = await adminIds();
   const dashaIds = supportIds().filter((id) => !alerted.includes(id));
   for (const id of dashaIds) {
-    void Promise.resolve(await sendToUser(id, `<b>${escapeHtml(title)}</b>\n${bodyHtml}`)).catch(() => {});
+    // Awaited, unlike before: the message_id has to be stored before this
+    // request is answered, or a serverless invocation can be frozen with the
+    // row never written — and then her reply matches nothing. A failure to
+    // deliver must still not fail the inquiry itself.
+    try {
+      await remember(await sendToUser(id, `<b>${escapeHtml(title)}</b>\n${dmHtml}`));
+    } catch { /* the inquiry is stored; the DM is best-effort */ }
   }
 
   // The client's own confirmation, in their language, with no jargon.

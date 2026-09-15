@@ -20,8 +20,20 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   min-height: 100dvh;
-  overflow-x: hidden;
+  /* `clip`, not `hidden`.
+     The sticky bar over the vitrine is deliberately wider than the page — it
+     has negative side margins so that, once it holds at the top, its background
+     reaches both edges instead of leaving the container's padding showing. That
+     overhang was making the page scroll two pixels sideways, which on a phone
+     reads as the whole app wobbling under the thumb.
+     `overflow-x: hidden` on an ancestor turns it into a scroll container and
+     takes `position: sticky` down with it — the bar would simply stop holding.
+     `clip` trims the overhang without creating one, which is the entire reason
+     it exists. Declared on both html and body: the scrolling element differs
+     between the two, and Telegram's WebView is not the one to guess about. */
+  overflow-x: clip;
 }
+html { overflow-x: clip; }
 img, svg, canvas { display: block; max-width: 100%; }
 button { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; }
 :where(button, a, [tabindex], select, input, textarea):focus-visible {

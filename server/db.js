@@ -19,6 +19,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { compile, bindArgs, withReturning, normalizeRows } from './sql.js';
+// The seed writes notification bodies a person reads, so it formats dates the
+// same way every other message does. i18n.js imports nothing — no cycle.
+import { dmy } from './i18n.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = join(__dirname, 'sql', 'schema.sql');
@@ -613,7 +616,7 @@ export async function seed({ force = false } = {}) {
   // (ADR-005); dedupe_key is what makes a re-run a no-op.
   await insNotif.run({ customer_id: ids[3], kind: 'birthday', title: 'Вітаємо з днем народження! 🎂', body: 'Ваша знижка $50 від замовлення $500 — промокод BDAY-KATE-50, діє 30 днів.', promo_code_id: bdayKate, campaign_id: birthdayRuleId, dedupe_key: `bday:${ids[3]}:2026`, in_app_status: 'unread', created_at: daysAgo(0) });
   await insNotif.run({ customer_id: ids[0], kind: 'near_reward', title: 'Бонус $100 за покупку від $2000 💰', body: 'Нараховуємо $100 за кожну покупку від $2000, накопичення до $300.', promo_code_id: null, campaign_id: null, dedupe_key: `near:${ids[0]}:2026-07`, in_app_status: 'unread', created_at: daysAgo(1) });
-  await insNotif.run({ customer_id: ids[0], kind: 'new_discount', title: 'VIP-знижка 15% активна 💎', body: `Промокод VIP-OLENA-15 діє до ${daysAgo(-10).slice(0, 10)}.`, promo_code_id: vipOlena, campaign_id: vipRuleId, dedupe_key: 'promo:VIP-OLENA-15', in_app_status: 'read', created_at: daysAgo(2) });
+  await insNotif.run({ customer_id: ids[0], kind: 'new_discount', title: 'VIP-знижка 15% активна 💎', body: `Промокод VIP-OLENA-15 діє до ${dmy(daysAgo(-10))}.`, promo_code_id: vipOlena, campaign_id: vipRuleId, dedupe_key: 'promo:VIP-OLENA-15', in_app_status: 'read', created_at: daysAgo(2) });
   await insNotif.run({ customer_id: ids[6], kind: 'holiday', title: 'Літній SALE ☀️ −20%', body: 'Промокод SUMMER-SOFIA-20 у «Покупках».', promo_code_id: saleSofia, campaign_id: summerSaleId, dedupe_key: 'promo:SUMMER-SOFIA-20', in_app_status: 'unread', created_at: daysAgo(1) });
 }
 

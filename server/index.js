@@ -12,6 +12,7 @@ import {
   listChannels, getChannel, channelMap, liveMode, publishPost, ingestChannelPost, fetchPhoto,
   handleMessage, botInfo, webhookInfo, checkChannelAccess, userProfilePhotoId,
 } from './telegram.js';
+import { handleAnswerReply } from './answers.js';
 import { mediaUrl } from './media.js';
 import { buildReport, sendReport } from './ai.js';
 import * as campaigns from './campaigns.js';
@@ -1081,6 +1082,10 @@ app.post('/telegram/webhook', async (req, res) => {
   try {
     await ingestChannelPost(req.body);
     await handleMessage(req.body);
+    // A staff reply to an inquiry notification: carried to the client and the
+    // row marked answered. Ordered after handleMessage because that one only
+    // acts on /start, and a reply is never /start — neither consumes the other.
+    await handleAnswerReply(req.body);
   } catch (e) {
     // Still a 200. Telegram redelivers anything else, so a malformed update
     // would come back forever — but it is LOGGED now. Swallowing it in silence

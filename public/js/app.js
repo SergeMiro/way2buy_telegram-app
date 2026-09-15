@@ -29,7 +29,12 @@
     notifications: { notifications: [], unread: 0 },
     birthday: null,
     cart: { items: [], count: 0, promo: null, draft: '' },
-    // The client's own price/availability requests, for «Знижки».
+    // Which of the fitting room's own tabs is open. «Примірочна» is now the
+    // client's whole room — what she chose, what she asked, what she bought,
+    // what she has — so the tab has to survive a re-render like any other
+    // navigation state.
+    fitTab: 'items',
+    // The client's own price/availability requests — the «Запити» tab.
     inquiries: [],
     cartCount: 0,
     catalogs: [],
@@ -123,11 +128,24 @@
     return n + ' ₴';
   }
 
+  // One date format everywhere: 13.10.2026.
+  //
+  // This used to be `toLocaleDateString(..., {day, month})` — «15 сент.», no
+  // year. Two problems, and the second is the one that bites. A card from last
+  // September and a card from this September read identically, which is exactly
+  // the case a purchase history is for. And the month name came from the
+  // locale, so the same row said «15 сент.» to one client and «Sep 15» to
+  // another, while the server's own sentences carried a third format
+  // altogether. Dots and a four-digit year, read the same by everyone.
+  //
+  // Local time, not UTC: this renders what the client did — a request sent at
+  // 01:30 in Kyiv belongs to that day, not to the one UTC was still on.
   function dateShort(iso) {
     if (!iso) return '';
     var d = new Date(iso);
     if (isNaN(d)) return '';
-    return d.toLocaleDateString(i18n.languageTag(), { day: 'numeric', month: 'short' });
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear();
   }
 
   function timeAgo(iso) {
@@ -743,7 +761,16 @@
 
   /* ── views ──────────────────────────────────────────────────────────────── */
 
-  function topbarHtml() {
+  // The wordmark is BRAND, and brand is worth a screen once.
+  //
+  // It used to be drawn above the topbar on every view: 81px of it, plus 70px of
+  // topbar, meant 151px — a fifth of a 390×844 phone, and a third of what is
+  // left after Telegram's own header — was spent before the first bag appeared.
+  // The name is already on screen: Telegram puts it in the header of the sheet
+  // this app runs in. So it stays where it does work — the screen somebody sees
+  // before they have joined, where the shop still has to introduce itself — and
+  // every working view starts with the topbar instead.
+  function topbarHtml(opts) {
     var c = state.me && state.me.customer;
     var profileName = (c && c.name) || tg.name || '';
     var initials = profileName
@@ -764,7 +791,7 @@
     // The flag is painted directly over the 2 in Way2Buy, so Ukraine is part of
     // the name instead of a separate badge. The tagline is split into words so
     // CSS can align its two outer edges exactly with the wordmark above it.
-    return '<div class="wordmark">' +
+    var wordmark = !(opts && opts.brand) ? '' : '<div class="wordmark">' +
         '<div class="wordmark__row">' +
           '<div class="wordmark__lockup">' +
             // Lower case, deliberately: the name is set in a script face where
@@ -798,7 +825,9 @@
             '</div>' +
           '</div>' +
         '</div>' +
-      '</div>' +
+      '</div>';
+
+    return wordmark +
       '<header class="topbar">' +
       '<div class="topbar__avatar">' +
         (avatarSrc
@@ -914,14 +943,15 @@
     }).join('');
   }
 
-  function renderHome() {
-    if (!state.me.registered) return renderJoin();
-
+  // «Бонуси» — everything the client HAS, as opposed to what she chose, asked
+  // or bought. It was the "Знижки" tab in the bottom row; the sections are
+  // unchanged, they just live one level in now.
+  function bonusesTabHtml() {
     var l = state.me.customer.loyalty;
     var f = state.config.features || {};
     var cards = state.discounts.promos.concat(state.discounts.publicCampaigns);
 
-    var html = topbarHtml() + '<div class="stack">';
+    var html = '';
 
     // wallet — cashback is now per single order, so the hint talks about the
     // order size, not a lifetime total.
@@ -961,7 +991,7 @@
       ? cards.map(cardHtml).join('') + holidayCards
       : '<div class="empty">Поки що немає активних знижок. Вони зʼявляються на день народження та у свята.</div>';
 
-    html += historySectionsHtml();
+    html += promosSectionHtml();
 
     // Tiers/badges/streaks exist in the data but stay off screen unless the
     // server turns them on: Maryna's audience needs two bonuses, nothing else.
@@ -971,7 +1001,11 @@
         (l.nextTier ? ' · до ' + esc(l.nextTier.name) + ' — ' + usd(l.nextTier.toGo) : '') + '</div></div>';
     }
 
-    html += '</div>';
+    if (l.cashbackRedeemed > 0) {
+      html += '<div class="panel"><div class="panel__note">Списано бонусів: ' +
+        usd(l.cashbackRedeemed) + ' · нараховано: ' + usd(l.cashbackEarned) + '</div></div>';
+    }
+
     return html;
   }
 
@@ -1004,7 +1038,7 @@
         minOrderNote(bdayRule.minOrderUsd)
       : 'знижка на день народження';
 
-    return topbarHtml() +
+    return topbarHtml({ brand: true }) +
       '<div class="stack">' +
         '<div class="panel">' +
           '<div class="panel__title">Клуб Way2Buy</div>' +
@@ -1453,19 +1487,99 @@
   }
 
   // ── Примірочна: the message is already written; one button sends it ───────
+  // ── Примірочна: the client's own room ────────────────────────────────────
+  //
+  // Four questions a client asks about herself, and one tab each:
+  //
+  //   Речі     що я обрала        — and the button that asks about it
+  //   Запити   про що я питала    — with the clock / check on every card
+  //   Покупки  що я купила
+  //   Бонуси   що в мене є        — cashback, promo codes, birthday, offers
+  //
+  // They were two bottom-row tabs before: the fitting room held the first, and
+  // «Знижки» held the other three. That split cut the one story the client
+  // follows — she chooses a thing, asks about it, buys it — across two places,
+  // and put the answer to «про що я вже питала?» behind a per-cent sign.
+  //
+  // The counters are the reason the tabs need no explaining: «Запити 1» means
+  // one request is still waiting, and it stops saying so the moment Dasha
+  // answers.
+  var FIT_TABS = [
+    { key: 'items',      label: 'Речі' },
+    { key: 'inquiries',  label: 'Запити' },
+    { key: 'purchases',  label: 'Покупки' },
+    { key: 'bonuses',    label: 'Бонуси' },
+  ];
+
+  function fitTabCount(key) {
+    if (key === 'items') return (state.cart && state.cart.items.length) || 0;
+    // Only the ones still waiting. A client who has asked thirty times does not
+    // need a badge reading 30 — she needs to know whether anything is open.
+    if (key === 'inquiries') {
+      return (state.inquiries || []).filter(function (q) { return !q.answered; }).length;
+    }
+    return 0;
+  }
+
+  // The balance line. It exists because «Бонуси» is now one level in, and the
+  // amount she can spend is the one thing that should never need a tap to find.
+  // It renders only when there is something to say — an empty strip above the
+  // tabs would cost a line of screen to announce nothing.
+  function fitBalanceHtml() {
+    var l = (state.me.customer && state.me.customer.loyalty) || {};
+    var promos = (state.purchases && state.purchases.promos) || [];
+    var cash = Number(l.cashbackAvailable) || 0;
+    if (cash <= 0 && !promos.length) return '';
+    var parts = [];
+    if (cash > 0) parts.push('Бонуси ' + usd(cash));
+    if (promos.length) {
+      parts.push(promos.length === 1 ? 'є промокод' : 'промокодів: ' + promos.length);
+    }
+    return '<button class="fitbal" type="button" data-fit-tab="bonuses">' +
+      '<span class="fitbal__text">' + esc(parts.join(' · ')) + '</span>' +
+      '<span class="fitbal__more" aria-hidden="true">›</span>' +
+    '</button>';
+  }
+
   function renderCart() {
     if (!state.me.registered) return renderJoin();
-    var c = state.cart || { items: [], count: 0 };
+
+    var open = FIT_TABS.filter(function (t) { return t.key === state.fitTab; })[0] || FIT_TABS[0];
     var html = topbarHtml() + '<div class="stack">';
 
+    html += fitBalanceHtml();
+
+    html += '<div class="seg seg--fit">' +
+      FIT_TABS.map(function (t) {
+        var n = fitTabCount(t.key);
+        // The label is its own text node so the translator can find it — it
+        // matches whole nodes, and «Запити 1» is not an entry in the dictionary.
+        return '<button class="seg__btn' + (open.key === t.key ? ' is-active' : '') +
+          '" type="button" data-fit-tab="' + t.key + '"><span>' + esc(t.label) + '</span>' +
+          (n ? ' ' + n : '') + '</button>';
+      }).join('') +
+    '</div>';
+
+    if (open.key === 'items') html += fitItemsHtml();
+    else if (open.key === 'inquiries') html += inquiriesSectionHtml();
+    else if (open.key === 'purchases') html += purchasesTabHtml();
+    else html += bonusesTabHtml();
+
+    return html + '</div>';
+  }
+
+  // «Речі» — what she has chosen and not yet asked about, plus the ask itself.
+  // The section heading is gone: the tab above already says «Речі», and a
+  // heading repeating the tab name is a line of paper nobody reads.
+  function fitItemsHtml() {
+    var c = state.cart || { items: [], count: 0 };
+    var html = '';
+
     if (!c.items.length) {
-      return html +
-        '<div class="empty">Примірочна порожня. Відкрийте «Каталоги», ' +
-          'натисніть «Хочу цю позицію» — і всі обрані речі зберуться тут.</div>' +
-        '</div>';
+      return '<div class="empty">Примірочна порожня. Відкрийте «Каталоги», ' +
+        'натисніть «Хочу цю позицію» — і всі обрані речі зберуться тут.</div>';
     }
 
-    html += '<div class="section-title">Обрані позиції (' + c.items.length + ')</div>';
     html += c.items.map(function (i) {
       return '<div class="row">' +
         '<div class="fit-row__thumb">' +
@@ -1558,7 +1672,7 @@
         esc(uname) + '</a></p></div>';
     }
 
-    return html + '</div>';
+    return html;
   }
 
   // Promo codes + purchase history. Shown as sections of the «Знижки» tab, so a
@@ -1571,41 +1685,62 @@
   // answer anywhere in the app. Each item keeps the link it was sent with, so
   // a request from three weeks ago still opens the post.
   //
-  // Status is one word and one bit: whether anybody has picked it up. The
-  // shop's own «в процесі / купив / не купив» is how Maryna tracks herself and
-  // is not addressed to the client.
+  // Status is one bit — whether anybody has picked it up — and it is drawn as a
+  // MARK in the corner, not a word in the row. The word was sitting in the
+  // amount column, where it took a share of a line that belongs to the client's
+  // own question: a request reading «Balenciaga сумка — какие цвета есть?» had
+  // its own text squeezed by a label about the shop's progress. A mark is
+  // absolutely positioned, so it costs the text no width at all, and the state
+  // reads at a glance: a clock while it waits, a green check once it is
+  // answered. The word survives as the mark's title/aria-label — the only place
+  // it is still needed, and the one the translator and a screen reader read.
+  //
+  // The shop's own «в процесі / купив / не купив» is how Maryna tracks herself
+  // and is not addressed to the client.
   function inquiriesSectionHtml() {
     var list = state.inquiries || [];
-    var html = '<div class="section-title">Запити на наявність і ціну</div>';
+    // No heading: the tab above is «Запити», and «Запити на наявність і ціну»
+    // under a tab called «Запити» is the same words twice.
     if (!list.length) {
-      return html + '<div class="empty">Ви ще нічого не питали. Додайте річ у примірочну ' +
+      return '<div class="empty">Ви ще нічого не питали. Додайте річ у примірочну ' +
         'і натисніть «Дізнатися наявність і ціну».</div>';
     }
-    return html + list.map(function (q) {
+    return list.map(function (q) {
       var names = (q.items || []).map(function (i) {
         var label = esc(i.title || 'Позиція');
         return i.url
           ? '<a class="link" href="' + esc(i.url) + '" target="_blank" rel="noopener">' + label + '</a>'
           : label;
       }).join(' · ');
-      return '<div class="row">' +
+      var done = Boolean(q.answered);
+      // role="img" with a label, not an empty decorative span: this mark is the
+      // only thing on the card carrying the status, so it has to be readable by
+      // something other than colour and shape.
+      var mark = done ? 'Вам відповіли' : 'Очікує відповіді';
+      return '<div class="row row--inquiry">' +
         '<div class="row__body">' +
           '<div class="row__title">' + esc(dateShort(q.createdAt)) + ' · ' + q.itemsCount + ' ' +
             plural(q.itemsCount, ['позиція', 'позиції', 'позицій']) + '</div>' +
           '<div class="row__sub">' + names + '</div>' +
           (q.message ? '<div class="row__sub">«' + esc(q.message) + '»</div>' : '') +
         '</div>' +
-        '<div class="row__amount"><span>' +
-          (q.answered ? 'відповіли' : 'очікує') + '</span></div>' +
+        '<span class="inqmark' + (done ? ' inqmark--done' : '') + '" role="img" ' +
+          'title="' + mark + '" aria-label="' + mark + '">' +
+          (done
+            ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5"/></svg>'
+            : '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+                '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>') +
+        '</span>' +
       '</div>';
     }).join('');
   }
 
-  function historySectionsHtml() {
+  // Promo codes — a section of «Бонуси», because a code is something the client
+  // HOLDS. It used to sit between her requests and her purchases in one long
+  // scroll; those two are now tabs of their own.
+  function promosSectionHtml() {
     var p = state.purchases;
-    var html = inquiriesSectionHtml();
-
-    html += '<div class="section-title">Промокоди</div>';
+    var html = '<div class="section-title">Промокоди</div>';
     html += p.promos.length
       ? p.promos.map(function (pr) {
           return '<div class="row">' +
@@ -1621,8 +1756,13 @@
         }).join('')
       : '<div class="empty">Активних промокодів немає.</div>';
 
-    html += '<div class="section-title">Покупки</div>';
-    html += p.purchases.length
+    return html;
+  }
+
+  // «Покупки» — the tab. What she actually bought, newest first.
+  function purchasesTabHtml() {
+    var p = state.purchases;
+    var html = p.purchases.length
       // No icon: every Ukrainian order carried the same flag, so a column of ten
       // identical emoji said nothing and cost thirty pixels of width per line.
       ? p.purchases.map(function (x) {
@@ -1636,12 +1776,8 @@
               '<span>' + usd(x.amount_usd) + '</span></div>' +
           '</div>';
         }).join('')
-      : '<div class="empty">Покупок ще не було.</div>';
-
-    if (p.loyalty && p.loyalty.cashbackRedeemed > 0) {
-      html += '<div class="panel"><div class="panel__note">Списано бонусів: ' +
-        usd(p.loyalty.cashbackRedeemed) + ' · нараховано: ' + usd(p.loyalty.cashbackEarned) + '</div></div>';
-    }
+      : '<div class="empty">Покупок ще не було. Обрані речі — у «Речах», ' +
+          'запитані — у «Запитах».</div>';
     return html;
   }
 
@@ -2979,15 +3115,7 @@
   /* ── data loading ───────────────────────────────────────────────────────── */
 
   async function loadTab(tab) {
-    if (tab === 'home') {
-      var r = await Promise.all([api.me(), api.discounts(), api.notifications(), api.purchases(), api.inquiries()]);
-      state.me = r[0];
-      state.discounts = r[1];
-      state.notifications = r[2];
-      state.purchases = r[3];
-      state.inquiries = (r[4] && r[4].inquiries) || [];
-      state.birthday = r[1].birthday || (r[0].birthday || null);
-    } else if (tab === 'catalog') {
+    if (tab === 'catalog') {
       var loaded = await Promise.all([
         loadVitrine(),
         api.facets(selection()),
@@ -3005,7 +3133,21 @@
       var f = await api.feedKind('main');
       state.feed = f.posts || [];
     } else if (tab === 'cart') {
-      state.cart = await api.cart.get();
+      // One round trip for all four tabs rather than one per tab. They are four
+      // small reads against the same client, and fetching them together is what
+      // makes switching between «Речі» and «Запити» instant — a spinner between
+      // two tabs of the same room reads as if the app lost her place.
+      var r = await Promise.all([
+        api.cart.get(), api.me(), api.discounts(), api.notifications(),
+        api.purchases(), api.inquiries(),
+      ]);
+      state.cart = r[0];
+      state.me = r[1];
+      state.discounts = r[2];
+      state.notifications = r[3];
+      state.purchases = r[4];
+      state.inquiries = (r[5] && r[5].inquiries) || [];
+      state.birthday = r[2].birthday || (r[1].birthday || null);
       paintCartBadge(state.cart.count);
     } else if (tab === 'admin') {
       // One round-trip per panel, all in parallel; a failing panel must not
@@ -3264,8 +3406,10 @@
     }
   }
 
+  // No «home» any more: everything that tab held is inside «Примірочна», and
+  // the fitting room is where a client's own things live.
   var VIEWS = {
-    home: renderHome, catalog: renderCatalog, feed: renderFeed,
+    catalog: renderCatalog, feed: renderFeed,
     cart: renderCart, admin: renderAdmin,
   };
 
@@ -3297,8 +3441,12 @@
     stickyBarObserver.observe(bar);
   }
 
+  // `opts.fitTab` opens «Примірочна» on one of its own tabs — what «Списати»
+  // and the birthday form need: they finish on the screen that shows the result
+  // of what they just did, which is «Бонуси», not the room's default.
   async function go(tab, opts) {
     state.tab = tab;
+    if (opts && opts.fitTab) state.fitTab = opts.fitTab;
     if (!(opts && opts.keepScroll)) window.scrollTo(0, 0);
     $app.innerHTML = '<div class="loader">Завантаження…</div>';
     try {
@@ -3580,6 +3728,22 @@
       return;
     }
 
+    // ── the fitting room's own tabs ──
+    //
+    // Repainted straight from state, with no round trip: everything the four
+    // tabs show was fetched together when the room opened, so a tap is a
+    // re-render and nothing else. The balance line uses the same attribute, so
+    // tapping it lands on «Бонуси».
+    var fTab = t.closest('[data-fit-tab]');
+    if (fTab) {
+      state.fitTab = fTab.getAttribute('data-fit-tab');
+      $app.innerHTML = renderCart();
+      window.scrollTo(0, 0);
+      revealCards();
+      scheduleFit();
+      return;
+    }
+
     // ── the three deal tabs ──
     var dTab = t.closest('[data-deal-tab]');
     if (dTab) {
@@ -3780,7 +3944,7 @@
       try {
         var res = await api.claimBirthday();
         toast(res.message, res.ok ? 'ok' : 'error');
-        await go('home');
+        await go('cart', { fitTab: 'bonuses' });
       } catch (err) {
         toast(err.message, 'error');
         action.disabled = false;
@@ -3791,7 +3955,7 @@
       try {
         await api.redeem();
         toast('Кешбек списано — менеджер врахує його у замовленні');
-        go('home');
+        go('cart', { fitTab: 'bonuses' });
       } catch (err) { toast(err.message, 'error'); }
     }
   });
@@ -3910,7 +4074,7 @@
         });
         state.joinDraft = { name: '', address: '', phone: '', birthday: '', consent: true };
         toast('Вітаємо у клубі!');
-        await go('home');
+        await go('cart', { fitTab: 'bonuses' });
       } else if (form.id === 'inquiryForm') {
         // The client presses one button; Dasha and Maryna both get the message.
         var ires = await api.cart.send(data.message);
@@ -3924,7 +4088,7 @@
         // First claim: the date is recorded now and checked on every later one.
         var bres = await api.claimBirthday(data.birthday);
         toast(bres.message, bres.ok ? 'ok' : 'error');
-        await go('home');
+        await go('cart', { fitTab: 'bonuses' });
       } else if (form.id === 'ruleForm') {
         await api.admin.updateRule(form.getAttribute('data-key'), {
           mode: data.mode,
@@ -4183,7 +4347,7 @@
 
     // Catalogues first: browsing pictures is what the client came for, and the
     // discounts tab is one tap away.
-    await go(state.me.registered ? 'catalog' : 'home');
+    await go(state.me.registered ? 'catalog' : 'cart');
   }
 
   boot();

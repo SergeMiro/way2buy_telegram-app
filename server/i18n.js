@@ -149,9 +149,31 @@ const MESSAGES = {
   // The confirmation says so: a promise to be contacted answers "did it
   // arrive", not "what happens next".
   //
-  // `who` is a person's name as configured (SUPPORT_NAME) and is passed through
-  // untranslated in every language — it is somebody's name, not a phrase, and
-  // the shop is the only one who may spell it.
+  // `who` is a person's name as configured (SUPPORT_NAME). It is not translated
+  // — a name is not a phrase — but it IS transliterated for English, because
+  // «Даша will check availability» is a sentence in two alphabets. See
+  // personName() below; Russian keeps the Cyrillic spelling it already has.
+  // Dasha's own answer, carried to the client.
+  //
+  // The ANSWER is never translated: it is what a person wrote about one bag,
+  // and running it through a dictionary would turn a price into a guess. Only
+  // the line that frames it is in three languages — the client has to know what
+  // this message is about before she reads it.
+  inquiry_answered: {
+    uk: ({ who, answer }) => ({
+      title: `${who} відповіла 💬`,
+      body: `Відповідь щодо вашого запиту:\n«${answer}»`,
+    }),
+    ru: ({ who, answer }) => ({
+      title: `${who} ответила 💬`,
+      body: `Ответ по вашему запросу:\n«${answer}»`,
+    }),
+    en: ({ who, answer }) => ({
+      title: `${who} replied 💬`,
+      body: `An answer to your request:\n«${answer}»`,
+    }),
+  },
+
   inquiry_sent: {
     uk: ({ who, items }) => ({
       title: 'Запит надіслано ✅',
@@ -176,13 +198,73 @@ const MESSAGES = {
  *                            falls back to Ukrainian rather than failing.
  * @returns {{title: string, body: string}}
  */
+// A date a person reads: 13.10.2026.
+//
+// Dates travel through this system as ISO strings because that is what sorts,
+// compares and survives a round trip through Postgres. What leaked was the
+// habit of putting one straight into a sentence with `.slice(0, 10)`: «Промокод
+// BDAY-045-BUI2, діє до 2026-10-13» is a machine format sitting in the middle
+// of a line addressed to a client, and it is the only place in the app where
+// the year came first.
+//
+// Read in UTC on purpose. `.slice(0, 10)` took the UTC day, the columns are
+// stored in UTC, and a birthday window that opens at midnight would otherwise
+// show the day before to anybody west of London.
+//
+// The date is the SAME in all three languages. A day and a month separated by
+// dots is unambiguous everywhere the shop sells, which a slash is not: 10/13
+// and 13/10 are the same date written for two different readers.
+export function dmy(value) {
+  // An absent value is not a date at the start of the epoch. `new Date(null)`
+  // is 1 January 1970 and passes every validity check there is, so a NULL
+  // column would have reached a client as «діє до 01.01.1970» — which reads
+  // like a bug in the shop rather than a missing value.
+  if (value === null || value === undefined || value === '') return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+}
+
+// Cyrillic → Latin, for a name in an English sentence.
+//
+// Mirrors the table in public/js/i18n.js: the DM and the screen say the same
+// thing to the same person, and they have no business spelling her name two
+// ways. Only ever applied to a NAME — a transliterated sentence is unreadable
+// in every language.
+const TRANSLIT = {
+  а: 'a', б: 'b', в: 'v', г: 'h', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh',
+  з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n',
+  о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts',
+  ч: 'ch', ш: 'sh', щ: 'shch', ь: '', ю: 'iu', я: 'ia', ы: 'y', э: 'e',
+  ё: 'e', ъ: '',
+};
+
+export function personName(value, lang) {
+  const name = String(value ?? '');
+  if (!name || normalizeLang(lang) !== 'en') return name;
+  let out = '';
+  for (const ch of name) {
+    const lower = ch.toLowerCase();
+    const mapped = TRANSLIT[lower];
+    if (mapped === undefined) { out += ch; continue; }
+    // «Жанна» must come out «Zhanna», not «ZHanna».
+    out += ch === lower ? mapped : mapped.charAt(0).toUpperCase() + mapped.slice(1);
+  }
+  return out;
+}
+
 export function render(lang, key, params = {}) {
   const entry = MESSAGES[key];
   // An unknown key is a programming error, and a silent empty DM is the worst
   // possible way to report one: the client gets nothing and nobody finds out.
   if (!entry) throw new Error(`i18n: unknown message key «${key}»`);
   const target = normalizeLang(lang) || DEFAULT_LANG;
-  return (entry[target] || entry[DEFAULT_LANG])(params);
+  // One place for the name, so no template has to remember to do it.
+  const withName = params.who === undefined
+    ? params
+    : { ...params, who: personName(params.who, target) };
+  return (entry[target] || entry[DEFAULT_LANG])(withName);
 }
 
 /** Every key in the catalogue — the tests walk it so a new one cannot ship with a language missing. */

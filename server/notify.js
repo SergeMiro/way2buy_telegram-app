@@ -35,15 +35,21 @@ async function markDm(notificationId, status) {
   await db.prepare('UPDATE notifications SET dm_status=? WHERE id=?').run(status, notificationId);
 }
 
+// Returns what Telegram answered with — the sent Message — or null when there
+// was nothing to send or the send failed. The caller usually ignores it; an
+// inquiry does not, because the answer comes back as a REPLY to this very
+// message and the pair (chat, message_id) is the only thing that identifies it.
 async function dm(tgUserId, text, notificationId, extra = {}) {
-  if (!tgUserId) return await markDm(notificationId, 'skipped');
+  if (!tgUserId) { await markDm(notificationId, 'skipped'); return null; }
   try {
-    await sendToUser(tgUserId, text, extra);
+    const result = await sendToUser(tgUserId, text, extra);
     await markDm(notificationId, liveMode() ? 'sent' : 'simulated');
+    return result;
   } catch {
     // A DM failure must never fail the operation that triggered it — the
     // in-app notification is already stored and is what the client sees.
     await markDm(notificationId, 'failed');
+    return null;
   }
 }
 
@@ -96,13 +102,28 @@ export async function notifyCustomer({
 // deals.js uses it to put «Відкрити заявку» — a web_app button that opens the
 // cabinet on one deal — under the nudge. Nothing is stored for it; the panel
 // already has the thing the button is a shortcut to.
-export async function notifyAdmins({ kind, title, body = '', bodyHtml = null, replyMarkup = null, dedupeKey }) {
+// `onDm` opts into AWAITING each delivery and being handed the sent Message.
+//
+// Without it the DMs stay fire-and-forget, which is right for a nudge: the row
+// is already stored and a slow Telegram must not slow the operation down. An
+// inquiry needs the opposite. It has to remember the message_id it was sent as,
+// or a reply to that message can never be matched back — and on a serverless
+// host, work started after the response is written may simply never run. So a
+// caller that needs the id pays for it in latency, deliberately.
+export async function notifyAdmins({
+  kind, title, body = '', bodyHtml = null, replyMarkup = null, dedupeKey, onDm = null,
+}) {
   const id = await writeRow({ customerId: null, kind, title, body, dedupeKey });
   if (!id) return null;
   const text = `<b>${escapeHtml(title)}</b>\n${bodyHtml || escapeHtml(body)}`;
   const extra = replyMarkup ? { reply_markup: replyMarkup } : {};
   for (const tgId of await adminIds()) {
-    void dm(tgId, text, id, extra);
+    if (!onDm) { void dm(tgId, text, id, extra); continue; }
+    const sent = await dm(tgId, text, id, extra);
+    // One recipient's bookkeeping must not stop the message reaching the rest.
+    if (sent) {
+      try { await onDm(tgId, sent); } catch { /* the DM is out; the note is not */ }
+    }
   }
   return id;
 }

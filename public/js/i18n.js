@@ -44,6 +44,25 @@
 
     ['Каталоги', 'Shop', 'Каталоги'], ['Стрічка', 'Feed', 'Лента'],
     ['Примірочна', 'Fitting room', 'Примерочная'], ['Знижки', 'Offers', 'Скидки'],
+    // The fitting room's own tabs. Each label is a whole text node in the
+    // markup — the count sits outside it — so these entries match.
+    ['Речі', 'Pieces', 'Вещи'], ['Запити', 'Requests', 'Запросы'],
+    // The names of the two people in the shop, in the cases the interface uses
+    // them in. A name is not a word to translate — but «Или напишите Даші» is
+    // a Ukrainian dative sitting in a Russian sentence, and that is the mixture
+    // it reads as. Declining it correctly is the whole point; English gets one
+    // spelling, because English does not decline.
+    ['Даша', 'Dasha', 'Даша'], ['Даші', 'Dasha', 'Даше'], ['Дашу', 'Dasha', 'Дашу'],
+    ['Марина', 'Maryna', 'Марина'], ['Марині', 'Maryna', 'Марине'], ['Марину', 'Maryna', 'Марину'],
+    // Вигляд вітрини. The glyph rides along in the same text node, so the entry
+    // carries it too — the translator matches whole nodes.
+    ['▦ Сітка', '▦ Grid', '▦ Сетка'],
+    ['☰ Список', '☰ List', '☰ Список'],
+    ['▢ Великі', '▢ Large', '▢ Крупные'],
+    ['Вигляд вітрини', 'Layout', 'Вид витрины'],
+    ['Збільшення лупи', 'Loupe zoom', 'Увеличение лупы'],
+    ['🎂 Знижка на день народження', '🎂 Birthday discount', '🎂 Скидка ко дню рождения'],
+    ['є промокод', 'a promo code', 'есть промокод'],
     ['Кабінет', 'Admin', 'Кабинет'], ['Повідомлення', 'Notifications', 'Уведомления'],
     ['Мова інтерфейсу', 'Interface language', 'Язык интерфейса'],
     ['Менеджер', 'Manager', 'Менеджер'], ['менеджеру', 'the manager', 'менеджеру'],
@@ -124,6 +143,10 @@
       'You have not asked about anything yet. Add a piece to the fitting room and tap “Check availability & price”.',
       'Вы ещё ничего не спрашивали. Добавьте вещь в примерочную и нажмите «Узнать наличие и цену».'],
     ['відповіли', 'answered', 'ответили'], ['очікує', 'waiting', 'ожидает'],
+    // The status mark on a request card carries its word as a title/aria-label
+    // rather than on screen, and the translator reaches attributes too.
+    ['Очікує відповіді', 'Waiting for a reply', 'Ожидает ответа'],
+    ['Вам відповіли', 'Answered', 'Вам ответили'],
     // The feed asks a different question from the catalogue, and says so.
     ['Цікавить', 'Interested', 'Интересует'],
     ['Запитує ціну та наявність:', 'Asking about price and availability:',
@@ -383,6 +406,34 @@
     for (var i = 0; i < 3; i++) if (entry[i] && indexes[i][entry[i]] == null) indexes[i][entry[i]] = entry;
   });
 
+  // Cyrillic → Latin, for a name English has no entry for.
+  //
+  // Only ever applied to a NAME (see `person` below), never to a sentence: a
+  // transliterated sentence is unreadable in both languages, while a
+  // transliterated name is exactly what a passport does. Both alphabets appear
+  // in the table because SUPPORT_NAME can be Ukrainian or Russian.
+  var TRANSLIT = {
+    а: 'a', б: 'b', в: 'v', г: 'h', ґ: 'g', д: 'd', е: 'e', є: 'ie', ж: 'zh',
+    з: 'z', и: 'y', і: 'i', ї: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n',
+    о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts',
+    ч: 'ch', ш: 'sh', щ: 'shch', ь: '', ю: 'iu', я: 'ia', ы: 'y', э: 'e',
+    ё: 'e', ъ: '',
+  };
+  function translitCyr(value) {
+    var out = '';
+    var text = String(value);
+    for (var i = 0; i < text.length; i += 1) {
+      var ch = text.charAt(i);
+      var lower = ch.toLowerCase();
+      var mapped = TRANSLIT[lower];
+      if (mapped === undefined) { out += ch; continue; }
+      // A capital letter stays capital, including the two-letter cases: «Жанна»
+      // has to come out «Zhanna», not «ZHanna».
+      out += ch === lower ? mapped : mapped.charAt(0).toUpperCase() + mapped.slice(1);
+    }
+    return out;
+  }
+
   function dynamic(text) {
     // Ukrainian is the language these sentences are already written in, so
     // there is nothing to assemble: the rules below translate OUT of Ukrainian
@@ -393,6 +444,20 @@
     var term = function (value) {
       var found = indexes[0][value] || indexes[1][value] || indexes[2][value];
       return found ? found[targetIndex] : value;
+    };
+    // A person's name, in the language of the sentence around it.
+    //
+    // The dictionary answers for the names the shop actually has (above), which
+    // is what gets the Russian case right. SUPPORT_NAME is configurable though,
+    // so a name nobody has written an entry for still has to come out readable:
+    // in English it is transliterated rather than left in Cyrillic, because
+    // «Даша will check every item» is the mixture this is here to remove. In
+    // Russian it is left alone — the alphabet is already right, and guessing a
+    // case is worse than not declining.
+    var person = function (value) {
+      var known = term(value);
+      if (known !== value || target === 'ru') return known;
+      return translitCyr(value);
     };
     var rules = [
       [/^Прибрати фільтр (.+)$/, function (_all, value) {
@@ -408,19 +473,45 @@
       [/^([\d.,\s $€₴]+) покупок$/, target === 'ru' ? '$1 покупок' : '$1 purchases'],
       [/^Промокод (.+) скопійовано$/, target === 'ru' ? 'Промокод $1 скопирован' : 'Promo code $1 copied'],
       [/^Діє до (.+)\.$/, target === 'ru' ? 'Действует до $1.' : 'Valid through $1.'],
+      // The birthday card's own heading. It is assembled from a discount label
+      // and an optional minimum, so it can never be a dictionary entry — and it
+      // was the one line on the «Бонуси» tab still reading Ukrainian in both
+      // other languages.
+      [/^🎂 Знижка (.+) від замовлення (.+) на день народження$/, function (_all, amount, min) {
+        return target === 'ru'
+          ? '🎂 Скидка ' + amount + ' при заказе от ' + min + ' ко дню рождения'
+          : '🎂 A ' + amount + ' birthday discount on orders from ' + min;
+      }],
+      [/^🎂 Знижка (.+) на день народження$/, function (_all, amount) {
+        return target === 'ru' ? '🎂 Скидка ' + amount + ' ко дню рождения'
+          : '🎂 A ' + amount + ' birthday discount';
+      }],
       [/^Стане доступною (.+) і діятиме (\d+) днів\.$/,
         target === 'ru' ? 'Станет доступна $1 и будет действовать $2 дней.' : 'Available starting $1 and valid for $2 days.'],
       [/^За запитом «(.+)» нічого не знайшли$/,
         target === 'ru' ? 'По запросу «$1» ничего не найдено' : 'No results for “$1”'],
-      [/^🔒 Це піде (.+) — змінюється лише списком вище$/,
-        target === 'ru' ? '🔒 Это уйдёт $1 — меняется только списком выше' : '🔒 This goes to $1 — change it by changing the list above'],
-      [/^Або напишіть (.+) напряму:$/,
-        target === 'ru' ? 'Или напишите $1 напрямую:' : 'Or message $1 directly:'],
-      [/^Написати (.+) напряму$/, target === 'ru' ? 'Написать $1 напрямую' : 'Message $1 directly'],
-      [/^(.+) перевірить наявність кожної позиції та напише вам ціну\.$/,
-        target === 'ru' ? '$1 проверит наличие каждой позиции и напишет вам цену.' : '$1 will check every item and send you the price.'],
-      [/^Дякуємо! (.+) перевірить наявність і напише вам ціну найближчим часом\.$/,
-        target === 'ru' ? 'Спасибо! $1 проверит наличие и напишет вам цену в ближайшее время.' : 'Thank you! $1 will check availability and send you the price shortly.'],
+      [/^🔒 Це піде (.+) — змінюється лише списком вище$/, function (_all, who) {
+        return target === 'ru'
+          ? '🔒 Это уйдёт ' + person(who) + ' — меняется только списком выше'
+          : '🔒 This goes to ' + person(who) + ' — change it by changing the list above';
+      }],
+      [/^Або напишіть (.+) напряму:$/, function (_all, who) {
+        return target === 'ru' ? 'Или напишите ' + person(who) + ' напрямую:'
+          : 'Or message ' + person(who) + ' directly:';
+      }],
+      [/^Написати (.+) напряму$/, function (_all, who) {
+        return target === 'ru' ? 'Написать ' + person(who) + ' напрямую'
+          : 'Message ' + person(who) + ' directly';
+      }],
+      [/^(.+) перевірить наявність кожної позиції та напише вам ціну\.$/, function (_all, who) {
+        return target === 'ru' ? person(who) + ' проверит наличие каждой позиции и напишет вам цену.'
+          : person(who) + ' will check every item and send you the price.';
+      }],
+      [/^Дякуємо! (.+) перевірить наявність і напише вам ціну найближчим часом\.$/, function (_all, who) {
+        return target === 'ru'
+          ? 'Спасибо! ' + person(who) + ' проверит наличие и напишет вам цену в ближайшее время.'
+          : 'Thank you! ' + person(who) + ' will check availability and send you the price shortly.';
+      }],
       [/^Вашу знижку (.+) враховано$/, target === 'ru' ? 'Ваша скидка $1 учтена' : 'Your $1 discount has been applied'],
       [/^Правило: покупка від (.+) → (.+) бонусу(?:, накопичення максимум (.+))?$/,
         function (_all, min, reward, cap) {
@@ -467,16 +558,22 @@
         target === 'ru' ? 'Скидка станет доступна $1 и будет действовать $2 дней.' : 'The discount will be available on $1 and remain valid for $2 days.'],
       [/^Знижка (.+) ваша! Промокод (.+)\.$/,
         target === 'ru' ? 'Скидка $1 ваша! Промокод: $2.' : 'Your $1 discount is ready! Promo code: $2.'],
-      [/^(.+) перевірить наявність і скоро напише вам 💛$/,
-        target === 'ru' ? '$1 проверит наличие и скоро напишет вам 💛' : '$1 will check availability and write to you soon 💛'],
+      [/^(.+) перевірить наявність і скоро напише вам 💛$/, function (_all, who) {
+        return target === 'ru' ? person(who) + ' проверит наличие и скоро напишет вам 💛'
+          : person(who) + ' will check availability and write to you soon 💛';
+      }],
       // The acknowledgement as it is STORED — Ukrainian in the row, translated
       // here for the client's own feed. The DM carrying the same sentence is
       // rendered server-side instead (server/i18n.js), because Telegram has no
       // DOM for this translator to reach.
-      [/^(.+) перевірить наявність і напише вам ціну щодо позиції\.$/,
-        target === 'ru' ? '$1 проверит наличие и напишет вам цену по позиции.' : '$1 will check availability and send you the price for your item.'],
-      [/^(.+) перевірить наявність і напише вам ціну щодо (\d+) позицій\.$/,
-        target === 'ru' ? '$1 проверит наличие и напишет вам цену по $2 позициям.' : '$1 will check availability and send you the price for $2 items.'],
+      [/^(.+) перевірить наявність і напише вам ціну щодо позиції\.$/, function (_all, who) {
+        return target === 'ru' ? person(who) + ' проверит наличие и напишет вам цену по позиции.'
+          : person(who) + ' will check availability and send you the price for your item.';
+      }],
+      [/^(.+) перевірить наявність і напише вам ціну щодо (\d+) позицій\.$/, function (_all, who, n) {
+        return target === 'ru' ? person(who) + ' проверит наличие и напишет вам цену по ' + n + ' позициям.'
+          : person(who) + ' will check availability and send you the price for ' + n + ' items.';
+      }],
       [/^ключ «(.+)» вже зайнятий іншим каналом$/,
         target === 'ru' ? 'ключ «$1» уже занят другим каналом' : 'key “$1” is already used by another channel'],
       [/^немає каналу «(.+)»$/, target === 'ru' ? 'нет канала «$1»' : 'channel “$1” does not exist'],

@@ -190,3 +190,25 @@ test('birthdayStatus drives the card the client sees', async () => {
   await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
   assert.equal((await birthdayStatus(c, AT)).state, 'claimed');
 });
+
+test('the dates a client reads are 13.10.2026, not the ISO they are stored as', async () => {
+  // Two refusals carry a date to the client, and both used to hand her the raw
+  // column: «стане доступною 2026-12-20» and «вже отримано цього року
+  // (2026-07-15)». The window beside the message stays ISO — the card computes
+  // with it — so this is exactly the seam where a stored value becomes a read
+  // one, and the place the year-first format used to leak through.
+  const future = await makeCustomer('1990-12-25');
+  const closed = await claimBirthdayDiscount({ customer: future, birthdayInput: '25.12.1990', now: AT });
+  assert.equal(closed.verdict, 'out_of_window');
+  assert.match(closed.message, /стане доступною \d{2}\.\d{2}\.\d{4} і діятиме/);
+  assert.doesNotMatch(closed.message, /\d{4}-\d{2}-\d{2}/, 'an ISO date reached the client');
+  // The machine-readable half is untouched.
+  assert.match(closed.window.startsAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const c = await makeCustomer('1990-07-15');
+  await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+  const again = await claimBirthdayDiscount({ customer: c, birthdayInput: '15.07.1990', now: AT });
+  assert.equal(again.verdict, 'already_claimed');
+  assert.match(again.message, /\(\d{2}\.\d{2}\.\d{4}\)/);
+  assert.doesNotMatch(again.message, /\d{4}-\d{2}-\d{2}/, 'an ISO date reached the client');
+});

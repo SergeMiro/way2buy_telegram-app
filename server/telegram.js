@@ -594,11 +594,25 @@ const sent = [];
 export const outbox = () => sent.slice();
 export const clearOutbox = () => { sent.length = 0; };
 
+let simulatedMessageId = 0;
+
 export async function sendToUser(tgUserId, text, extra = {}) {
   if (!liveMode()) {
     sent.push({ to: String(tgUserId ?? ''), text, at: Date.now() });
     if (sent.length > OUTBOX_MAX) sent.shift();
-    return { simulated: true, text };
+    // Shaped like the Message Telegram answers with, message_id included.
+    //
+    // It is not decoration: an inquiry stores the message_id it was sent as, so
+    // that a reply to that message can be matched back to it. Returning a
+    // simulation without one would mean the whole answer path could only ever
+    // be exercised against the live API — which is to say, not exercised.
+    simulatedMessageId += 1;
+    return {
+      simulated: true,
+      text,
+      message_id: simulatedMessageId,
+      chat: { id: String(tgUserId ?? '') },
+    };
   }
   return await tg('sendMessage', {
     chat_id: tgUserId,

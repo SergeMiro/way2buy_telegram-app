@@ -91,3 +91,45 @@ test('an edit in the channel reaches the card that is already stored', async () 
   assert.match(row.body, /Medium/);
   assert.equal(Number(row.price), 5200);
 });
+
+test('a staff reply over the webhook marks the inquiry answered', async () => {
+  // The whole path, over HTTP, the way Telegram calls it: the handler is wired
+  // into the webhook next to handleMessage(), and a feature nothing calls is a
+  // feature that does not exist. The unit behaviour is pinned in
+  // answers.test.js; what this proves is that the wire reaches it.
+  process.env.SUPPORT_TG_IDS = '7009';
+  const { addToCart, sendInquiry } = await import('../server/cart.js');
+
+  const customerId = Number((await db.prepare(
+    'INSERT INTO customers (tg_user_id,name,created_at) VALUES (?,?,?)'
+  ).run('hook-client', 'Олена', new Date().toISOString())).lastInsertRowid);
+  const customer = await db.prepare('SELECT * FROM customers WHERE id=?').get(customerId);
+
+  const postId = Number((await db.prepare(`INSERT INTO posts
+    (channel,tg_message_id,title,body,price,currency,image_url,article,source,status,created_at)
+    VALUES (?,?,?,?,?,?,?,?, 'channel','published',?)`)
+    .run('bags', 4777, 'Balenciaga Hourglass', '', 1900, 'USD', '👜', 'BA-4777',
+      new Date().toISOString())).lastInsertRowid);
+
+  await addToCart({ customerId, postId });
+  const inquiry = await sendInquiry({ customer, message: 'Які кольори є?' });
+  const dm = await db.prepare(
+    'SELECT chat_id, message_id FROM inquiry_dm WHERE inquiry_id=? LIMIT 1'
+  ).get(inquiry.inquiryId);
+  assert.ok(dm, 'the DM that carried the inquiry has to be remembered');
+
+  const res = await post({
+    message: {
+      message_id: 55501,
+      chat: { id: dm.chat_id, type: 'private' },
+      from: { id: 7009 },
+      text: 'Є чорна і бежева, $1 900',
+      reply_to_message: { message_id: Number(dm.message_id) },
+    },
+  });
+  assert.equal(res.status, 200);
+
+  const row = await db.prepare('SELECT status, answered_by FROM inquiries WHERE id=?').get(inquiry.inquiryId);
+  assert.equal(row.status, 'answered');
+  assert.equal(row.answered_by, '7009');
+});
